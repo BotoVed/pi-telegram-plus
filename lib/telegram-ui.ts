@@ -13,7 +13,15 @@ type Pending = { flowId: string; resolve: PendingInputResolver; timer: NodeJS.Ti
 function truncateLabel(text: string): string { return text.length <= MAX_BUTTON_TEXT ? text : text.slice(0, MAX_BUTTON_TEXT - 1) + "…"; }
 
 export type TelegramUiRuntime = {
-  create(chatId: number, messageThreadId?: number, sourceMessageId?: number): ExtensionUIContext & { chatId: number; messageThreadId?: number; inputSecret?: (title: string, placeholder?: string) => Promise<string | undefined> };
+  create(chatId: number, messageThreadId?: number, sourceMessageId?: number): ExtensionUIContext & {
+    chatId: number;
+    messageThreadId?: number;
+    inputSecret?: (title: string, placeholder?: string) => Promise<string | undefined>;
+    /** Like select, but successive menu() calls edit one message in place (nested menus). */
+    menu: (title: string, options: string[]) => Promise<string | undefined>;
+    /** Remove the keyboard from the live menu message (call when the menu exits). */
+    closeMenu: () => Promise<void>;
+  };
   resolveInput(chatId: number, value: string | boolean | undefined, replyToMessageId?: number, fromCallback?: boolean, messageThreadId?: number): { handled: boolean; promptMessageId?: number };
   isSensitiveInput(chatId: number, replyToMessageId?: number, messageThreadId?: number): boolean;
   hasPendingInput(chatId: number, messageThreadId?: number): boolean;
@@ -87,6 +95,18 @@ export function createTelegramUiRuntime(deps: {
   /** Track the currently active flow for each chat/thread (for sendOrReplace lookups). */
   const activeFlowByTarget = new Map<string, string>();
 
+  const buildSelectPage = (flowId: string, title: string, options: string[], page: number) => {
+    const pageCount = Math.ceil(options.length / PAGE_SIZE);
+    const start = page * PAGE_SIZE; const pageOptions = options.slice(start, start + PAGE_SIZE);
+    const rows = pageOptions.map((label, i) => [{ text: truncateLabel(label), value: cb(flowId, `s:${start + i}`) }]);
+    const nav = [];
+    if (page > 0) nav.push({ text: "◀ Prev", value: cb(flowId, `p:${page - 1}`) });
+    if (page < pageCount - 1) nav.push({ text: "Next ▶", value: cb(flowId, `p:${page + 1}`) });
+    nav.push({ text: "Cancel", value: cb(flowId, "cancel") }); rows.push(nav);
+    const suffix = pageCount > 1 ? ` (${page + 1}/${pageCount})` : "";
+    return { text: `<b>${escapeHtml(title + suffix)}</b>`, rows, pageCount };
+  };
+
   return {
     create(chatId, messageThreadId, sourceMessageId) {
       // base is the real TUI UI context (create() is called BEFORE runWithTelegramUi
@@ -99,6 +119,17 @@ export function createTelegramUiRuntime(deps: {
       const notifyFn = (message: string, level: "info" | "warning" | "error" = "info") => {
         const fid = activeFlowByTarget.get(target);
         void sendOrReplaceText(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(String(level))}</b>\n${escapeHtml(message)}`, fid);
+      };
+
+      // Live menu message (keyboard still attached). Successive menu() calls edit it
+      // in place so nested navigation stays on one message. Any other interactive
+      // prompt releases it, so the next menu() renders fresh below that prompt.
+      // notify() does not release: the menu keeps updating where the user tapped.
+      let menuMessageId: number | undefined;
+      const releaseMenu = () => {
+        if (menuMessageId === undefined) return;
+        const id = menuMessageId; menuMessageId = undefined;
+        void deps.transport.removeInlineKeyboard(chatId, id);
       };
 
       return {
@@ -115,6 +146,7 @@ export function createTelegramUiRuntime(deps: {
         // completely unaffected by this Telegram-only path.
         notify: notifyFn,
         confirm: async (title, message) => {
+          releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>\n${escapeHtml(message)}`, [[
@@ -126,6 +158,7 @@ export function createTelegramUiRuntime(deps: {
           return value === true || value === "yes";
         },
         input: async (title, placeholder) => {
+          releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>${placeholder ? `\n${escapeHtml(placeholder)}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
@@ -135,6 +168,7 @@ export function createTelegramUiRuntime(deps: {
           return typeof value === "string" ? value : undefined;
         },
         inputSecret: async (title: string, placeholder?: string) => {
+          releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>${placeholder ? `\n${escapeHtml(placeholder)}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
@@ -144,6 +178,7 @@ export function createTelegramUiRuntime(deps: {
           return typeof value === "string" ? value : undefined;
         },
         editor: async (title, prefill) => {
+          releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>${prefill ? `\n${escapeHtml(prefill)}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
@@ -153,18 +188,13 @@ export function createTelegramUiRuntime(deps: {
           return typeof value === "string" ? value : undefined;
         },
         select: async (title, options) => {
+          releaseMenu();
           if (options.length === 0) return undefined;
-          let page = 0; const pageCount = Math.ceil(options.length / PAGE_SIZE); const flowId = beginFlow();
+          let page = 0; const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           while (true) {
-            const start = page * PAGE_SIZE; const pageOptions = options.slice(start, start + PAGE_SIZE);
-            const rows = pageOptions.map((label, i) => [{ text: truncateLabel(label), value: cb(flowId, `s:${start + i}`) }]);
-            const nav = [];
-            if (page > 0) nav.push({ text: "◀ Prev", value: cb(flowId, `p:${page - 1}`) });
-            if (page < pageCount - 1) nav.push({ text: "Next ▶", value: cb(flowId, `p:${page + 1}`) });
-            nav.push({ text: "Cancel", value: cb(flowId, "cancel") }); rows.push(nav);
-            const suffix = pageCount > 1 ? ` (${page + 1}/${pageCount})` : "";
-            const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title + suffix)}</b>`, rows, flowId);
+            const { text, rows, pageCount } = buildSelectPage(flowId, title, options, page);
+            const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, text, rows, flowId);
             const value = await waitInput(chatId, messageThreadId, flowId, false, false, sent.message_id);
             if (typeof value !== "string") { activeFlowByTarget.delete(target); void deps.transport.removeInlineKeyboard(chatId, sent.message_id); return undefined; }
             if (value === "cancel") { activeFlowByTarget.delete(target); void deps.transport.removeInlineKeyboard(chatId, sent.message_id); return undefined; }
@@ -176,10 +206,40 @@ export function createTelegramUiRuntime(deps: {
             return undefined;
           }
         },
+        menu: async (title: string, options: string[]) => {
+          if (options.length === 0) { releaseMenu(); return undefined; }
+          let page = 0; const flowId = beginFlow();
+          activeFlowByTarget.set(target, flowId);
+          while (true) {
+            const { text, rows, pageCount } = buildSelectPage(flowId, title, options, page);
+            if (menuMessageId !== undefined) {
+              await deps.transport.editButtons(chatId, menuMessageId, text, rows);
+            } else {
+              menuMessageId = (await deps.transport.sendButtons(chatId, text, rows, messageThreadId, sourceMessageId)).message_id;
+            }
+            const value = await waitInput(chatId, messageThreadId, flowId, false, false, menuMessageId);
+            // Pages and the next level edit menuMessageId directly, not via the
+            // per-flow replace target that resolveInput records.
+            replaceNextMessageByFlow.delete(flowId);
+            if (typeof value === "string" && value.startsWith("p:")) {
+              const next = parseInt(value.slice(2), 10); if (next >= 0 && next < pageCount) page = next; continue;
+            }
+            activeFlowByTarget.delete(target);
+            // On a pick the keyboard stays: the next menu() call edits it, closeMenu() removes it.
+            if (typeof value === "string" && value.startsWith("s:")) {
+              const idx = parseInt(value.slice(2), 10);
+              if (idx >= 0 && idx < options.length) return options[idx];
+            }
+            releaseMenu();
+            return undefined;
+          }
+        },
+        closeMenu: async () => { releaseMenu(); },
         // custom: bridge pi-goal dialogs to Telegram buttons (Layer B). Does NOT
         // forward to base — see the modals comment above for why racing the TUI is
         // structurally un-dismissible and would leave the local TUI stuck.
         custom: async <T>(factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) => any | Promise<any>, _options?: any): Promise<T> => {
+          releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           let promptMessageId: number | undefined;
