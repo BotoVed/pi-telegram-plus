@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import { readBotRegistry, readProjectBinding } from "../config.ts";
+import { readBotRegistry, readProjectBinding, clearDefaultBot } from "../config.ts";
 import type { TelegramInstanceMetadata } from "../instance-coordinator.ts";
 import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
 import type { MenuUi, TelegramCommandDeps } from "./telegram-commands.ts";
@@ -55,6 +55,18 @@ function formatBotLabel(bot: BotRecord, registry: BotRegistry): string {
   return `${bot.name}${marker} · ${username} · ${bot.id.slice(0, 8)}`;
 }
 
+/** Thrown from a leaf action that moves this pi off the current bot: the menu's
+ *  chat stops being polled, so the whole /tg menu exits instead of returning
+ *  to a submenu nobody can press. */
+class MenuClosed extends Error {}
+
+/** Navigation select. On Telegram, ui.menu edits one message in place so the
+ *  whole /tg navigation stays on a single message; the TUI has no edit concept
+ *  and falls back to ui.select. */
+function pick(ui: MenuUi, title: string, options: string[]): Promise<string | undefined> {
+  return ui.menu ? ui.menu(title, options) : ui.select(title, options);
+}
+
 // ── Switch instance flow deps ──────────────────────────────────────────────
 
 export type SwitchInstanceDeps = {
@@ -93,8 +105,24 @@ async function runTgMenu(
   switchDeps: SwitchInstanceDeps,
   cwd: string,
 ): Promise<void> {
+  try {
+    await mainMenu(ui, deps, configDeps, switchDeps, cwd);
+  } catch (error) {
+    if (!(error instanceof MenuClosed)) throw error;
+  } finally {
+    await ui.closeMenu?.();
+  }
+}
+
+async function mainMenu(
+  ui: MenuUi,
+  deps: TelegramCommandDeps,
+  configDeps: TgConfigDeps,
+  switchDeps: SwitchInstanceDeps,
+  cwd: string,
+): Promise<void> {
   while (true) {
-    const choice = await ui.select("Telegram Management", [...MAIN_MENU_OPTIONS]);
+    const choice = await pick(ui, "Telegram Management", [...MAIN_MENU_OPTIONS]);
     if (!choice || choice === "❌ Close") return;
 
     if (choice === "🤖 Bots") {
@@ -118,7 +146,7 @@ async function runTgMenu(
 
 async function botsMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): Promise<boolean> {
   while (true) {
-    const choice = await ui.select("🤖 Bots", [...BOTS_MENU_OPTIONS]);
+    const choice = await pick(ui, "🤖 Bots", [...BOTS_MENU_OPTIONS]);
     if (!choice || choice === BACK_LABEL) return true; // back to main
 
     if (choice === "➕ Add bot") {
@@ -140,10 +168,10 @@ async function botListMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
       return;
     }
     const choices = registry.bots.map((b) => formatBotLabel(b, registry));
-    const selected = await ui.select("Bot list", [...choices, BACK_LABEL]);
+    const selected = await pick(ui, "Bot list", [...choices, BACK_LABEL]);
     if (!selected || selected === BACK_LABEL) return; // back to Bots submenu
     const bot = registry.bots[choices.indexOf(selected)];
-    if (bot) await botDetailMenu(ui, deps, cwd, bot, registry);
+    if (bot) await botDetailMenu(ui, deps, cwd, bot);
     // loop re-renders the bot list (reflects default/remove changes)
   }
 }
@@ -155,25 +183,49 @@ async function botDetailMenu(
   deps: TelegramCommandDeps,
   cwd: string,
   bot: BotRecord,
-  registry: BotRegistry,
 ): Promise<void> {
-  const isDefault = registry.defaultBotId === bot.id;
   while (true) {
-    const choice = await ui.select(
-      `🤖 ${bot.name}${isDefault ? " ★ default" : ""}`,
-      ["Set default", "Update", "Remove", BACK_LABEL],
+    // Re-read each iteration so the default toggle label + bot existence stay fresh.
+    const registry = await readBotRegistry();
+    const botNow = registry.bots.find((b) => b.id === bot.id);
+    if (!botNow) {
+      ui.notify("Bot no longer exists.", "info");
+      return; // removed elsewhere → back to bot list
+    }
+    const isDefault = registry.defaultBotId === botNow.id;
+    const choice = await pick(
+      ui,
+      `🤖 ${botNow.name}${isDefault ? " ★ default" : ""}`,
+      [`Default: ${isDefault ? "● on" : "○ off"}`, "Update", "Remove", BACK_LABEL],
     );
     if (!choice || choice === BACK_LABEL) return; // back to bot list
 
-    if (choice === "Set default") {
-      await setBotDefaultFlow(ui, bot.id);
+    if (choice.startsWith("Default:")) {
+      if (isDefault) {
+        // An unbound project runs on the default bot, so clearing it disconnects Telegram here.
+        const followsDefault = !(await readProjectBinding(cwd));
+        if (followsDefault) {
+          const ok = await ui.confirm(
+            "Clear the default bot?",
+            "This project has no binding and runs on the default bot, so clearing it disconnects Telegram here — the /tg menu will close and you can't undo it from Telegram. Set a default or bind a bot in the TUI (/tg-bot-default, /tg-bind-cwd) to reconnect. Continue?",
+          );
+          if (!ok) continue;
+        }
+        ui.notify("Default bot cleared. Unbound projects now have no bot until a default is set again.", "info");
+        if (followsDefault) await ui.closeMenu?.();
+        await clearDefaultBot();
+        if (followsDefault) throw new MenuClosed();
+      } else if (await setBotDefaultFlow(ui, botNow.id, deps, cwd)) {
+        throw new MenuClosed();
+      }
     } else if (choice === "Update") {
-      await updateBotFlow(ui, deps, cwd, bot.id);
+      await updateBotFlow(ui, deps, cwd, botNow.id);
     } else if (choice === "Remove") {
-      await removeBotFlow(ui, deps, cwd, bot.id);
-      return; // removed → back to bot list (re-reads without this bot)
+      await removeBotFlow(ui, deps, cwd, botNow.id);
+      const removed = !(await readBotRegistry()).bots.some((b) => b.id === botNow.id);
+      if (removed) return; // back to bot list (re-reads without this bot); declined → stay here
     }
-    // loop re-renders the per-bot action menu
+    // loop re-renders the per-bot action menu (re-reads registry)
   }
 }
 
@@ -192,7 +244,7 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
       ? `Bot: ${effectiveBot.name}${!hasBinding ? " (default)" : ""}`
       : "Bot: (none)";
 
-    const choice = await ui.select("📁 Project", [
+    const choice = await pick(ui, "📁 Project", [
       botLabel,
       `Enabled: ${enabled ? "● on" : "○ off"}`,
       BACK_LABEL,
@@ -205,7 +257,7 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
         continue;
       }
       const choices = registry.bots.map((b) => formatBotLabel(b, registry));
-      const selected = await ui.select("Bind project to bot", [...choices, ...(hasBinding ? [UNBIND_LABEL] : []), BACK_LABEL]);
+      const selected = await pick(ui, "Bind project to bot", [...choices, ...(hasBinding ? [UNBIND_LABEL] : []), BACK_LABEL]);
       if (!selected || selected === BACK_LABEL) continue;
       if (selected === UNBIND_LABEL) {
         await unbindProjectFlow(ui, deps, cwd);
@@ -237,7 +289,7 @@ async function configMenu(ui: MenuUi, configDeps: TgConfigDeps): Promise<boolean
     const currentThinking = config.thinking ?? "brief";
     const currentRetry = config.retryCount ?? 3;
 
-    const choice = await ui.select(CONFIG_MENU_PREFIX, [
+    const choice = await pick(ui, CONFIG_MENU_PREFIX, [
       `🔧 Tool: ${currentTool}`,
       `💭 Thinking: ${currentThinking}`,
       `🔄 Retry: ${currentRetry}`,
@@ -271,7 +323,7 @@ async function switchInstanceMenu(ui: MenuUi, switchDeps: SwitchInstanceDeps): P
   }
 
   const choices = instances.map((instance) => formatInstanceChoice(instance, active.instanceId));
-  const selected = await ui.select("Switch Telegram pi instance", [...choices, BACK_LABEL]);
+  const selected = await pick(ui, "Switch Telegram pi instance", [...choices, BACK_LABEL]);
   if (!selected || selected === BACK_LABEL) return true; // back to main
 
   const target = instances[choices.indexOf(selected)];

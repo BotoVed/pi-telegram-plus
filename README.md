@@ -203,13 +203,13 @@ Opens an inline-keyboard menu with four submenus (each with a **⬅️ Back** op
 
 | Menu | Actions |
 |------|--------|
-| **🤖 Bots** | **➕ Add bot** — prompt for name + token, create pairing code · **Bot list** — list registered bots (★ default marker, @username, pairing status); select a bot to open its action menu: **Set default** / **Update** (token / name / allowedUserId / apiBase) / **Remove** (confirm; warns if default) |
+| **🤖 Bots** | **➕ Add bot** — prompt for name + token, create pairing code · **Bot list** — list registered bots (★ default marker, @username, pairing status); select a bot to open its action menu: **Default: ● on / ○ off** (toggle; turning it off clears the default bot — on an unbound project that disconnects Telegram, so it asks first; making another bot the default moves an unbound project to that bot and closes the menu) / **Update** (token / name / allowedUserId / apiBase) / **Remove** (confirm; warns if default) |
 | **📁 Project** | **Bot: <current>** — shows the bound bot (or `(default)`); press to change binding (pick another bot or **Unbind**) · **Enabled: ● on / ○ off** — toggle the bot on/off for this project |
 | **⚙️ Config** | **Tool: <current>** — select hidden / brief / full · **Thinking: <current>** — select hidden / brief / full · **Retry: <current>** — input a number 0–10 |
 | **🔄 Switch instance** | List live pi instances sharing this bot token; select one to switch (same logic as `/tg-switch`). Must be run on the currently active instance. |
 | **❌ Close** | Exit the menu. |
 
-The menu uses `ctx.ui.select` / `input` / `inputSecret` / `confirm` — the same UI abstraction that renders Telegram inline keyboards. Each leaf action shows a result notification, then returns to its submenu.
+The menu uses the same UI abstraction that renders Telegram inline keyboards (`ctx.ui.select` / `input` / `inputSecret` / `confirm`). In Telegram, navigation edits **one message in place** — moving between levels updates that message instead of posting a new one per level. A leaf action that needs its own prompt (input, confirm, a value picker) appears below it, and the menu then continues as a fresh message under that prompt. The local TUI falls back to ordinary selects. Each leaf action shows a result notification, then returns to its submenu.
 
 #### Flat `/tg-*` commands (still available)
 
@@ -242,7 +242,7 @@ All flat commands remain registered and dispatchable (TUI + typing them in Teleg
 | `/tg-config [key] [value]` | Configure tool and thinking rendering levels and retry count. Direct-set: `/tg-config tool full`, `/tg-config retry 5`. No args opens an interactive selector. |
 | `/tg-switch [instance-id|current]` | Switch the active local pi instance that owns this bot token. No args opens an inline selector; an id/prefix targets one live instance; `current` re-replays the active owner. Must be run on the currently active instance. See **Multi-instance Coordination**. |
 
-**How it works:** Bots are registered once with `/tg-bot-add` or `/tg → Bots → Add bot` (token, username, pairing, etc. stored centrally). Projects reference a bot by id via `/tg-bind-cwd` or `/tg → Project → Bot: <current> → pick a bot` — no token re-paste or re-pairing needed. Unbound projects fall back to the **default bot** (`/tg-bot-default` or `/tg → Bots → Bot list → <bot> → Set default`), which is the equivalent of the former "global" bot.
+**How it works:** Bots are registered once with `/tg-bot-add` or `/tg → Bots → Add bot` (token, username, pairing, etc. stored centrally). Projects reference a bot by id via `/tg-bind-cwd` or `/tg → Project → Bot: <current> → pick a bot` — no token re-paste or re-pairing needed. Unbound projects fall back to the **default bot** (`/tg-bot-default` or `/tg → Bots → Bot list → <bot> → Default`), which is the equivalent of the former "global" bot.
 
 #### Pairing / authorization
 

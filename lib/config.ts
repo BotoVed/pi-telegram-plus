@@ -557,6 +557,17 @@ export async function setDefaultBot(id: string): Promise<BotRegistry> {
   });
 }
 
+/** Clear the default bot (defaultBotId = undefined). Unbound projects then have
+ *  no bot (telegram not configured for them) until a default is set again. */
+export async function clearDefaultBot(): Promise<BotRegistry> {
+  return await withTelegramConfigLock(async () => {
+    const registry = await readBotRegistryUnsafe();
+    delete registry.defaultBotId;
+    await writeBotRegistry(registry);
+    return registry;
+  });
+}
+
 /**
  * Read registry without migration-on-read side effects (for use inside the
  * config lock to avoid recursive lock acquisition).

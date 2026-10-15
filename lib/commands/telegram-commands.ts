@@ -33,6 +33,10 @@ export type MenuUi = {
   input: (title: string, placeholder?: string) => Promise<string | undefined>;
   inputSecret?: (title: string, placeholder?: string) => Promise<string | undefined>;
   confirm: (title: string, message?: string) => Promise<boolean>;
+  /** Telegram only: select that edits one menu message in place across calls. */
+  menu?: (title: string, options: string[]) => Promise<string | undefined>;
+  /** Telegram only: drop the keyboard of the live menu message. */
+  closeMenu?: () => Promise<void>;
 };
 
 // ── Reusable flow functions (shared by flat commands and /tg menu) ─────────
@@ -88,14 +92,31 @@ export async function addBotFlow(
   );
 }
 
+/** Set the default bot. Returns true when this pi switches bots as a result:
+ *  an unbound project follows the default, so a different default moves its
+ *  routing just like bindProjectFlow does. In that case notify and close the
+ *  menu BEFORE the switch, while this bot can still deliver to the chat. */
 export async function setBotDefaultFlow(
   ui: MenuUi,
   botId: string,
-): Promise<void> {
+  deps?: TelegramCommandDeps,
+  cwd?: string,
+): Promise<boolean> {
+  const bot = findBotByIdOrName(await readBotRegistry(), botId);
+  const label = `${escapeHtml(bot?.name ?? botId)} (${botId.slice(0, 8)})`;
+  const currentToken = deps?.getConfig().botToken;
+  const switching = !!bot && !!cwd && !!currentToken && bot.token !== currentToken
+    && !(await readProjectBinding(cwd));
+  if (switching) {
+    ui.notify(
+      `Default bot set to: ${label}. This project has no binding and follows the default, so it now switches to ${bot.botUsername ? `@${escapeHtml(bot.botUsername)}` : escapeHtml(bot.name)} — if /tg is open, it will close; reopen it there to continue.`,
+      "info",
+    );
+    await ui.closeMenu?.();
+  }
   await setDefaultBot(botId);
-  const registry = await readBotRegistry();
-  const bot = findBotByIdOrName(registry, botId);
-  ui.notify(`Default bot set to: ${escapeHtml(bot?.name ?? botId)} (${botId.slice(0, 8)})`, "info");
+  if (!switching) ui.notify(`Default bot set to: ${label}`, "info");
+  return switching;
 }
 
 export async function updateBotFlow(
@@ -424,7 +445,7 @@ async function handleTgBotRemove(
 async function handleTgBotDefault(
   args: string,
   ctx: any,
-  _deps: TelegramCommandDeps,
+  deps: TelegramCommandDeps,
 ): Promise<void> {
   const query = args.trim();
   if (!query) {
@@ -437,7 +458,7 @@ async function handleTgBotDefault(
     ctx.ui.notify(`Bot not found: ${escapeHtml(query)}`, "error");
     return;
   }
-  await setBotDefaultFlow(ctx.ui, bot.id);
+  await setBotDefaultFlow(ctx.ui, bot.id, deps, ctx.cwd || process.cwd());
 }
 
 // ── Project binding handlers ──────────────────────────────────────────────
