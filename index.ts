@@ -639,7 +639,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
 
   coordinatorTimer = setInterval(requestCoordinatorReconcile, 2_000);
 
-  telegramCommands.set("tg-switch", async (args, ctx) => {
+  const handleTgSwitch: TelegramCommandHandler = async (args, ctx) => {
     const currentCoordinator = coordinator;
     if (!currentCoordinator || !currentCoordinator.isActive()) {
       ctx.ui.notify("This pi instance is not the active Telegram instance.", "error");
@@ -705,6 +705,11 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
         polling.start();
       }
     }
+  };
+  telegramCommands.set("tg-switch", handleTgSwitch);
+  pi.registerCommand("tg-switch", {
+    description: "Switch which local pi instance owns the Telegram bot",
+    handler: handleTgSwitch,
   });
 
   function buildStatusState(error?: string): Parameters<typeof formatTelegramStatusLine>[1] {

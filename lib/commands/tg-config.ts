@@ -100,37 +100,12 @@ export function registerTgConfigCommands(
 
       // Direct-set mode: /tg-config <key> <value>
       if (parts.length >= 2 && parts[0]) {
-        const key = parts[0];
-        const value = parts[1];
-        const config = deps.getConfig();
-
-        if (key === "tool" || key === "thinking") {
-          if (!(RENDER_LEVELS as readonly string[]).includes(value)) {
-            ui.notify("Invalid. Use: /tg-config <tool|thinking> <hidden|brief|full>", "error");
-            return;
-          }
-          const next = key === "tool"
-            ? { ...config, tool: value as TelegramRenderLevel }
-            : { ...config, thinking: value as TelegramRenderLevel };
-          deps.setConfig(next);
-          await deps.persistConfig(next);
-          ui.notify(`${key} set to ${value}`, "info");
-          return;
-        } else if (key === "retry") {
-          const n = parseInt(value, 10);
-          if (!Number.isInteger(n) || n < 0 || n > 10) {
-            ui.notify("Invalid. Use: /tg-config retry <0-10>", "error");
-            return;
-          }
-          const next = { ...config, retryCount: n };
-          deps.setConfig(next);
-          await deps.persistConfig(next);
-          ui.notify(`retryCount set to ${n}`, "info");
-          return;
-        } else {
-          ui.notify("Invalid key. Use: tool, thinking, or retry", "error");
-          return;
-        }
+        const [key, value] = parts;
+        if (key === "tool") await configToolFlow(ui, deps, value);
+        else if (key === "thinking") await configThinkingFlow(ui, deps, value);
+        else if (key === "retry") await configRetryFlow(ui, deps, value);
+        else ui.notify("Invalid key. Use: tool, thinking, or retry", "error");
+        return;
       }
 
       // Interactive mode
