@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { escapeHtml } from "./html.ts";
 import { markdownToTelegramHtml } from "./markdown.ts";
+import { richMarkdownForTables } from "./rich-message.ts";
 import type { TelegramConfig, TelegramRenderLevel, TelegramTransport, TelegramTurn } from "./types.ts";
 import { RENDER_LEVELS } from "./types.ts";
 import { log } from "./logger.ts";
@@ -317,10 +318,10 @@ export function registerTelegramRenderer(
     return chatIds.length === 0 ? undefined : `default:${chatIds.join(",")}`;
   };
 
-  const sendDefault = async (html: string) => {
+  const sendDefault = async (html: string, richMarkdown?: string) => {
     const chatIds = defaultChats();
     if (chatIds.length === 0) return [];
-    return [await deps.transport.sendText(chatIds[0], html)];
+    return [await deps.transport.sendText(chatIds[0], html, undefined, undefined, richMarkdown)];
   };
 
   const sendNewToEventTarget = async (html: string) => {
@@ -329,29 +330,32 @@ export function registerTelegramRenderer(
     return sendDefault(html);
   };
 
-  const sendToTurn = async (html: string, options: { final?: boolean } = {}) => {
+  const sendToTurn = async (html: string, options: { final?: boolean; richMarkdown?: string } = {}) => {
+    const richMarkdown = options.richMarkdown;
     const turn = deps.getActiveTurn();
     if (!turn) {
-      await sendDefault(html);
+      await sendDefault(html, richMarkdown);
       return;
     }
     if (turn.replaceMessageId === undefined) {
-      await deps.transport.sendText(turn.chatId, html, turn.messageThreadId, turn.sourceMessageId);
+      await deps.transport.sendText(turn.chatId, html, turn.messageThreadId, turn.sourceMessageId, richMarkdown);
       return;
     }
-    if (options.final && Buffer.byteLength(html, "utf8") > EDIT_LIMIT) {
+    // The placeholder cannot hold an HTML answer that large, but one Rich
+    // Message can (up to ~30k), so a table answer still lands in place.
+    if (options.final && !richMarkdown && Buffer.byteLength(html, "utf8") > EDIT_LIMIT) {
       await deps.transport.editText(turn.chatId, turn.replaceMessageId, "🤖 <b>Assistant</b>\n\nFinal answer follows in separate message(s).").catch(renderLog.swallow("warn", "editText final-answer pointer failed", { chatId: turn.chatId, messageId: turn.replaceMessageId }));
       turn.replaceMessageId = undefined;
-      await deps.transport.sendText(turn.chatId, html, turn.messageThreadId, turn.sourceMessageId);
+      await deps.transport.sendText(turn.chatId, html, turn.messageThreadId, turn.sourceMessageId, richMarkdown);
       return;
     }
     try {
-      await deps.transport.editText(turn.chatId, turn.replaceMessageId, html);
+      await deps.transport.editText(turn.chatId, turn.replaceMessageId, html, richMarkdown);
     } catch (err) {
       // Edit failed (message deleted / too many edits). Fall back to a new message.
       renderLog.debug("editText failed; falling back to sendText", { chatId: turn.chatId, messageId: turn.replaceMessageId, err });
       turn.replaceMessageId = undefined;
-      await deps.transport.sendText(turn.chatId, html, turn.messageThreadId, turn.sourceMessageId);
+      await deps.transport.sendText(turn.chatId, html, turn.messageThreadId, turn.sourceMessageId, richMarkdown);
     }
   };
 
@@ -503,7 +507,15 @@ ${partial}`);
     const images = contentImages(message.content);
 
     const hasBody = body.trim().length > 0;
-    if (hasBody) await sendToTurn(markdownToTelegramHtml(body), { final: true });
+    if (hasBody) {
+      // A Markdown table cannot be expressed in Telegram's HTML mode, so the
+      // renderer would have to fake one (card / box-drawing / transposed). When
+      // the answer contains a real GFM table, prefer a Rich Message: Telegram
+      // renders it as a native bordered table. Non-qualifying answers — and any
+      // server without Rich Message support — keep the HTML path untouched.
+      const richMarkdown = richMarkdownForTables(body);
+      await sendToTurn(markdownToTelegramHtml(body), { final: true, richMarkdown });
+    }
 
     const turn = deps.getActiveTurn();
     if (codeFiles.length > 0) {

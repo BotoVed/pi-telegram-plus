@@ -29,13 +29,13 @@ export function createActiveTelegramTransport(
 
     return {
         removeInlineKeyboard: (chatId, messageId) => run<void>(undefined, () => transport.removeInlineKeyboard(chatId, messageId)),
-        sendText: (chatId, text, messageThreadId, replyToMessageId) => run<TelegramSentMessage[]>([], () => (
-            transport.sendText(chatId, text, messageThreadId, replyToMessageId)
+        sendText: (chatId, text, messageThreadId, replyToMessageId, richMarkdown) => run<TelegramSentMessage[]>([], () => (
+            transport.sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown)
         )),
         sendButtons: (chatId, text, rows, messageThreadId, replyToMessageId) => run<TelegramSentMessage>({ message_id: 0 }, () => (
             transport.sendButtons(chatId, text, rows, messageThreadId, replyToMessageId)
         )),
-        editText: (chatId, messageId, text) => run<void>(undefined, () => transport.editText(chatId, messageId, text)),
+        editText: (chatId, messageId, text, richMarkdown) => run<void>(undefined, () => transport.editText(chatId, messageId, text, richMarkdown)),
         editButtons: (chatId, messageId, text, rows) => run<void>(undefined, () => transport.editButtons(chatId, messageId, text, rows)),
         answerCallbackQuery: (callbackQueryId, text) => run<void>(undefined, () => transport.answerCallbackQuery(callbackQueryId, text)),
         deleteMessage: (chatId, messageId) => run<void>(undefined, () => transport.deleteMessage(chatId, messageId)),

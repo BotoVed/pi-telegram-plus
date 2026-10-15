@@ -197,11 +197,50 @@ function markRealTableLines(lines: string[]): Uint8Array {
   return flags;
 }
 
+/** Fence character of a line (``` or ~~~), or "" when the line is not a fence. */
+function fenceMarker(line: string): string {
+  const match = /^\s*(`{3,}|~{3,})/.exec(line);
+  return match ? match[1][0] : "";
+}
+
+/**
+ * True when `markdown` contains a real GFM table — a row containing a pipe
+ * followed by a `| --- |` separator — outside code fences.
+ *
+ * Only real tables qualify: aligned pipe text without a separator row is a
+ * pseudo-table and keeps the monospace treatment (`protectPseudoTables`).
+ */
+export function hasGfmTable(markdown: string): boolean {
+  const lines = markdown.split("\n");
+  let inFence = false;
+  let fenceChar = "";
+  for (let i = 0; i + 1 < lines.length; i++) {
+    const marker = fenceMarker(lines[i]);
+    if (marker) {
+      if (!inFence) {
+        inFence = true;
+        fenceChar = marker;
+      } else if (marker === fenceChar) {
+        inFence = false;
+        fenceChar = "";
+      }
+      continue;
+    }
+    if (inFence || !lines[i].includes("|")) continue;
+    const separator = lines[i + 1];
+    if (separator.includes("|") && isTableSeparator(separator)) return true;
+  }
+  return false;
+}
+
 /**
  * Wrap pseudo-table runs (outside code fences) in fenced code blocks.
  * Code-fence state is tracked so content already inside ``` is untouched.
+ *
+ * Exported for the Rich Message path, which bypasses marked and therefore has
+ * to apply the same protection to the markdown source itself.
  */
-function protectPseudoTables(md: string): string {
+export function protectPseudoTables(md: string): string {
   const lines = md.split("\n");
   const inRealTable = markRealTableLines(lines);
   const out: string[] = [];

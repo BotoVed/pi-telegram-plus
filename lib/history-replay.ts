@@ -1,5 +1,6 @@
 import { escapeHtml } from "./html.ts";
 import { markdownToTelegramHtml } from "./markdown.ts";
+import { richMarkdownForTables } from "./rich-message.ts";
 import {
     contentImages,
     contentToRenderParts,
@@ -22,7 +23,7 @@ export type TelegramHistoryEntry = {
 };
 
 export type TelegramHistoryReplayItem =
-    | { type: "text"; html: string }
+    | { type: "text"; html: string; richMarkdown?: string }
     | { type: "photo"; data: string; caption: string };
 
 export type TelegramHistoryReplay = {
@@ -112,9 +113,14 @@ export function buildTelegramHistoryReplay(
             }
             const body = rendered.body || message.errorMessage || "";
             if (body.trim()) {
+                // Replayed assistant answers keep the same table treatment as a
+                // live turn: a real GFM table goes out as a Rich Message so the
+                // switch-session replay shows a native table too.
+                const richTable = richMarkdownForTables(body);
                 items.push({
                     type: "text",
                     html: `<b>🤖 Assistant</b>\n${markdownToTelegramHtml(body)}`,
+                    ...(richTable ? { richMarkdown: `**🤖 Assistant**\n\n${richTable}` } : {}),
                 });
             }
             pushPhotos(items, message.content, "Assistant image");
@@ -189,7 +195,13 @@ export async function replayTelegramHistory(options: {
             return { messageCount: replay.messageCount, itemCount, aborted: true };
         }
         if (item.type === "text") {
-            await options.transport.sendText(options.target.chatId, item.html, options.target.messageThreadId);
+            await options.transport.sendText(
+                options.target.chatId,
+                item.html,
+                options.target.messageThreadId,
+                undefined,
+                item.richMarkdown,
+            );
         } else {
             await options.transport.sendChatAction(options.target.chatId, "upload_photo", options.target.messageThreadId);
             await options.transport.sendPhoto(

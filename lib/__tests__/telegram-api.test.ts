@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { createTelegramTransport } from "../telegram-api.ts";
+import { createTelegramTransport, __resetRichMessagesForTests } from "../telegram-api.ts";
 import type { TelegramConfig } from "../types.ts";
 import { __drainAndListFiles, __resetSinkForTests, initLogger } from "../logger.ts";
 
@@ -180,5 +180,131 @@ describe("createTelegramTransport — network-failure suppression & logging", ()
     expect(logText).toMatch(/HTML sendMessage rejected/);
     expect(logText).toMatch(/can't parse entities/);
     expect(logText).toMatch(/"scope":"telegram-api"/);
+  });
+});
+
+describe("createTelegramTransport — Rich Messages (native Markdown tables)", () => {
+  let originalFetch: FetchImpl;
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  let logDir: string;
+  const table = "| 项目 | 状态 |\n| --- | --- |\n| dsh-im | 已安装 |";
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    logDir = freshLogDir();
+    __resetSinkForTests();
+    initLogger({ dir: logDir, level: "debug" });
+    // The capability probe is process-wide; each test starts from "available".
+    __resetRichMessagesForTests();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    warnSpy.mockRestore();
+    __resetRichMessagesForTests();
+    await rm(logDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it("sends rich_message.markdown through sendRichMessage with topic/reply context", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const stub = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body as string) });
+      return telegramResponse(true, { message_id: 42 });
+    });
+    globalThis.fetch = stub as unknown as FetchImpl;
+
+    const { transport } = makeTransport();
+    const sent = await transport.sendText(123, "<b>项目</b>", 456, 789, table);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/sendRichMessage");
+    expect(calls[0].body).toMatchObject({
+      chat_id: 123,
+      message_thread_id: 456,
+      reply_parameters: { message_id: 789 },
+      rich_message: { markdown: table },
+    });
+    expect(calls[0].body.parse_mode).toBeUndefined();
+    expect(sent).toEqual([{ message_id: 42 }]);
+  });
+
+  it("falls back to the HTML send when the Rich call is rejected", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const stub = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body as string) });
+      return String(url).includes("sendRichMessage")
+        ? telegramResponse(false, undefined, "Bad Request: can't parse rich message")
+        : telegramResponse(true, { message_id: 7 });
+    });
+    globalThis.fetch = stub as unknown as FetchImpl;
+
+    const { transport } = makeTransport();
+    const sent = await transport.sendText(1, "<b>项目</b>", undefined, undefined, table);
+
+    expect(sent).toEqual([{ message_id: 7 }]);
+    expect(calls.map((call) => call.url.split("/").pop())).toEqual(["sendRichMessage", "sendMessage"]);
+    expect(calls[1].body).toMatchObject({ parse_mode: "HTML", text: "<b>项目</b>" });
+    const logText = await readTodayLog(logDir);
+    expect(logText).toMatch(/Rich Message rejected/);
+  });
+
+  it("stops attempting Rich after a server reports the method is unknown", async () => {
+    const calls: string[] = [];
+    const stub = vi.fn(async (url: string) => {
+      const method = String(url).split("/").pop()!;
+      calls.push(method);
+      return method === "sendRichMessage"
+        ? telegramResponse(false, undefined, "Not Found")
+        : telegramResponse(true, { message_id: 7 });
+    });
+    globalThis.fetch = stub as unknown as FetchImpl;
+
+    const { transport } = makeTransport();
+    await transport.sendText(1, "<b>a</b>", undefined, undefined, table);
+    await transport.sendText(1, "<b>b</b>", undefined, undefined, table);
+
+    // Only the first send probes the unsupported method; the second goes
+    // straight to the HTML path.
+    expect(calls).toEqual(["sendRichMessage", "sendMessage", "sendMessage"]);
+    const logText = await readTodayLog(logDir);
+    expect(logText).toMatch(/Rich Messages are not supported/);
+  });
+
+  it("edits an existing placeholder with rich_message", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const stub = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body as string) });
+      return telegramResponse(true, true);
+    });
+    globalThis.fetch = stub as unknown as FetchImpl;
+
+    const { transport } = makeTransport();
+    await transport.editText(1, 10, "<b>项目</b>", table);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toContain("/editMessageText");
+    expect(calls[0].body).toMatchObject({
+      chat_id: 1,
+      message_id: 10,
+      rich_message: { markdown: table },
+    });
+  });
+
+  it("falls back to the HTML edit when the Rich edit is rejected", async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const stub = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push({ url: String(url), body: JSON.parse(init.body as string) });
+      return calls.length === 1
+        ? telegramResponse(false, undefined, "Bad Request: rich message is too long")
+        : telegramResponse(true, true);
+    });
+    globalThis.fetch = stub as unknown as FetchImpl;
+
+    const { transport } = makeTransport();
+    await transport.editText(1, 10, "<b>项目</b>", table);
+
+    expect(calls.map((call) => call.url.split("/").pop())).toEqual(["editMessageText", "editMessageText"]);
+    expect(calls[1].body).toMatchObject({ parse_mode: "HTML", text: "<b>项目</b>" });
   });
 });

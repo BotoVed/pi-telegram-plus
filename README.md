@@ -98,7 +98,8 @@ are bridged to Telegram inline buttons so remote turns can interact with them:
 
 ### 🎨 Message Rendering
 - **Markdown → Telegram HTML** — Full conversion via `marked` (tables, code blocks, blockquotes, lists, inline formatting)
-- **Mobile-first table rendering** — box-drawing and card layouts with pseudo-table protection and header repetition across split chunks, so wide tables stay readable on phone screens
+- **Native table rendering** — an answer containing a GitHub-style table is delivered as a Telegram **Rich Message** (`sendRichMessage` / `rich_message` on `editMessageText`, Bot API 10.1+), so the client draws a real bordered table instead of ASCII art. Answers without a real table keep the HTML path unchanged, and any server that rejects Rich Messages automatically falls back to the mobile-first layouts below
+- **Mobile-first table fallback** — box-drawing and card layouts with pseudo-table protection and header repetition across split chunks, so wide tables stay readable on phone screens
 - **Tool execution rendering** — Configurable level (`hidden` / `brief` / `full`) for tool call visibility
 - **Thinking rendering** — Configurable level (`hidden` / `brief` / `full`) for agent thinking blocks
 - **Output splitting** — Safe UTF-8-aware splitting at Telegram's 4096-byte limit

@@ -122,4 +122,18 @@ describe("replayTelegramHistory", () => {
         expect(sent).toContainEqual(expect.stringContaining("🤖 Assistant"));
         expect(sent.at(-1)).toContain("History replay complete");
     });
+
+    it("carries a Rich Message payload for replayed assistant tables", () => {
+        const table = "| 项目 | 状态 |\n| --- | --- |\n| dsh-im | 已安装 |";
+        const replay = buildTelegramHistoryReplay([
+            { type: "message", message: { role: "assistant", content: [{ type: "text", text: table }] } },
+        ], { tool: "hidden", thinking: "hidden" });
+
+        const item = replay.items[0];
+        expect(item).toMatchObject({ type: "text" });
+        if (item.type !== "text") throw new Error("expected a text item");
+        expect(item.richMarkdown).toBe(`**🤖 Assistant**\n\n${table}`);
+        // The HTML rendering stays the fallback for the same item.
+        expect(item.html).toContain("项目");
+    });
 });

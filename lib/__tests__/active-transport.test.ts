@@ -74,4 +74,17 @@ describe("createActiveTelegramTransport", () => {
         expect(await pending).toEqual([]);
         expect(sent).toEqual([]);
     });
+
+    it("forwards the optional Rich Message payload for sends and edits", async () => {
+        const sendText = vi.fn(async () => [{ message_id: 1 }]);
+        const editText = vi.fn(async () => undefined);
+        const base = { ...createTransport([]), sendText, editText } as TelegramTransport;
+        const transport = createActiveTelegramTransport(base, { isActive: () => true });
+
+        await transport.sendText(42, "<b>table</b>", 7, 9, "| a |\n| --- |\n| 1 |");
+        await transport.editText(42, 5, "<b>table</b>", "| a |\n| --- |\n| 1 |");
+
+        expect(sendText).toHaveBeenCalledWith(42, "<b>table</b>", 7, 9, "| a |\n| --- |\n| 1 |");
+        expect(editText).toHaveBeenCalledWith(42, 5, "<b>table</b>", "| a |\n| --- |\n| 1 |");
+    });
 });

@@ -167,7 +167,14 @@ export type TelegramTurn = {
 
 export type TelegramTransport = {
   removeInlineKeyboard(chatId: number, messageId: number): Promise<void>;
-  sendText(chatId: number, text: string, messageThreadId?: number, replyToMessageId?: number): Promise<TelegramSentMessage[]>;
+  /**
+   * `richMarkdown` is an optional Telegram Rich Message payload (see
+   * `lib/rich-message.ts`). When present the transport tries the native rich
+   * send first — that is what renders Markdown tables — and falls back to the
+   * `text`/HTML path below. `text` must therefore always carry the full HTML
+   * rendering of the same content.
+   */
+  sendText(chatId: number, text: string, messageThreadId?: number, replyToMessageId?: number, richMarkdown?: string): Promise<TelegramSentMessage[]>;
   sendButtons(
     chatId: number,
     text: string,
@@ -175,7 +182,8 @@ export type TelegramTransport = {
     messageThreadId?: number,
     replyToMessageId?: number,
   ): Promise<TelegramSentMessage>;
-  editText(chatId: number, messageId: number, text: string): Promise<void>;
+  /** See `sendText` for `richMarkdown`. */
+  editText(chatId: number, messageId: number, text: string, richMarkdown?: string): Promise<void>;
   editButtons(chatId: number, messageId: number, text: string, rows: TelegramButton[][]): Promise<void>;
   answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void>;
   deleteMessage(chatId: number, messageId: number): Promise<void>;

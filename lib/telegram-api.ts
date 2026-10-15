@@ -121,6 +121,32 @@ export async function downloadTelegramFile(token: string, filePath: string, sign
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+// ── Telegram Rich Messages (Bot API 10.1+) ──────────────────────────────────
+// Rich Messages render Markdown tables natively, which the regular HTML parse
+// mode cannot (see lib/rich-message.ts). A Telegram server that predates the
+// API — including a custom `apiBase` proxy or self-hosted Bot API server —
+// rejects the call, so rich delivery is attempted opportunistically and marked
+// unavailable for the rest of the process after a definitive rejection.
+
+let richMessagesAvailable = true;
+
+/** Reset the process-wide Rich Message capability probe (tests only). */
+export function __resetRichMessagesForTests(): void {
+  richMessagesAvailable = true;
+}
+
+/**
+ * True when the failure means the server does not implement Rich Messages.
+ * Content-specific rejections (bad markup, oversized payload, …) must NOT
+ * disable the feature for every later message.
+ */
+function isRichUnsupportedError(error: unknown): boolean {
+  if (!(error instanceof TelegramApiRequestError)) return false;
+  // `Not Found` is Telegram's answer for an unknown method; an older server
+  // handed only `rich_message` on an edit replies `message text is empty`.
+  return /not found|unknown method|unsupported|message text is empty/i.test(error.message);
+}
+
 export class TelegramSendSuppressedError extends Error {
   constructor() {
     super("Telegram send suppressed because this pi instance is not active");
@@ -218,9 +244,54 @@ export function createTelegramTransport(
     apiLog.warn(`HTML ${label} rejected; falling back to plain text`, { reason, snippet });
   };
 
+  /** Note a rejected Rich Message attempt. A definitive "this server has no
+   *  Rich Messages" disables the feature process-wide, so later tables do not
+   *  pay a failed request each; content-specific rejections keep it enabled. */
+  const noteRichFailure = (label: string, err: unknown) => {
+    if (isRichUnsupportedError(err)) {
+      richMessagesAvailable = false;
+      apiLog.warn("Rich Messages are not supported by this Telegram API base; using HTML tables", {
+        method: label,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    apiLog.warn("Rich Message rejected; falling back to HTML", {
+      method: label,
+      reason: err instanceof Error ? err.message : String(err),
+    });
+  };
+
+  /** Send one Rich Message. Returns undefined when the caller should fall back
+   *  to the HTML path (network failures still propagate: the fallback would
+   *  fail identically and the polling status line already reports the outage). */
+  const sendRich = async (
+    markdown: string,
+    chatId: number,
+    lease: unknown,
+    messageThreadId?: number,
+    replyToMessageId?: number,
+  ): Promise<TelegramSentMessage | undefined> => {
+    try {
+      return await callApi<TelegramSentMessage>("sendRichMessage", {
+        chat_id: chatId,
+        rich_message: { markdown },
+        ...messageTargetFields(messageThreadId, replyToMessageId),
+      }, undefined, lease);
+    } catch (err) {
+      if (isNetworkError(err)) throw err;
+      noteRichFailure("sendRichMessage", err);
+      return undefined;
+    }
+  };
+
   return {
-    async sendText(chatId, text, messageThreadId, replyToMessageId) {
+    async sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown) {
       const lease = captureSendLease();
+      if (richMarkdown && richMessagesAvailable) {
+        const rich = await sendRich(richMarkdown, chatId, lease, messageThreadId, replyToMessageId);
+        if (rich) return [rich];
+      }
       const sent: TelegramSentMessage[] = [];
       // Use the semantic HTML splitter so multi-message sends cut at block
       // boundaries (every chunk is independently valid Telegram HTML) instead
@@ -275,8 +346,22 @@ export function createTelegramTransport(
       });
     },
 
-    async editText(chatId, messageId, text) {
+    async editText(chatId, messageId, text, richMarkdown) {
       const lease = captureSendLease();
+      if (richMarkdown && richMessagesAvailable) {
+        try {
+          await callApi("editMessageText", {
+            chat_id: chatId,
+            message_id: messageId,
+            rich_message: { markdown: richMarkdown },
+          }, undefined, lease);
+          return;
+        } catch (err) {
+          // Network failure: nothing useful to retry (same as the HTML path).
+          if (isNetworkError(err)) return;
+          noteRichFailure("editMessageText", err);
+        }
+      }
       const first = splitTelegramHtml(text)[0];
       await callApi("editMessageText", {
         chat_id: chatId,

@@ -5,18 +5,18 @@ import type { TelegramTransport, TelegramTurn } from "../types.ts";
 
 function createRendererHarness(options: { tool?: "hidden" | "brief" | "full" } = {}) {
   const handlers = new Map<string, Array<(event: any) => Promise<void>>>();
-  const sent: Array<{ chatId: number; text: string; messageThreadId?: number; replyToMessageId?: number }> = [];
+  const sent: Array<{ chatId: number; text: string; messageThreadId?: number; replyToMessageId?: number; richMarkdown?: string }> = [];
   const actions: Array<{ chatId: number; action: string; messageThreadId?: number }> = [];
   const photos: Array<{ chatId: number; data: string; messageThreadId?: number; replyToMessageId?: number }> = [];
   const transport: TelegramTransport = {
     removeInlineKeyboard: async () => undefined,
-    sendText: async (chatId, text, messageThreadId, replyToMessageId) => {
-      sent.push({ chatId, text, messageThreadId, replyToMessageId });
+    sendText: async (chatId, text, messageThreadId, replyToMessageId, richMarkdown) => {
+      sent.push({ chatId, text, messageThreadId, replyToMessageId, richMarkdown });
       return [{ message_id: sent.length }];
     },
     sendButtons: async () => ({ message_id: 1 }),
-    editText: async (chatId, _messageId, text) => {
-      sent.push({ chatId, text });
+    editText: async (chatId, _messageId, text, richMarkdown) => {
+      sent.push({ chatId, text, richMarkdown });
     },
     editButtons: async () => undefined,
     answerCallbackQuery: async () => undefined,
@@ -153,5 +153,42 @@ describe("Telegram renderer turn routing", () => {
     const failure = sent.find((item) => item.text.includes("❌ bash"));
     expect(failure?.text).toContain("Command aborted");
     expect(failure?.text).not.toContain('"content"');
+  });
+
+  it("sends Markdown tables as a Rich Message and keeps the HTML fallback alongside", async () => {
+    const { emit, sent } = createRendererHarness();
+    const turn: TelegramTurn = { chatId: 111, messageThreadId: 10, queuedAttachments: [] };
+    const table = "| 项目 | 状态 |\n| --- | --- |\n| dsh-im | 已安装 |";
+
+    await runWithTelegramTurn(turn, () => emit("message_end", { message: { role: "assistant", content: table } }));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].richMarkdown).toBe(table);
+    // The HTML rendering of the same content still travels with the send so the
+    // transport can fall back to Telegram's HTML mode when Rich is rejected.
+    expect(sent[0].text).toContain("项目");
+    expect(sent[0].text).not.toContain("| --- |");
+  });
+
+  it("edits the placeholder with the Rich payload for a table answer", async () => {
+    const { emit, sent } = createRendererHarness();
+    const turn: TelegramTurn = { chatId: 111, replaceMessageId: 4242, queuedAttachments: [] };
+    const table = "| A | B |\n| --- | --- |\n| 1 | 2 |";
+
+    await runWithTelegramTurn(turn, () => emit("message_end", { message: { role: "assistant", content: table } }));
+
+    expect(sent).toEqual([expect.objectContaining({ chatId: 111, richMarkdown: table })]);
+  });
+
+  it("keeps answers without a real table on the plain HTML path", async () => {
+    const { emit, sent } = createRendererHarness();
+    const turn: TelegramTurn = { chatId: 111, queuedAttachments: [] };
+
+    await runWithTelegramTurn(turn, () => emit("message_end", {
+      message: { role: "assistant", content: "just prose with a | pipe and\nanother | pipe line" },
+    }));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0].richMarkdown).toBeUndefined();
   });
 });

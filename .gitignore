@@ -51,3 +51,6 @@ npm-debug.log*
 # Review-loop artifacts (pi-subagents)
 review/
 .pi-subagents/
+
+# Inbound attachments saved by the DSH IM plugin (runtime data, not source)
+.dsh-im/
