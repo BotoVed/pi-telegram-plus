@@ -1,13 +1,45 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { SessionManager, type SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionManager, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { SessionNameDeps, CommandRegistry } from "./register.ts";
 import { escapeHtml } from "../html.ts";
 import type { CapturedAgentSession } from "../types.ts";
 import { log } from "../logger.ts";
 
 const sessionLog = log.child("session");
+
+/**
+ * `SessionManager` is a static class on the pi package root and must be resolved
+ * lazily. A package-root import pulls in pi's codemode re-export, which reads
+ * `MCP_TYPESCRIPT_PREAMBLE` from `@earendil-works/pi-codemode` — an export removed in
+ * pi-codemode 1.2.0 while pi still declares a caret range, so a lockfile-less install
+ * can float past what pi supports and throw at load time. The pi CLI masks this via its
+ * virtual-module alias table; plain Node consumers do not. Resolution is guarded so a
+ * missing class disables /cwd and /resume with a clear message instead of breaking the
+ * whole extension.
+ */
+type SessionManagerClass = typeof SessionManager;
+
+async function loadSessionManager(): Promise<SessionManagerClass | undefined> {
+  try {
+    const module = await import("@earendil-works/pi-coding-agent");
+    const candidate = (module as unknown as { SessionManager?: unknown }).SessionManager;
+    if (typeof candidate === "function" && typeof (candidate as SessionManagerClass).create === "function") {
+      return candidate as SessionManagerClass;
+    }
+    sessionLog.warn("SessionManager has no create(); /cwd and /resume disabled", {
+      type: typeof candidate,
+    });
+  } catch (error) {
+    sessionLog.warn("SessionManager unavailable; /cwd and /resume disabled", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return undefined;
+}
+
+const SESSION_MANAGER = await loadSessionManager();
 
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1) + "…";
@@ -197,7 +229,12 @@ export function registerSessionCommands(
       }
 
       const currentSessionFile = ctx.sessionManager.getSessionFile();
-      const sessionManager = SessionManager.create(targetCwd, undefined, {
+      const SessionManagerClass = SESSION_MANAGER;
+      if (!SessionManagerClass) {
+        ui.notify("Session management is unavailable in this pi build.", "error");
+        return;
+      }
+      const sessionManager = SessionManagerClass.create(targetCwd, undefined, {
         ...(currentSessionFile ? { parentSession: currentSessionFile } : {}),
       });
       // Ensure the header-only session file exists before switchSession opens it.
@@ -222,7 +259,12 @@ export function registerSessionCommands(
     description: "Resume a previous session",
     handler: async (_args, ctx) => {
       const ui = ctx.ui;
-      const sessions = await SessionManager.list(ctx.cwd);
+      const SessionManagerClass = SESSION_MANAGER;
+      if (!SessionManagerClass) {
+        ui.notify("Session management is unavailable in this pi build.", "error");
+        return;
+      }
+      const sessions = await SessionManagerClass.list(ctx.cwd);
       if (sessions.length === 0) {
         ui.notify("No sessions found.", "info");
         return;

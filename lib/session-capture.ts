@@ -38,8 +38,48 @@
  *   };
  */
 
-import { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { log } from "./logger.ts";
 import type { CapturedAgentSession } from "./types.ts";
+
+const sessionCaptureLog = log.child("session-capture");
+
+/**
+ * `AgentSession` must be resolved lazily rather than statically imported.
+ *
+ * pi >= 1.0.0 re-exports `createCodemodeExtension` from its package root, pulling in
+ * `@earendil-works/pi-codemode/declarations`. The `MCP_TYPESCRIPT_PREAMBLE` export that
+ * pi reads was removed in pi-codemode 1.2.0, while pi declares the dependency with a
+ * caret range — so a lockfile-less install can float past what pi supports and make a
+ * static package-root import throw at load time. The pi CLI hides this behind its
+ * virtual-module alias table, but plain Node consumers do not, so resolution is done
+ * here with a guard and degrades to a no-op instead of crashing the extension.
+ */
+type AgentSessionConstructor = { prototype: CapturedAgentSession & { bindExtensions: unknown } };
+
+function isAgentSessionConstructor(value: unknown): value is AgentSessionConstructor {
+  if (typeof value !== "function") return false;
+  const prototype = (value as { prototype?: { bindExtensions?: unknown } }).prototype;
+  return typeof prototype?.bindExtensions === "function";
+}
+
+async function loadAgentSession(): Promise<AgentSessionConstructor | undefined> {
+  try {
+    const module = await import("@earendil-works/pi-coding-agent");
+    const candidate = (module as unknown as { AgentSession?: unknown }).AgentSession;
+    if (isAgentSessionConstructor(candidate)) return candidate;
+    sessionCaptureLog.warn("AgentSession has no bindExtensions(); session capture disabled", {
+      type: typeof candidate,
+    });
+  } catch (error) {
+    sessionCaptureLog.warn("AgentSession unavailable; session capture disabled", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return undefined;
+}
+
+const AGENT_SESSION = await loadAgentSession();
 
 type SessionCaptureState = {
   activeSession?: CapturedAgentSession;
@@ -54,14 +94,14 @@ function getState(): SessionCaptureState {
   return g[SESSION_CAPTURE_STATE];
 }
 
-export function installAgentSessionCapture(): void {
+export function installAgentSessionCapture(): boolean {
   const state = getState();
-  if (state.installed) return;
+  if (state.installed) return true;
+  const AgentSession = AGENT_SESSION;
+  if (!AgentSession) return false;
   state.installed = true;
 
-  const proto = AgentSession.prototype as CapturedAgentSession & {
-    bindExtensions: AgentSession["bindExtensions"];
-  };
+  const proto = AgentSession.prototype;
   const originalBindExtensions = proto.bindExtensions;
 
   proto.bindExtensions = async function patchedBindExtensions(this: CapturedAgentSession, bindings) {
@@ -88,6 +128,7 @@ export function installAgentSessionCapture(): void {
 
     return result;
   };
+  return true;
 }
 
 export function getActiveSession(): CapturedAgentSession | undefined {

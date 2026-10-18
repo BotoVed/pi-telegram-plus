@@ -100,11 +100,25 @@ export async function getTelegramFile(token: string, fileId: string, signal?: Ab
   );
 }
 
-export async function downloadTelegramFile(token: string, filePath: string, signal?: AbortSignal): Promise<Buffer> {
+/**
+ * Downloads a file from the Telegram file endpoint.
+ *
+ * Honours `PI_TELEGRAM_API_BASE` / `apiBase` like every other call in this module:
+ * the file endpoint lives on the same origin as the Bot API, so hardcoding
+ * `api.telegram.org` bypassed a mock or self-hosted Bot API server and sent
+ * attachment downloads to the real Telegram service.
+ */
+export async function downloadTelegramFile(
+  token: string,
+  filePath: string,
+  signal?: AbortSignal,
+  apiBase?: string,
+): Promise<Buffer> {
   const encodedPath = filePath.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  const url = `${telegramApiBase(apiBase)}/file/bot${token}/${encodedPath}`;
   let response: Response;
   try {
-    response = await fetch(`https://api.telegram.org/file/bot${token}/${encodedPath}`, {
+    response = await fetch(url, {
       method: "GET",
       signal,
     });

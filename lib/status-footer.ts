@@ -1,6 +1,65 @@
 import { stripVTControlCharacters } from "node:util";
-import { FooterComponent } from "@earendil-works/pi-coding-agent";
+import type { FooterComponent } from "@earendil-works/pi-coding-agent";
+import { log } from "./logger.ts";
 import { TELEGRAM_STATUS_KEY } from "./status.ts";
+
+const footerLog = log.child("status-footer");
+
+/**
+ * `FooterComponent` MUST NOT be a static value import.
+ *
+ * pi >= 1.0.0 re-exports `createCodemodeExtension` from its package root, and that
+ * chain statically imports `MCP_TYPESCRIPT_PREAMBLE` from `@earendil-works/pi-codemode`,
+ * an export removed in pi-codemode 1.2.0. Because pi declares that dependency with a
+ * caret range, a lockfile-less install floats to a codemode newer than pi expects and
+ * importing the package root throws:
+ *
+ *   SyntaxError: The requested module '@earendil-works/pi-codemode/declarations'
+ *   does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'
+ *
+ * Inside the pi CLI this is masked by the CLI's virtual-module alias table (which
+ * serves `@earendil-works/pi-coding-agent` from the CLI's own bundle), but any plain
+ * Node consumer — including the vitest matrix — dies at import time before a single
+ * test runs. Resolving lazily and degrading to a no-op keeps the extension loadable
+ * everywhere while preserving the patch whenever the real class is reachable.
+ *
+ * Resolution happens once via top-level await, at extension-load time. That keeps
+ * `installTelegramStatusAlignment()` fully synchronous, which matters because pi
+ * rejects extension API calls made after an `await` inside the extension factory
+ * ("Extension runtime not initialized. Action methods cannot be called during
+ * extension loading."). Top-level await is itself safe: pi awaits the extension
+ * module graph before invoking the factory.
+ */
+type FooterPrototype = {
+  render: FooterRender;
+  [key: symbol]: FooterRender | undefined;
+};
+
+type FooterComponentConstructor = { prototype: FooterPrototype };
+
+function isFooterComponentConstructor(value: unknown): value is FooterComponentConstructor {
+  if (typeof value !== "function") return false;
+  const prototype = (value as { prototype?: FooterPrototype }).prototype;
+  return typeof prototype?.render === "function";
+}
+
+async function loadFooterComponent(): Promise<FooterComponentConstructor | undefined> {
+  try {
+    const module = await import("@earendil-works/pi-coding-agent");
+    const candidate = (module as unknown as { FooterComponent?: unknown }).FooterComponent;
+    if (isFooterComponentConstructor(candidate)) return candidate;
+    footerLog.warn("FooterComponent has no render(); Telegram status alignment disabled", {
+      type: typeof candidate,
+    });
+  } catch (error) {
+    footerLog.warn("FooterComponent unavailable; Telegram status alignment disabled", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  return undefined;
+}
+
+const FOOTER_COMPONENT = await loadFooterComponent();
 
 type FooterDataView = {
   getGitBranch(): string | null;
@@ -102,16 +161,41 @@ export function renderFooterWithTelegramStatusRight(
   }
 }
 
-export function installTelegramStatusAlignment(): void {
-  const prototype = FooterComponent.prototype as unknown as {
-    render: FooterRender;
-    [key: symbol]: FooterRender | undefined;
-  };
-  if (prototype[ORIGINAL_RENDER_KEY]) return;
+/**
+ * Installs the right-alignment patch onto a given `FooterComponent`-shaped
+ * constructor. Exported for tests: it carries the whole install logic, so the
+ * degradation and idempotency paths can be exercised without a real pi install.
+ *
+ * Validates its input rather than trusting the caller: a malformed candidate (a
+ * plain object, a class without `render`) degrades to a no-op instead of throwing,
+ * which is the whole point of this seam.
+ *
+ * Idempotent via ORIGINAL_RENDER_KEY: a second call is a no-op and never captures
+ * an already-patched render as the "original".
+ */
+export function installAlignmentOn(component: unknown): boolean {
+  if (!isFooterComponentConstructor(component)) return false;
+
+  const prototype = component.prototype;
+  if (prototype[ORIGINAL_RENDER_KEY]) return true;
 
   const originalRender = prototype.render;
   Object.defineProperty(prototype, ORIGINAL_RENDER_KEY, { value: originalRender });
   prototype.render = function renderWithTelegramStatusRight(width: number): string[] {
-    return renderFooterWithTelegramStatusRight(this, originalRender, width);
+    return renderFooterWithTelegramStatusRight(this as unknown as FooterComponent, originalRender, width);
   };
+  return true;
+}
+
+/**
+ * Installs the right-alignment patch on the real `FooterComponent.prototype`.
+ *
+ * Synchronous by design (see FOOTER_COMPONENT above). Never throws: when
+ * `FooterComponent` could not be resolved, this degrades to a no-op so the
+ * extension still loads and every other Telegram feature keeps working.
+ *
+ * @returns true when the patch is installed, false when it degraded to a no-op.
+ */
+export function installTelegramStatusAlignment(): boolean {
+  return installAlignmentOn(FOOTER_COMPONENT);
 }

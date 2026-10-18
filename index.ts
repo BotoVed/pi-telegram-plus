@@ -333,8 +333,8 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       if (!token) {
         throw new Error("Telegram bot token is not configured");
       }
-      const fileInfo = await getTelegramFile(token, fileId);
-      const data = await downloadTelegramFile(token, fileInfo.file_path);
+      const fileInfo = await getTelegramFile(token, fileId, undefined, config.apiBase);
+      const data = await downloadTelegramFile(token, fileInfo.file_path, undefined, config.apiBase);
       await mkdir(currentSessionCwd(), { recursive: true });
       const candidateName = buildIncomingAttachmentPath(fileId, fileName || kind, fileInfo.file_path);
       const outputPath = candidateName;
