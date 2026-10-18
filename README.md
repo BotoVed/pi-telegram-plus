@@ -11,21 +11,76 @@
 ## Compatibility
 
 - Requires Node.js `>=22.19.0`.
-- Supported pi coding agent range: `@earendil-works/pi-coding-agent >=0.80.7 <0.85.0 || >=0.85.1 <0.86.0`.
-- Release validation uses temporary clean installs for representative pi versions and a manual Telegram smoke test on the latest verified pi.
+- Supported pi coding agent range: `@earendil-works/pi-coding-agent >=0.80.7 <0.85.0 || >=0.85.1 <0.86.0 || >=1.0.0 <1.4.0`.
+- Release validation runs the full `typecheck` + test suite against temporary clean installs of every supported pi version, plus an automated end-to-end acceptance run (isolated pi in `tmux` against a mock Telegram Bot API and a mock OpenAI-compatible provider) on `0.85.1`, `1.0.4`, `1.1.0`, and `1.3.0`.
 - pi `0.74.x` is intentionally unsupported because its public TypeScript surface is incompatible with this extension.
 - pi versions older than `0.80.7` are no longer supported.
 - pi `0.85.0` is excluded because its published package imports the undeclared `@earendil-works/pi-server` runtime dependency.
 - Future pi minor versions should be treated as unverified until the compatibility matrix passes.
 
-| pi coding agent | Automated clean install (`typecheck` + tests) | Manual Telegram end-to-end test |
-|-----------------|-----------------------------------------------|---------------------|
+### pi-codemode note (pi `>=1.0.0`)
+
+pi `1.0.0` and later depend on `@earendil-works/pi-codemode` through a **caret range** and
+statically import `MCP_TYPESCRIPT_PREAMBLE` from it. That export was removed in
+`pi-codemode 1.2.0`, so a lockfile-less `npm install` of pi `1.0.x`/`1.1.0` can float to a
+`pi-codemode` that no longer satisfies pi's own import — `import("@earendil-works/pi-coding-agent")`
+then fails with `does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'`.
+
+This extension is unaffected in two ways:
+
+1. **No static value imports.** Every `@earendil-works/pi-coding-agent` import in this
+   package is `import type` or a guarded dynamic `import()`. Optional classes
+   (`FooterComponent`, `AgentSession`, `SessionManager`) are resolved lazily and degrade to
+   a logged no-op when unresolvable, instead of failing extension load.
+2. **The pi CLI masks the drift anyway.** pi serves `@earendil-works/pi-coding-agent` from
+   its own bundle through a virtual-module alias table, so the plugin resolves the real
+   class at runtime regardless of what the on-disk `pi-codemode` looks like.
+
+Combined, these mean the drift cannot break this plugin. It does still break **plain Node
+imports** of the pi package root — which is exactly what a test harness or bundler does:
+
+```console
+$ node -e "import('@earendil-works/pi-coding-agent/dist/index.js')"
+Error: The requested module '@earendil-works/pi-codemode/declarations'
+does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'
+```
+
+The pi **CLI** is unaffected (`pi --print …` runs normally on a drifted 1.0.4 install),
+because it resolves the package through its virtual-module alias table rather than the
+on-disk `pi-codemode`. That asymmetry is why this note exists: the drift is observable
+only from outside the CLI.
+
+The matrix runs in two modes, and **both pass every supported version**:
+
+- **default** — pins each pi version to its contemporaneous `pi-codemode` release,
+  reproducing the environment that pi release was built against.
+- **`npm run test:pi-versions -- --strict-upstream`** — skips the pin, so the raw upstream
+  drift is visible. This passes too, precisely because the extension never statically
+  imports the pi package root. A failure here would mean a static package-root import had
+  been reintroduced, which is why the mode is kept in the script.
+
+| pi coding agent | Automated clean install (`typecheck` + tests) | Automated isolated E2E (tmux + mock Telegram API + mock provider) |
+|-----------------|-----------------------------------------------|-------------------------------------------------------------------|
 | `0.80.7` | passed | not run |
 | `0.80.10` | passed | not run |
-| `0.81.1` | passed | passed — `/status`, `/debug`, agent prompt, `read`, `bash` + `/stop`, `tg_attach`, inbound attachment save, `/tg-config` inline callback |
+| `0.81.1` | passed | not run |
 | `0.84.0` | passed | not run |
 | `0.85.0` | excluded — published package imports undeclared `@earendil-works/pi-server` runtime dependency | not run |
-| `0.85.1` | passed | passed — Telegram command handling and UI notifications |
+| `0.85.1` | passed | passed |
+| `1.0.0` | passed | not run |
+| `1.0.1` | passed | not run |
+| `1.0.2` | passed | not run |
+| `1.0.3` | passed | not run |
+| `1.0.4` | passed | passed |
+| `1.1.0` | passed | passed |
+| `1.2.0` | passed | not run |
+| `1.3.0` | passed | passed |
+
+The E2E run asserts the whole round trip, not just startup: the plugin authenticates
+against the mock Bot API (`getMe`), enters its `getUpdates` polling loop, picks up an
+injected Telegram message, drives a real pi turn into the mock provider, and sends the
+assistant reply back through `sendMessage`/`editMessageText`. Reproduce with
+`node scripts/e2e/run-e2e.mjs`.
 
 ---
 

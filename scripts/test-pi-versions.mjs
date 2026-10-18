@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DEFAULT_PI_VERSIONS = ["0.80.7", "0.80.10", "0.81.1", "0.84.0", "0.85.1", "1.0.4", "1.1.0"];
+const DEFAULT_PI_VERSIONS = [
+  "0.80.7", "0.80.10", "0.81.1", "0.84.0", "0.85.1",
+  "1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.1.0", "1.2.0", "1.3.0",
+];
 const TEST_DEPS = [
   "typebox@1.1.39",
   "marked@18.0.4",
@@ -14,12 +17,47 @@ const TEST_DEPS = [
   "vitest@4.1.8",
 ];
 
+/**
+ * pi >= 1.0.0 depends on `@earendil-works/pi-codemode` with a CARET range, and its
+ * own `dist/extensions/codemode/tool.js` statically imports `MCP_TYPESCRIPT_PREAMBLE`
+ * from it. That export was REMOVED in pi-codemode 1.2.0, so a lockfile-less install
+ * today floats the caret up to the newest codemode and pi 1.0.x/1.1.0 crash on import:
+ *
+ *   SyntaxError: The requested module '@earendil-works/pi-codemode/declarations'
+ *   does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'
+ *
+ * This is upstream dependency drift, NOT a plugin incompatibility. The extension no
+ * longer trips over it, because every `@earendil-works/pi-coding-agent` import in this
+ * package is `import type` or a guarded dynamic `import()`, so nothing statically
+ * reaches pi's codemode re-export. Both modes below therefore pass today; the pin is
+ * kept so the matrix measures PLUGIN compatibility against the environment each pi
+ * release was built for, and --strict-upstream still exposes the raw drift if a future
+ * change reintroduces a static package-root import.
+ *
+ * Keyed by pi version -> codemode version to install alongside it.
+ */
+const CODEMODE_PIN_BY_PI = {
+  "1.0.0": "1.0.0",
+  "1.0.1": "1.0.1",
+  "1.0.2": "1.0.2",
+  "1.0.3": "1.0.3",
+  "1.0.4": "1.0.4",
+  "1.1.0": "1.1.0",
+  "1.2.0": "1.2.0",
+  "1.3.0": "1.3.0",
+};
+
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const keepTemp = process.env.PI_TELEGRAM_PLUS_KEEP_MATRIX_TMP === "1";
 
+// --strict-upstream: do NOT pin codemode, so the matrix reports raw upstream drift.
+// The extension is expected to pass here too, because it never statically imports the
+// pi package root; a failure means a static package-root import crept back in.
+const strictUpstream = process.argv.slice(2).includes("--strict-upstream");
+
 function parseVersions() {
-  const fromArgs = process.argv.slice(2).filter(Boolean);
+  const fromArgs = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
   if (fromArgs.length > 0) return fromArgs;
   const fromEnv = process.env.PI_TELEGRAM_PLUS_PI_VERSIONS?.split(/[\s,]+/).filter(Boolean) ?? [];
   return fromEnv.length > 0 ? fromEnv : DEFAULT_PI_VERSIONS;
@@ -102,6 +140,19 @@ async function testVersion(version) {
     await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
     const packageLock = join(workDir, "package-lock.json");
     if (existsSync(packageLock)) await rm(packageLock, { force: true });
+
+    const codemodePin = strictUpstream ? undefined : CODEMODE_PIN_BY_PI[version];
+    const pinArgs = codemodePin ? [`@earendil-works/pi-codemode@${codemodePin}`] : [];
+    if (codemodePin) {
+      console.log(`pinning @earendil-works/pi-codemode@${codemodePin} (contemporaneous with pi ${version})`);
+    } else if (CODEMODE_PIN_BY_PI[version]) {
+      // Drift-capable pi version, but --strict-upstream asked us to leave it floating.
+      console.log(`NOT pinning pi-codemode for pi ${version} (strict upstream drift mode)`);
+    } else {
+      // pi < 1.0.0 has no pi-codemode dependency, so there is nothing to pin or drift.
+      console.log(`pi ${version} predates the pi-codemode dependency; nothing to pin`);
+    }
+
     await run("npm", [
       "install",
       "--legacy-peer-deps",
@@ -111,6 +162,7 @@ async function testVersion(version) {
       "--no-fund",
       "--no-save",
       `@earendil-works/pi-coding-agent@${version}`,
+      ...pinArgs,
       ...TEST_DEPS,
     ], workDir, `install pi ${version}`);
     await run("npm", ["run", "typecheck"], workDir, `typecheck pi ${version}`);
@@ -128,6 +180,9 @@ async function testVersion(version) {
 
 const versions = parseVersions();
 console.log(`Testing pi versions: ${versions.join(", ")}`);
+console.log(strictUpstream
+  ? "Mode: --strict-upstream (no pi-codemode pin; reports raw upstream drift)"
+  : "Mode: default (pins contemporaneous pi-codemode, so the matrix measures PLUGIN compatibility)");
 const results = [];
 for (const version of versions) {
   results.push(await testVersion(version));
@@ -138,6 +193,14 @@ for (const result of results) {
   console.log(`${result.ok ? "✓" : "✗"} ${result.version}`);
 }
 if (failed.length > 0) {
-  console.error(`\n${failed.length} pi version(s) failed. See the first failing command above for the exact step.`);
+  if (strictUpstream) {
+    console.error(`\n${failed.length} pi version(s) failed in --strict-upstream mode.`);
+    console.error("This mode skips the pi-codemode pin, so upstream drift is visible: pi >= 1.0.0");
+    console.error("statically reads MCP_TYPESCRIPT_PREAMBLE, removed in pi-codemode 1.2.0. The extension");
+    console.error("avoids that import chain entirely, so a failure here means a static package-root");
+    console.error("import of @earendil-works/pi-coding-agent was reintroduced.");
+  } else {
+    console.error(`\n${failed.length} pi version(s) failed. See the first failing command above for the exact step.`);
+  }
   process.exitCode = 1;
 }
