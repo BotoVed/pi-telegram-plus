@@ -19,7 +19,8 @@
   "files": [
     "index.ts",
     "lib/**/*.ts",
-    "!lib/__tests__/"
+    "!lib/__tests__/",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
