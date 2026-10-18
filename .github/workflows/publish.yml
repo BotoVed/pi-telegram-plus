@@ -23,7 +23,14 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
+      # fetch-depth: 0 and fetch-tags are required, not cosmetic: `changelog:roll
+      # --auto-draft` ranges over `git log <last-tag>..HEAD`, and the default shallow
+      # checkout has neither the tag nor the commits, so the draft would come out empty and
+      # the release would stop. The tag must also exist locally before it can be pushed.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -37,11 +44,28 @@ jobs:
       - name: Bump version
         run: npm version ${{ inputs.bump }} --no-git-tag-version
 
+      # Move the [Unreleased] notes into a dated [<version>] section and re-point the
+      # [Unreleased] link reference, so the notes shipped inside the tarball describe the
+      # version they are shipped with. Rolled here, in the same commit as the bump, so the
+      # tag and the CHANGELOG cannot disagree.
+      #
+      # If [Unreleased] is empty, --auto-draft fills it from the conventional commits since
+      # the previous tag, so a release is never blocked on having hand-written the notes
+      # first. The result is committed like any other change and can be edited afterwards.
+      - name: Roll CHANGELOG
+        run: npm run changelog:roll -- --auto-draft
+
+      - name: Verify CHANGELOG describes the release
+        run: npm run changelog:check
+
       - name: Commit, tag and push
         id: tag
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          git add package.json
+          # package-lock.json is included because `npm version` rewrites its version
+          # fields; committing only package.json left the lockfile pinned to the previous
+          # release on master.
+          git add package.json package-lock.json CHANGELOG.md
           git commit -m "release: prepare pi-telegram-plus v${VERSION}"
           git tag "v${VERSION}"
           git push origin HEAD:master
@@ -95,6 +119,12 @@ jobs:
       # docs/compat-results.json, the matrix scripts, or the peer range disagree.
       - name: Verify compatibility matrix
         run: npm run compat:check
+
+      # Fails the release if the CHANGELOG does not describe this version. Redundant with
+      # prepublishOnly, but explicit here so the reason is visible in the workflow log.
+      # Needs no git history, so this job's shallow checkout is fine.
+      - name: Verify CHANGELOG
+        run: npm run changelog:check
 
       # Trusted publishing (OIDC): no token needed. Provenance is generated automatically.
       - name: Publish to npm

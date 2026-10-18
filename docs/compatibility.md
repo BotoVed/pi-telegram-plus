@@ -141,8 +141,9 @@ assistant reply back through `sendMessage`/`editMessageText` — 8 assertions pe
 ### What is in the publish gate, and what is not
 
 `prepublishOnly` (mirrored by the publish workflow) runs `npm test`, `npm run typecheck`,
-and `npm run compat:check`. `compat:check` is what stops a stale table or a mismatched
-range from shipping.
+`npm run compat:check`, and `npm run changelog:check`. `compat:check` is what stops a stale
+table or a mismatched range from shipping; `changelog:check` is what stops a release whose
+`CHANGELOG.md` does not describe the version being published.
 
 The matrix and E2E are **not** in the gate. E2E installs pi and starts `tmux` for every
 version, so making it mandatory would slow releases enough to encourage bypassing it. They

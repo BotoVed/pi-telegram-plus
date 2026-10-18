@@ -8,7 +8,44 @@ rationale and investigation detail live in the linked docs and in the commit mes
 which are written to stand on their own. Generate a starting draft for a new release with
 `npm run changelog:draft`.
 
+Write entries under `## [Unreleased]` as you go. Releasing moves that section under the
+new version number automatically — `npm run changelog:roll` locally, or as part of the
+publish workflow — and re-points the `[Unreleased]` link. `npm run changelog:check` fails
+if this file does not describe the version in `package.json`, so a release whose notes are
+missing or mislabelled cannot be published.
+
 ## [Unreleased]
+
+### Fixed
+
+- **Released versions were shipped with their notes still labelled `[Unreleased]`.**
+  `0.0.11` was published with 42 lines of release notes sitting under `## [Unreleased]`, its
+  `[Unreleased]` link still comparing from `v0.0.10`. The publish workflow bumped
+  `package.json` and tagged a release, but nothing ever moved the notes into a version
+  section, so the published tarball described a released version as unreleased. The release
+  now rolls this file, and `npm run changelog:check` fails any release whose CHANGELOG does
+  not describe the version being published.
+- **`package-lock.json` stayed pinned to the previous release on `master`.** The bump job
+  committed `package.json` alone, so the lockfile still read `0.0.10` while `package.json`
+  read `0.0.11`. Both files are now committed together.
+
+### Added
+
+- **`npm run changelog:roll`** — moves `## [Unreleased]` under the current version with
+  today's date, inserts a fresh `[Unreleased]`, and re-points the `[Unreleased]` link. With
+  `--auto-draft` it first fills an empty `[Unreleased]` from the conventional commits since
+  the last tag, so a release never waits on hand-written notes. Zero dependencies.
+- **`npm run changelog:check`** — verifies the CHANGELOG describes the version in
+  `package.json`, that every version section has a link reference, that no version repeats,
+  and that the trailing provenance note matches the referenced tags.
+
+### Notes
+
+- `prepublishOnly` now also runs `npm run changelog:check`, and the publish workflow rolls
+  the CHANGELOG in the same commit as the version bump, so the tag and the notes cannot
+  disagree. The bump job checks out full history and tags, which the draft step requires.
+
+## [0.0.11] — 2026-10-18
 
 ### Fixed
 
@@ -155,7 +192,8 @@ which are written to stand on their own. Generate a starting draft for a new rel
 - Initial release: Telegram control of the pi coding agent, with command bridging,
   interactive UI, and streaming output.
 
-[Unreleased]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.10...HEAD
+[Unreleased]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.11...HEAD
+[0.0.11]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.8...v0.0.9
 [0.0.8]: https://github.com/jalyfeng/pi-telegram-plus/compare/f2b97fa...v0.0.8
@@ -167,7 +205,9 @@ which are written to stand on their own. Generate a starting draft for a new rel
 [0.0.2]: https://github.com/jalyfeng/pi-telegram-plus/compare/fffc6f5...f9410e7
 [0.0.1]: https://github.com/jalyfeng/pi-telegram-plus/tree/fffc6f5
 
-<!-- Tags exist only for v0.0.1, v0.0.8, v0.0.9 and v0.0.10; earlier versions are
-     compared by commit SHA. The v0.0.1 tag points at the initial commit, whose
-     package.json still read 0.1.0, so it is linked as a tree, not a range. The
-     v0.0.8 tag (bb69f57) sits one commit past the 0.0.8 release commit (f65e372). -->
+<!--
+     Versions linked by tag: v0.0.8, v0.0.9, v0.0.10, v0.0.11; versions without
+     a tag are compared by commit SHA. The v0.0.1 tag points at the initial
+     commit, whose package.json still read 0.1.0, so it is linked as a tree, not
+     a range. The v0.0.8 tag (bb69f57) sits one commit past the 0.0.8 release
+     commit (f65e372). -->

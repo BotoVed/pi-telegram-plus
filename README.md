@@ -13,8 +13,11 @@
 - Requires Node.js `>=22.19.0`.
 - Supported pi coding agent range: [see the matrix below](#version-matrix).
 - The publish gate (`prepublishOnly` + the publish workflow) runs `typecheck`, the
-  unit/regression suite, and `compat:check`, which fails the release if the matrix below
-  drifts from the recorded results or from the peer range.
+  unit/regression suite, `compat:check`, and `changelog:check`. `compat:check` fails the
+  release if the matrix below drifts from the recorded results or from the peer range;
+  `changelog:check` fails it if `CHANGELOG.md` does not describe the version being
+  published. The workflow rolls the changelog itself, so the tag and the notes cannot
+  disagree.
 - pi `0.74.x` and anything older than `0.80.7` are unsupported: their public TypeScript
   surface is incompatible with this extension.
 - **Version compatibility, verification, and the upstream-defect analysis live in

@@ -66,12 +66,19 @@ function parseCommit(line) {
   return { sha, type, scope, breaking: Boolean(breaking), subject };
 }
 
-function main() {
-  const [fromArg, toArg] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
-  const to = toArg ?? "HEAD";
-  const from = fromArg ?? lastTag();
-
-  const range = from ? `${from}..${to}` : to;
+/**
+ * Build the draft as a list of lines.
+ *
+ * Exported so `changelog-version.mjs --auto-draft` can reuse it: the release workflow must
+ * not fail just because nobody hand-wrote the notes, and duplicating the section mapping
+ * would let the two scripts drift apart.
+ *
+ * `bodyOnly` drops the `## [Unreleased]` heading and the explanatory comments, leaving a
+ * section body that can be spliced under an existing heading.
+ */
+export function buildDraft({ from, to = "HEAD", bodyOnly = false } = {}) {
+  const start = from ?? lastTag();
+  const range = start ? `${start}..${to}` : to;
   const raw = git(["log", "--no-merges", "--format=%h %s", range]);
   const lines = raw ? raw.split("\n").filter(Boolean) : [];
 
@@ -105,51 +112,73 @@ function main() {
     bySection.get(section).push(entry);
   }
 
-  const heading = from ? `commits in \`${range}\`` : `all ${lines.length} commits (no tag found)`;
-  console.log(`<!-- draft: ${heading} -->`);
-  console.log("<!--\n  Draft only. Edit before release: keep the user-visible effect, drop the\n"
-    + "  internal detail. Commit bodies already carry the full rationale.\n-->");
-  console.log();
-  console.log("## [Unreleased]");
-  console.log();
+  const out = [];
+  if (!bodyOnly) {
+    const heading = start
+      ? `commits in \`${range}\``
+      : `all ${lines.length} commits (no tag found)`;
+    out.push(`<!-- draft: ${heading} -->`);
+    out.push("<!--\n  Draft only. Edit before release: keep the user-visible effect, drop the\n"
+      + "  internal detail. Commit bodies already carry the full rationale.\n-->");
+    out.push("");
+    out.push("## [Unreleased]");
+    out.push("");
+  }
 
   if (breaking.length) {
-    console.log("### Breaking");
-    console.log();
-    for (const entry of breaking) console.log(`- ${entry.text} (${entry.sha})`);
-    console.log();
+    out.push("### Breaking", "");
+    for (const entry of breaking) out.push(`- ${entry.text} (${entry.sha})`);
+    out.push("");
   }
 
   for (const section of SECTION_ORDER) {
     const entries = bySection.get(section);
     if (!entries?.length) continue;
-    console.log(`### ${section}`);
-    console.log();
-    for (const entry of entries) console.log(`- ${entry.text} (${entry.sha})`);
-    console.log();
+    out.push(`### ${section}`, "");
+    for (const entry of entries) out.push(`- ${entry.text} (${entry.sha})`);
+    out.push("");
   }
 
   const unmapped = [...bySection.keys()].filter((s) => !SECTION_ORDER.includes(s));
   for (const section of unmapped) {
-    console.log(`### ${section}`);
-    console.log();
-    for (const entry of bySection.get(section)) console.log(`- ${entry.text} (${entry.sha})`);
-    console.log();
+    out.push(`### ${section}`, "");
+    for (const entry of bySection.get(section)) out.push(`- ${entry.text} (${entry.sha})`);
+    out.push("");
   }
 
-  if (internal.length) {
-    console.log("<!-- Internal (normally omitted from release notes):");
-    for (const entry of internal) console.log(`       ${entry.type}  ${entry.text}`);
-    console.log("-->");
-    console.log();
+  // Internal and non-conventional entries are included only in the human-facing draft:
+  // --auto-draft writes them straight into the CHANGELOG, where HTML comments listing
+  // commit hashes would be noise.
+  if (!bodyOnly) {
+    if (internal.length) {
+      out.push("<!-- Internal (normally omitted from release notes):");
+      for (const entry of internal) out.push(`       ${entry.type}  ${entry.text}`);
+      out.push("-->", "");
+    }
+    if (unparsed.length) {
+      out.push("<!-- Non-conventional subjects needing a decision:");
+      for (const line of unparsed) out.push(`       ${line}`);
+      out.push("-->", "");
+    }
   }
 
-  if (unparsed.length) {
-    console.log("<!-- Non-conventional subjects needing a decision:");
-    for (const line of unparsed) console.log(`       ${line}`);
-    console.log("-->");
-    console.log();
-  }
+  return { lines: out, count: lines.length };
 }
 
-main();
+/** True when the repo has no tags yet, so --auto-draft cannot scope a range. */
+export function hasNoTags() {
+  return lastTag() === undefined;
+}
+
+function main() {
+  const bodyOnly = process.argv.slice(2).includes("--body-only");
+  const [fromArg, toArg] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+  const { lines } = buildDraft({ from: fromArg, to: toArg, bodyOnly });
+  process.stdout.write(`${lines.join("\n")}\n`);
+}
+
+// Imported by changelog-version.mjs: only run when invoked directly.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}
+

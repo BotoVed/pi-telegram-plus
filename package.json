@@ -32,7 +32,9 @@
     "compat:gen": "node scripts/gen-compat-matrix.mjs",
     "compat:check": "node scripts/gen-compat-matrix.mjs --check",
     "changelog:draft": "node scripts/changelog-draft.mjs",
-    "prepublishOnly": "npm test && npm run typecheck && npm run compat:check"
+    "changelog:roll": "node scripts/changelog-version.mjs",
+    "changelog:check": "node scripts/changelog-version.mjs --check",
+    "prepublishOnly": "npm test && npm run typecheck && npm run compat:check && npm run changelog:check"
   },
   "pi": {
     "extensions": [
