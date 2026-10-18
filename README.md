@@ -11,8 +11,12 @@
 ## Compatibility
 
 - Requires Node.js `>=22.19.0`.
-- Supported pi coding agent range: `@earendil-works/pi-coding-agent >=0.80.7 <0.85.0 || >=0.85.1 <0.86.0 || >=1.0.0 <1.4.0`.
-- Release validation runs the full `typecheck` + test suite against temporary clean installs of every supported pi version, plus an automated end-to-end acceptance run (isolated pi in `tmux` against a mock Telegram Bot API and a mock OpenAI-compatible provider) on `0.85.1`, `1.0.4`, `1.1.0`, and `1.3.0`.
+- Supported pi coding agent range: `@earendil-works/pi-coding-agent >=0.80.7 <0.85.0 || >=0.85.1 <1.4.0`.
+- The publish gate (`prepublishOnly`, mirrored by the publish workflow) runs `typecheck` and the unit/regression suite.
+- Two heavier suites are run **manually** before a release rather than as part of the publish gate:
+  - `npm run test:pi-versions` installs each supported pi version into a temporary clean tree and runs `typecheck` + the test suite against it. Pass `--strict-upstream` to skip the contemporaneous `pi-codemode` pin and expose raw upstream drift; it doubles as a regression sentinel.
+  - `npm run test:e2e` drives an isolated pi inside `tmux` against a mock Telegram Bot API and a mock OpenAI-compatible provider, asserting the full inbound message → model turn → reply round trip on `0.85.1`, `1.0.4`, `1.1.0`, and `1.3.0`.
+- E2E is deliberately kept out of the publish gate: it installs pi and starts `tmux` per version, so making it mandatory would slow releases enough to encourage bypassing it.
 - pi `0.74.x` is intentionally unsupported because its public TypeScript surface is incompatible with this extension.
 - pi versions older than `0.80.7` are no longer supported.
 - pi `0.85.0` is excluded because its published package imports the undeclared `@earendil-works/pi-server` runtime dependency.
@@ -67,6 +71,13 @@ The matrix runs in two modes, and **both pass every supported version**:
 | `0.84.0` | passed | not run |
 | `0.85.0` | excluded — published package imports undeclared `@earendil-works/pi-server` runtime dependency | not run |
 | `0.85.1` | passed | passed |
+| `0.86.0` | passed | not run |
+| `0.86.1` | passed | not run |
+| `0.87.0` | passed | not run |
+| `0.87.1` | passed | not run |
+| `0.99.0` | passed | not run |
+| `0.99.1` | passed | not run |
+| `0.99.2` | passed | not run |
 | `1.0.0` | passed | not run |
 | `1.0.1` | passed | not run |
 | `1.0.2` | passed | not run |
