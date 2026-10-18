@@ -2,10 +2,11 @@
 /**
  * Draft the `[Unreleased]` section of CHANGELOG.md from conventional commits.
  *
- * This exists because CHANGELOG.md is the *only* human-facing release-notes surface for
- * this project: the publish workflow creates tags but no GitHub Release, so a consumer
- * has nowhere else to read what changed. That makes the file worth keeping — but it does
- * not make it worth writing from scratch every release.
+ * This exists because CHANGELOG.md is the only human-facing release-notes surface for this
+ * project. The publish workflow creates tags but deliberately no GitHub Release (decided
+ * against: tags plus this file are sufficient, and a Release page would be a second place
+ * to keep in sync), so a consumer has nowhere else to read what changed. That makes the
+ * file worth keeping — but it does not make it worth writing from scratch every release.
  *
  * This script produces a skeleton, not a finished section. It cannot know why a change
  * mattered, and it should not pretend to: the output is deliberately terse and is meant to
