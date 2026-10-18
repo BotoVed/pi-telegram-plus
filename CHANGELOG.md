@@ -3,114 +3,52 @@
 Notable changes to `pi-telegram-plus`. Versions follow the published npm releases;
 dates are the publish dates from the npm registry.
 
+This file is a user-facing summary: what changed, and what it means for you. Design
+rationale and investigation detail live in the linked docs and in the commit messages,
+which are written to stand on their own. Generate a starting draft for a new release with
+`npm run changelog:draft`.
+
 ## [Unreleased]
 
 ### Fixed
 
-- **Attachment downloads ignored `apiBase`.** `downloadTelegramFile` hardcoded
-  `https://api.telegram.org/file/...` while every other call in the module honoured
-  `PI_TELEGRAM_API_BASE` / `config.apiBase`. With a self-hosted Bot API server or a mock
-  configured, incoming attachment downloads were sent to the real Telegram service:
-  they failed, and they leaked the file path and bot token to an origin the operator had
-  explicitly routed away from. The file endpoint now resolves through the same
-  `telegramApiBase()` helper as the rest of the Bot API calls.
-- **Peer range rejected pi `0.86.0`–`0.99.2` and `1.2.0`/`1.3.0`.** The range stopped at
-  `<0.86.0` and resumed at `>=1.0.0`, leaving a hole over the `0.86`–`0.99` line, and had
-  not been widened past `<1.2.0` for the newest releases. Those pi versions were never
-  broken — the full matrix passes on all of them — but npm's peer validation refused to
-  co-install the plugin alongside any of them:
-
-  ```
-  npm error code ERESOLVE
-  npm error Conflicting peer dependency: @earendil-works/pi-coding-agent@1.1.0
-  ```
-
-  This only affected npm-native installs (pi as a `devDependency`, or a manual
-  `npm install`); `pi install npm:pi-telegram-plus` does not run peer validation and
-  worked either way. The supported range is now `>=0.80.7 <1.4.0`, which still excludes
-  `0.74.x`.
-- **pi `0.85.0` re-admitted.** The range previously carved it out as
-  `<0.85.0 || >=0.85.1`, on the grounds that pi `0.85.0`'s published tarball statically
-  imports the undeclared `@earendil-works/pi-server` — reachable from `dist/index.js` via
-  `dist/main.js` → `dist/experimental/server.js` — so a plain Node `import()` of the pi
-  package root throws `Cannot find package '@earendil-works/pi-server'`.
-
-  The upstream defect is real (`pi-server` appears in none of pi `0.85.0`'s dependency
-  fields, and `0.85.1` dropped the reference), but it no longer affects this extension:
-  the `Changed` entry below replaced every static pi package-root import with a guarded
-  `import()`. Measured on `0.85.0` with the current sources, both the clean-install matrix
-  (`426/426`) and the full tmux E2E round trip (`8/8` assertions) pass, in default and
-  `--strict-upstream` modes. Reverting just `lib/status-footer.ts` to its `v0.0.10` static
-  value import is enough to reproduce the failure as a hard
-  `lib/__tests__/status-footer.test.ts` suite error, so the guard is what carries it rather
-  than luck.
-
-  Worth noting for anyone reading the earlier exclusion: inside the pi CLI the defect was
-  masked regardless, because the CLI's virtual-module alias table serves
-  `@earendil-works/pi-coding-agent` from its own bundle, so `dist/experimental/server.js`
-  never loads. The excluded version primarily broke plain-Node consumers,
-  including this project's own test matrix.
+- **Attachments sent to a self-hosted Bot API server went to the wrong host.**
+  `downloadTelegramFile` hardcoded `https://api.telegram.org/file/...` while every other
+  call honoured `PI_TELEGRAM_API_BASE` / `config.apiBase`, so downloads failed and leaked
+  the file path and bot token to an origin the operator had routed away from.
+- **npm refused to co-install with pi `0.86.0`–`0.99.2`, `1.2.0` or `1.3.0`.** Those
+  versions were never broken — the matrix passes on all of them — but gaps in the peer
+  range made npm-native installs fail with `ERESOLVE`. The range is now
+  `>=0.80.7 <1.4.0`. `pi install npm:pi-telegram-plus` was unaffected (no peer validation).
+- **pi `0.85.0` is supported again.** It was carved out in `0.0.7` because its published
+  tarball imports an undeclared `@earendil-works/pi-server`. That upstream defect is real,
+  but the drift-proofing below means it no longer affects this extension.
+  See [compatibility.md](docs/compatibility.md#pi-0850-the-pi-server-packaging-defect).
 
 ### Changed
 
-- **pi package-root imports no longer fail extension load when upstream is broken.** Every
-  `@earendil-works/pi-coding-agent` import in the package is now `import type` or a
-  guarded dynamic `import()`. `FooterComponent`, `AgentSession` and `SessionManager` are
-  resolved once via top-level `await` (so the extension factory stays synchronous, as pi
-  requires) and degrade to a logged no-op when unavailable, instead of failing extension
-  load.
-
-  This makes the plugin immune to an upstream drift it cannot control. Since pi `0.99.0`,
-  pi declares `@earendil-works/pi-codemode` through a caret range and statically imports
-  `MCP_TYPESCRIPT_PREAMBLE` from it, but that export was removed in `pi-codemode 1.2.0`.
-  A lockfile-less install therefore floats `pi-codemode` forward past what the pi release
-  expects. Measured across the supported range, the drift breaks exactly pi `1.0.1`
-  through `1.1.0`:
-
-  | pi | ships `npm-shrinkwrap.json` | `pi-codemode` resolves to | bundle still imports the symbol | plain Node `import()` |
-  |---|---|---|---|---|
-  | `0.80.7`–`0.87.1` | yes | not a dependency | — | ok |
-  | `0.99.0`–`0.99.2` | yes | `0.99.x` (pinned) | yes | ok |
-  | `1.0.0` | yes | `1.0.0` (pinned) | yes | ok |
-  | `1.0.1`–`1.1.0` | no | `1.3.0` | yes | **throws** |
-  | `1.2.0`–`1.3.0` | no | `1.3.0` | no | ok |
-
-  pi `1.0.0` and earlier escaped because they ship an `npm-shrinkwrap.json` pinning the
-  contemporaneous `pi-codemode`; that shrinkwrap was dropped in `1.0.1`. `1.2.0` and
-  `1.3.0` escape because their bundles stopped referencing the removed symbol. `1.0.0` is
-  therefore immune by accident rather than by design.
-
-  In practice the pi CLI already masked this behind its virtual-module alias table — a
-  drifted install fails a plain Node `import()` while `pi --print` runs a full turn
-  normally — so this is robustness work that protects non-CLI consumers (bundlers, test
-  harnesses) and future upstream changes, **not** a fix for a user-reported failure.
-
-  `installTelegramStatusAlignment()` deliberately stays synchronous: pi rejects extension
-  API calls made after an `await` inside the extension factory ("Extension runtime not
-  initialized"), so the lazy resolution happens at module scope, which pi awaits before
-  invoking the factory.
+- **pi `@earendil-works/pi-coding-agent` is no longer imported as a static value.** Every
+  reference is now `import type` or a guarded `import()`, and the optional classes
+  (`FooterComponent`, `AgentSession`, `SessionManager`) degrade to a logged no-op instead
+  of failing extension load. This protects non-CLI consumers (bundlers, test harnesses)
+  from upstream packaging and dependency drift — including the `pi-codemode` drift that
+  breaks plain-Node imports of pi `1.0.1`–`1.1.0`. The pi CLI masked both defects anyway.
+  See [compatibility.md](docs/compatibility.md#why-the-extension-survives-upstream-breakage).
 
 ### Added
 
-- **Automated isolated end-to-end acceptance** (`npm run test:e2e`), on pi `0.85.1`,
-  `1.0.4`, `1.1.0` and `1.3.0`. It drives a real pi inside `tmux` against a mock Telegram
-  Bot API and a mock OpenAI-compatible provider, and asserts the full round trip rather
-  than just startup: `getMe` authentication, the `getUpdates` polling loop, pickup of an
-  injected Telegram message, a real pi turn reaching the provider, and the assistant
-  reply delivered back through `sendMessage`/`editMessageText`.
-
-- **The pi version matrix now covers 21 versions** (`0.80.7` through `1.3.0`), each
-  installed into a temporary clean tree. `--strict-upstream` skips the contemporaneous
-  `pi-codemode` pin to expose raw upstream drift; both modes pass, and the unpinned mode
-  acts as a regression sentinel that fails if a static package-root import is
-  reintroduced.
+- **`npm run test:e2e`** — isolated end-to-end acceptance: a real pi in `tmux` against a
+  mock Telegram Bot API and mock OpenAI provider, asserting the full round trip (`getMe` →
+  `getUpdates` → injected message → real pi turn → reply delivered) on five pi versions.
+- **The pi version matrix covers 21 versions** (`0.80.7`–`1.3.0`), and the README
+  compatibility table is now generated from recorded results instead of maintained by hand.
+  See [compatibility.md](docs/compatibility.md#keeping-this-honest).
 
 ### Notes
 
-- The publish gate (`prepublishOnly`, mirrored by the publish workflow) runs `npm test`
-  and `npm run typecheck`. The matrix and E2E suites are run manually before a release:
-  E2E installs pi and starts `tmux` for every version, so making it a hard gate would
-  slow releases enough to encourage bypassing it.
+- `prepublishOnly` (mirrored by the publish workflow) runs `npm test`, `npm run typecheck`
+  and `npm run compat:check`, which fails a release if the table, the test scripts and the
+  peer range disagree. The matrix and E2E run manually and are recorded with `--record`.
 
 ## [0.0.10] — 2026-10-15
 

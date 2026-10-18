@@ -36,6 +36,9 @@ const VERSIONS = (argValue("--versions", "0.85.0,0.85.1,1.0.4,1.1.0,1.3.0"))
   .map((v) => v.trim())
   .filter(Boolean);
 const KEEP = process.argv.includes("--keep");
+// --record: merge measured E2E results into docs/compat-results.json. Off by default so a
+// normal run never mutates a committed evidence file.
+const RECORD = process.argv.includes("--record");
 const STEP_TIMEOUT_MS = Number(argValue("--timeout", "90")) * 1000;
 const TG_PORT = Number(argValue("--tg-port", "9940"));
 const PROVIDER_PORT = Number(argValue("--provider-port", "9941"));
@@ -51,6 +54,29 @@ const USER_ID = 777;
 const ROOT = process.env.PITG_E2E_ROOT || "/tmp/pitg-e2e";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Merge a green E2E run into docs/compat-results.json.
+ *
+ * Every version in `report` passed (the caller checks that first). Versions present in
+ * the file but not exercised by this run are left untouched, so a targeted
+ * `--versions 1.3.0 --record` refines one row instead of erasing the others.
+ */
+function recordE2eResults(report) {
+  const resultsPath = join(REPO, "docs", "compat-results.json");
+  const results = JSON.parse(readFileSync(resultsPath, "utf8"));
+  results.e2e ??= {};
+  results.e2e.recordedAt = new Date().toISOString().slice(0, 10);
+  results.e2e.versions ??= {};
+  for (const entry of report) {
+    if (entry.ok) results.e2e.versions[entry.version] = "passed";
+  }
+  // Assertion count is derived from a real run, never typed in by hand.
+  const counts = new Set(report.filter((entry) => entry.ok).map((entry) => entry.steps?.length ?? 0));
+  if (counts.size === 1) results.e2e.assertionsPerVersion = [...counts][0];
+  writeFileSync(resultsPath, `${JSON.stringify(results, null, 2)}\n`);
+  return "docs/compat-results.json";
+}
 
 function sh(cmd, args, opts = {}) {
   return spawnSync(cmd, args, { encoding: "utf8", ...opts });
@@ -494,6 +520,18 @@ async function main() {
   for (const entry of report) console.log(`${entry.ok ? "✓" : "✗"} pi ${entry.version}`);
   const failed = report.filter((r) => !r.ok);
   writeFileSync(join(ROOT, "e2e-report.json"), JSON.stringify(report, null, 2) + "\n");
+
+  if (RECORD) {
+    // Only a fully green run may be recorded: a partial run must never end up in the
+    // README table as evidence, and versions that were skipped must not appear at all.
+    if (failed.length > 0) {
+      console.log(`\n✗ refusing to --record: ${failed.length} version(s) failed.`);
+    } else {
+      const path = recordE2eResults(report);
+      console.log(`\n✓ recorded ${report.length} E2E version(s) in ${path}`);
+    }
+  }
+
   if (failed.length > 0) {
     console.log(`\n${failed.length}/${report.length} version(s) FAILED`);
     process.exitCode = 1;

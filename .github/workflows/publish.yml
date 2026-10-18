@@ -91,6 +91,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Fails the release if the README compatibility matrix, the recorded results in
+      # docs/compat-results.json, the matrix scripts, or the peer range disagree.
+      - name: Verify compatibility matrix
+        run: npm run compat:check
+
       # Trusted publishing (OIDC): no token needed. Provenance is generated automatically.
       - name: Publish to npm
         run: npm publish

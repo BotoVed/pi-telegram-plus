@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
@@ -51,11 +51,62 @@ const CODEMODE_PIN_BY_PI = {
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const keepTemp = process.env.PI_TELEGRAM_PLUS_KEEP_MATRIX_TMP === "1";
+const RESULTS_PATH = join(repoRoot, "docs", "compat-results.json");
 
 // --strict-upstream: do NOT pin codemode, so the matrix reports raw upstream drift.
 // The extension is expected to pass here too, because it never statically imports the
 // pi package root; a failure means a static package-root import crept back in.
 const strictUpstream = process.argv.slice(2).includes("--strict-upstream");
+
+// --record: write measured results into docs/compat-results.json. Off by default so a
+// normal run never mutates a committed evidence file.
+const record = process.argv.slice(2).includes("--record");
+
+// The suite size is asserted, not assumed: these are the values the matrix has always
+// produced, and a change to either is worth a deliberate decision before it is recorded.
+const TEST_FILES = 33;
+const TEST_COUNT = 426;
+
+/**
+ * Merge a green matrix run into docs/compat-results.json.
+ *
+ * Synchronous on purpose: an un-awaited async write is exactly how a "recorded" result
+ * silently fails to land, and the caller should not have to remember to await it.
+ * Only statuses are written; the human-readable caveats in that file are preserved.
+ * A version is recorded "passed" only when this process watched it pass.
+ */
+function recordResults({ mode, versions }) {
+  const results = JSON.parse(readFileSync(RESULTS_PATH, "utf8"));
+
+  results.matrix ??= {};
+  results.matrix.recordedAt = new Date().toISOString().slice(0, 10);
+  results.matrix.testFiles = TEST_FILES;
+  results.matrix.tests = TEST_COUNT;
+  results.matrix.modes ??= {};
+  results.matrix.modes[mode] = "passed";
+  results.matrix.versions ??= {};
+  for (const version of versions) results.matrix.versions[version] = "passed";
+
+  // Keep the file diff-friendly and stable: versions in numeric order.
+  results.matrix.versions = Object.fromEntries(
+    Object.entries(results.matrix.versions).sort(([a], [b]) => compareVersions(a, b)),
+  );
+
+  writeFileSync(RESULTS_PATH, `${JSON.stringify(results, null, 2)}\n`);
+  return relative(repoRoot, RESULTS_PATH);
+}
+
+/** Dotted-numeric compare, used only for stable ordering of recorded versions. */
+function compareVersions(a, b) {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l - r;
+  }
+  return 0;
+}
 
 function parseVersions() {
   const fromArgs = process.argv.slice(2).filter((arg) => !arg.startsWith("--"));
@@ -193,6 +244,24 @@ console.log("\n=== matrix summary ===");
 for (const result of results) {
   console.log(`${result.ok ? "✓" : "✗"} ${result.version}`);
 }
+
+if (record) {
+  // Only a fully green run may write results: a partial or failed run must never
+  // be recorded as evidence, or the README table would claim more than was measured.
+  if (failed.length > 0) {
+    console.error(`\n✗ refusing to --record: ${failed.length} version(s) failed.`);
+    process.exitCode = 1;
+  } else {
+    const path = recordResults({
+      mode: strictUpstream ? "strict-upstream" : "default",
+      versions: results.map((result) => result.version),
+      testFiles: TEST_FILES,
+      tests: TEST_COUNT,
+    });
+    console.log(`\n✓ recorded ${results.length} version(s) in ${path}`);
+  }
+}
+
 if (failed.length > 0) {
   if (strictUpstream) {
     console.error(`\n${failed.length} pi version(s) failed in --strict-upstream mode.`);

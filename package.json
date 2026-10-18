@@ -20,7 +20,8 @@
     "index.ts",
     "lib/**/*.ts",
     "!lib/__tests__/",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "docs/compatibility.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -28,7 +29,10 @@
     "test:watch": "vitest",
     "test:pi-versions": "node scripts/test-pi-versions.mjs",
     "test:e2e": "node scripts/e2e/run-e2e.mjs",
-    "prepublishOnly": "npm test && npm run typecheck"
+    "compat:gen": "node scripts/gen-compat-matrix.mjs",
+    "compat:check": "node scripts/gen-compat-matrix.mjs --check",
+    "changelog:draft": "node scripts/changelog-draft.mjs",
+    "prepublishOnly": "npm test && npm run typecheck && npm run compat:check"
   },
   "pi": {
     "extensions": [

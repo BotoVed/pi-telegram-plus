@@ -1,0 +1,178 @@
+# Compatibility
+
+Everything in this document is either a measured fact or a direct consequence of one. The
+version matrix, the range, and the release gate are kept in sync mechanically — see
+[Keeping this honest](#keeping-this-honest) at the end.
+
+- **Supported range:** `@earendil-works/pi-coding-agent >=0.80.7 <1.4.0` (declared in
+  `package.json`; that file is the single source of truth).
+- **Requires:** Node.js `>=22.19.0`.
+- **Unsupported:** pi `0.74.x`, and anything older than `0.80.7` — their public TypeScript
+  surface is incompatible with this extension.
+- **Unverified:** any pi minor version newer than the matrix. Treat a new minor as
+  untested until the matrix passes on it.
+
+## Why the extension survives upstream breakage
+
+Every `@earendil-works/pi-coding-agent` reference in this package is either an `import type`
+or a guarded dynamic `import()`. The three optional symbols — `FooterComponent`,
+`AgentSession`, `SessionManager` — are resolved once at module scope via top-level `await`
+and degrade to a logged no-op when unresolvable, instead of failing extension load.
+
+Two details are load-bearing:
+
+- **Synchronous registration.** pi rejects extension API calls made after an `await` inside
+  the extension factory (`Extension runtime not initialized. Action methods cannot be
+  called during extension loading.`). The resolution therefore happens at module scope,
+  which pi awaits *before* invoking the factory, so `installTelegramStatusAlignment()` stays
+  synchronous.
+- **The guard, not deferral, is what saves us.** Resolution still happens at load time.
+  What prevents a hard failure is the `try`/`catch` around the dynamic `import()`.
+
+This is why the extension tolerates the two upstream defects below. It is robustness work
+that protects non-CLI consumers (bundlers, test harnesses, our own matrix) and future
+upstream changes — **not** a fix for a user-reported failure, because inside the pi CLI both
+defects were masked anyway (see each section).
+
+## pi `0.85.0`: the `pi-server` packaging defect
+
+pi `0.85.0`'s published tarball statically imports a package it never declares:
+
+```
+dist/index.js → dist/main.js → dist/experimental/server.js
+                                    ↓ lines 10–11 (static top-level import)
+                             @earendil-works/pi-server  (+ /unix)
+```
+
+`@earendil-works/pi-server` appears in **none** of pi `0.85.0`'s dependency fields —
+`dependencies`, `optionalDependencies`, `peerDependencies`, `peerDependenciesMeta`, and
+`devDependencies` are all empty of it. The package itself does exist on npm at `0.85.0`; the
+problem is purely the missing declaration.
+
+A plain Node `import()` of the pi package root therefore throws:
+
+```console
+$ node -e "import('@earendil-works/pi-coding-agent/dist/index.js')"
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@earendil-works/pi-server'
+imported from .../node_modules/@earendil-works/pi-coding-agent/dist/experimental/server.js
+```
+
+**This extension is unaffected**, and the guard is demonstrably what carries it: reverting
+just `lib/status-footer.ts` to its `v0.0.10` static value import is enough to turn
+`lib/__tests__/status-footer.test.ts` into a hard suite error on `0.85.0`, with exactly the
+message above. One file, not six.
+
+**The pi CLI masked this either way.** The CLI serves `@earendil-works/pi-coding-agent` from
+its own bundle through a virtual-module alias table, so `dist/experimental/server.js` is
+never loaded. A probe confirmed the CLI's dynamic import of the package root returns
+`FooterComponent=function / AgentSession=function / SessionManager=function` on both `0.85.0`
+and `0.85.1`. The version was excluded in an earlier release primarily because it broke
+plain-Node consumers — including this project's own test matrix.
+
+`0.85.1` dropped the reference entirely: zero `.js` files in it mention `pi-server`.
+
+## pi `1.0.1`–`1.1.0`: the `pi-codemode` pin window
+
+pi `0.99.0` and later declare `@earendil-works/pi-codemode` through a **caret range** and
+statically import `MCP_TYPESCRIPT_PREAMBLE` from it. That export was removed in
+`pi-codemode 1.2.0`, so a lockfile-less `npm install` can float `pi-codemode` forward past
+what the pi release expects. `import("@earendil-works/pi-coding-agent")` then fails with
+`does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'`.
+
+Three conditions must line up, and only part of the range satisfies all three:
+
+| pi | ships `npm-shrinkwrap.json` | `pi-codemode` resolves to | bundle imports the symbol | plain Node `import()` |
+|---|---|---|---|---|
+| `0.80.7`–`0.87.1` | yes | not a dependency | — | ok |
+| `0.99.0`–`0.99.2` | yes | `0.99.x` (pinned) | yes | ok |
+| `1.0.0` | yes | `1.0.0` (pinned) | yes | ok |
+| `1.0.1`–`1.1.0` | no | `1.3.0` | yes | **throws** |
+| `1.2.0`–`1.3.0` | no | `1.3.0` | no | ok |
+
+`0.80.7`–`0.87.1` predate the dependency entirely. `0.99.0`–`1.0.0` pin it through a
+shrinkwrap, which `1.0.1` dropped — so `1.0.0` is immune by accident, not by design.
+`1.2.0` and `1.3.0` escape because their bundles stopped referencing the removed symbol. The
+exposed window is therefore exactly pi `1.0.1`–`1.1.0`.
+
+Two independent reasons this extension is unaffected:
+
+1. **No static value imports** (see the section above).
+2. **The pi CLI masks the drift anyway** — it resolves the package through its alias table
+   rather than the on-disk `pi-codemode`.
+
+The drift is still real and still breaks **plain Node imports** of the pi package root,
+which is exactly what a test harness or bundler does:
+
+```console
+$ node -e "import('@earendil-works/pi-coding-agent/dist/index.js')"
+Error: The requested module '@earendil-works/pi-codemode/declarations'
+does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'
+```
+
+The pi **CLI** is unaffected — `pi --print …` runs a full turn normally on a drifted `1.0.4`
+install. That asymmetry is why the matrix keeps a mode that exposes it.
+
+### Matrix modes
+
+`npm run test:pi-versions` runs two modes, and **both pass every supported version**:
+
+- **default** — pins each pi version to its contemporaneous `pi-codemode` release,
+  reproducing the environment that pi release was built against. This is the mode that
+  measures *plugin* compatibility.
+- **`--strict-upstream`** — skips the pin, so raw upstream drift is visible. This passes
+  too, precisely because the extension never statically imports the pi package root. A
+  failure here means a static package-root import was reintroduced, which is why the mode is
+  kept: it is a regression sentinel.
+
+## Verification suites
+
+| Suite | What it does | Command |
+|---|---|---|
+| `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
+| Unit / regression | 33 files, 426 tests | `npm test` |
+| Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
+| E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
+
+The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates
+against the mock Bot API (`getMe`), enters its `getUpdates` polling loop, picks up an
+injected Telegram message, drives a real pi turn into the mock provider, and sends the
+assistant reply back through `sendMessage`/`editMessageText` — 8 assertions per version.
+
+### What is in the publish gate, and what is not
+
+`prepublishOnly` (mirrored by the publish workflow) runs `npm test`, `npm run typecheck`,
+and `npm run compat:check`. `compat:check` is what stops a stale table or a mismatched
+range from shipping.
+
+The matrix and E2E are **not** in the gate. E2E installs pi and starts `tmux` for every
+version, so making it mandatory would slow releases enough to encourage bypassing it. They
+are run manually before a release and recorded:
+
+```console
+$ npm run test:pi-versions -- --record   # both modes
+$ npm run test:e2e -- --record
+$ npm run compat:gen                     # refresh the README table
+```
+
+## Keeping this honest
+
+The README matrix used to be hand-maintained prose, and it went stale: after the
+drift-proofing refactor, the `0.85.0` row still claimed the version was excluded and its E2E
+was never run, while the matrix script and the actual behaviour said otherwise.
+
+It is now generated. `docs/compat-results.json` holds **recorded results only** — no prose,
+no policy — written by `--record` runs. `scripts/gen-compat-matrix.mjs` renders the README
+table from it and, under `--check`, fails if:
+
+- the README table and `docs/compat-results.json` disagree;
+- the matrix script tests a version with no recorded result, or records a version the
+  script no longer tests;
+- the E2E script drives a version by default with no recorded E2E result;
+- the peer range in `package.json` excludes any version the matrix claims to pass.
+
+That last check is the important one: it makes "the range and the evidence disagree"
+impossible to ship.
+
+This document is prose about *why*. The *what* is generated. Keeping them separate is
+deliberate — the generated half cannot rot, and the prose half is not doing double duty as a
+changelog.
