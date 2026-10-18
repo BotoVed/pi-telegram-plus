@@ -11,15 +11,22 @@
 ## Compatibility
 
 - Requires Node.js `>=22.19.0`.
-- Supported pi coding agent range: `@earendil-works/pi-coding-agent >=0.80.7 <0.85.0 || >=0.85.1 <1.4.0`.
+- Supported pi coding agent range: `@earendil-works/pi-coding-agent >=0.80.7 <1.4.0`.
 - The publish gate (`prepublishOnly`, mirrored by the publish workflow) runs `typecheck` and the unit/regression suite.
 - Two heavier suites are run **manually** before a release rather than as part of the publish gate:
   - `npm run test:pi-versions` installs each supported pi version into a temporary clean tree and runs `typecheck` + the test suite against it. Pass `--strict-upstream` to skip the contemporaneous `pi-codemode` pin and expose raw upstream drift; it doubles as a regression sentinel.
-  - `npm run test:e2e` drives an isolated pi inside `tmux` against a mock Telegram Bot API and a mock OpenAI-compatible provider, asserting the full inbound message → model turn → reply round trip on `0.85.1`, `1.0.4`, `1.1.0`, and `1.3.0`.
+  - `npm run test:e2e` drives an isolated pi inside `tmux` against a mock Telegram Bot API and a mock OpenAI-compatible provider, asserting the full inbound message → model turn → reply round trip on `0.85.0`, `0.85.1`, `1.0.4`, `1.1.0`, and `1.3.0`.
 - E2E is deliberately kept out of the publish gate: it installs pi and starts `tmux` per version, so making it mandatory would slow releases enough to encourage bypassing it.
 - pi `0.74.x` is intentionally unsupported because its public TypeScript surface is incompatible with this extension.
 - pi versions older than `0.80.7` are no longer supported.
-- pi `0.85.0` is excluded because its published package imports the undeclared `@earendil-works/pi-server` runtime dependency.
+- pi `0.85.0` is supported. Its published tarball has a genuine upstream packaging defect —
+  `dist/index.js` → `dist/main.js` → `dist/experimental/server.js` statically imports
+  `@earendil-works/pi-server`, which pi `0.85.0` never declares in any dependency field, so
+  a plain Node `import()` of the pi package root fails with
+  `Cannot find package '@earendil-works/pi-server'`. This extension is unaffected because it
+  no longer statically imports the pi package root: what remains are `import type`
+  references and guarded `import()` calls that degrade instead of throwing. Measured
+  evidence for this version is in the matrix footnote (†).
 - Future pi minor versions should be treated as unverified until the compatibility matrix passes.
 
 ### pi-codemode note (dependency added in pi `0.99.0`; breaks `1.0.1`–`1.1.0`)
@@ -84,7 +91,7 @@ The matrix runs in two modes, and **both pass every supported version**:
 | `0.80.10` | passed | not run |
 | `0.81.1` | passed | not run |
 | `0.84.0` | passed | not run |
-| `0.85.0` | excluded — published package imports undeclared `@earendil-works/pi-server` runtime dependency | not run |
+| `0.85.0` | passed &nbsp;† | passed &nbsp;† |
 | `0.85.1` | passed | passed |
 | `0.86.0` | passed | not run |
 | `0.86.1` | passed | not run |
@@ -107,6 +114,17 @@ against the mock Bot API (`getMe`), enters its `getUpdates` polling loop, picks 
 injected Telegram message, drives a real pi turn into the mock provider, and sends the
 assistant reply back through `sendMessage`/`editMessageText`. Reproduce with
 `node scripts/e2e/run-e2e.mjs`.
+
+† `0.85.0` passes both rows, but its own upstream defect is real and worth knowing about:
+a plain Node `import()` of the pi package root throws `Cannot find package
+'@earendil-works/pi-server'`, because `dist/experimental/server.js` — reachable from
+`dist/index.js` via `dist/main.js` — statically imports a package pi `0.85.0` never
+declares. The guard pattern above is what carries this version: reverting just
+`lib/status-footer.ts` to its `v0.0.10` static value import is enough to turn
+`lib/__tests__/status-footer.test.ts` into a hard suite error on `0.85.0`. Inside the pi
+CLI the defect is masked either way, because the CLI's virtual-module alias table serves
+`@earendil-works/pi-coding-agent` from its own bundle, so `dist/experimental/server.js` is
+never loaded. `0.85.1` dropped the reference entirely.
 
 ---
 

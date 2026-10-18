@@ -16,7 +16,7 @@
  * Nothing here contacts the real Telegram service or a real model provider.
  *
  * Usage:
- *   node scripts/e2e/run-e2e.mjs [--versions 0.85.1,1.0.4,1.1.0,1.3.0] [--keep] [--timeout 90]
+ *   node scripts/e2e/run-e2e.mjs [--versions 0.85.0,0.85.1,1.0.4,1.1.0,1.3.0] [--keep] [--timeout 90]
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -31,7 +31,7 @@ function argValue(flag, fallback) {
   return index === -1 ? fallback : process.argv[index + 1];
 }
 
-const VERSIONS = (argValue("--versions", "0.85.1,1.0.4,1.1.0,1.3.0"))
+const VERSIONS = (argValue("--versions", "0.85.0,0.85.1,1.0.4,1.1.0,1.3.0"))
   .split(",")
   .map((v) => v.trim())
   .filter(Boolean);

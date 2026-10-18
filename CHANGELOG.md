@@ -27,16 +27,38 @@ dates are the publish dates from the npm registry.
 
   This only affected npm-native installs (pi as a `devDependency`, or a manual
   `npm install`); `pi install npm:pi-telegram-plus` does not run peer validation and
-  worked either way. The range is now `>=0.80.7 <0.85.0 || >=0.85.1 <1.4.0`, which still
-  excludes `0.74.x` and the broken `0.85.0`.
+  worked either way. The supported range is now `>=0.80.7 <1.4.0`, which still excludes
+  `0.74.x`.
+- **pi `0.85.0` re-admitted.** The range previously carved it out as
+  `<0.85.0 || >=0.85.1`, on the grounds that pi `0.85.0`'s published tarball statically
+  imports the undeclared `@earendil-works/pi-server` — reachable from `dist/index.js` via
+  `dist/main.js` → `dist/experimental/server.js` — so a plain Node `import()` of the pi
+  package root throws `Cannot find package '@earendil-works/pi-server'`.
+
+  The upstream defect is real (`pi-server` appears in none of pi `0.85.0`'s dependency
+  fields, and `0.85.1` dropped the reference), but it no longer affects this extension:
+  the `Changed` entry below replaced every static pi package-root import with a guarded
+  `import()`. Measured on `0.85.0` with the current sources, both the clean-install matrix
+  (`426/426`) and the full tmux E2E round trip (`8/8` assertions) pass, in default and
+  `--strict-upstream` modes. Reverting just `lib/status-footer.ts` to its `v0.0.10` static
+  value import is enough to reproduce the failure as a hard
+  `lib/__tests__/status-footer.test.ts` suite error, so the guard is what carries it rather
+  than luck.
+
+  Worth noting for anyone reading the earlier exclusion: inside the pi CLI the defect was
+  masked regardless, because the CLI's virtual-module alias table serves
+  `@earendil-works/pi-coding-agent` from its own bundle, so `dist/experimental/server.js`
+  never loads. The excluded version primarily broke plain-Node consumers,
+  including this project's own test matrix.
 
 ### Changed
 
-- **pi package-root imports no longer resolve at load time.** Every
+- **pi package-root imports no longer fail extension load when upstream is broken.** Every
   `@earendil-works/pi-coding-agent` import in the package is now `import type` or a
   guarded dynamic `import()`. `FooterComponent`, `AgentSession` and `SessionManager` are
-  resolved once via top-level `await` and degrade to a logged no-op when unavailable,
-  instead of failing extension load.
+  resolved once via top-level `await` (so the extension factory stays synchronous, as pi
+  requires) and degrade to a logged no-op when unavailable, instead of failing extension
+  load.
 
   This makes the plugin immune to an upstream drift it cannot control. Since pi `0.99.0`,
   pi declares `@earendil-works/pi-codemode` through a caret range and statically imports
@@ -77,7 +99,7 @@ dates are the publish dates from the npm registry.
   injected Telegram message, a real pi turn reaching the provider, and the assistant
   reply delivered back through `sendMessage`/`editMessageText`.
 
-- **The pi version matrix now covers 20 versions** (`0.80.7` through `1.3.0`), each
+- **The pi version matrix now covers 21 versions** (`0.80.7` through `1.3.0`), each
   installed into a temporary clean tree. `--strict-upstream` skips the contemporaneous
   `pi-codemode` pin to expose raw upstream drift; both modes pass, and the unpinned mode
   acts as a regression sentinel that fails if a static package-root import is
