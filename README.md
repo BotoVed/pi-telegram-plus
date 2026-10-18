@@ -22,13 +22,28 @@
 - pi `0.85.0` is excluded because its published package imports the undeclared `@earendil-works/pi-server` runtime dependency.
 - Future pi minor versions should be treated as unverified until the compatibility matrix passes.
 
-### pi-codemode note (pi `>=1.0.0`)
+### pi-codemode note (dependency added in pi `0.99.0`; breaks `1.0.1`–`1.1.0`)
 
-pi `1.0.0` and later depend on `@earendil-works/pi-codemode` through a **caret range** and
+pi `0.99.0` and later declare `@earendil-works/pi-codemode` through a **caret range** and
 statically import `MCP_TYPESCRIPT_PREAMBLE` from it. That export was removed in
-`pi-codemode 1.2.0`, so a lockfile-less `npm install` of pi `1.0.x`/`1.1.0` can float to a
-`pi-codemode` that no longer satisfies pi's own import — `import("@earendil-works/pi-coding-agent")`
-then fails with `does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'`.
+`pi-codemode 1.2.0`, so a lockfile-less `npm install` can float `pi-codemode` forward past
+what the pi release expects — `import("@earendil-works/pi-coding-agent")` then fails with
+`does not provide an export named 'MCP_TYPESCRIPT_PREAMBLE'`.
+
+That failure needs three conditions to line up, and only part of the range satisfies all
+three. Measured across the supported matrix:
+
+| pi | ships `npm-shrinkwrap.json` | `pi-codemode` resolves to | bundle imports the symbol | plain Node `import()` |
+|---|---|---|---|---|
+| `0.80.7`–`0.87.1` | yes | not a dependency | — | ok |
+| `0.99.0`–`0.99.2` | yes | `0.99.x` (pinned) | yes | ok |
+| `1.0.0` | yes | `1.0.0` (pinned) | yes | ok |
+| `1.0.1`–`1.1.0` | no | `1.3.0` | yes | **throws** |
+| `1.2.0`–`1.3.0` | no | `1.3.0` | no | ok |
+
+`0.80.7`–`0.87.1` predate the dependency entirely. `0.99.0`–`1.0.0` pin it through a
+shrinkwrap, which `1.0.1` dropped. `1.2.0` and `1.3.0` stopped referencing the symbol at
+all. The exposed window is therefore pi `1.0.1`–`1.1.0`.
 
 This extension is unaffected in two ways:
 
