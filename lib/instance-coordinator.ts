@@ -318,6 +318,29 @@ export class TelegramInstanceCoordinator {
     }
 
     /**
+     * Overwrite the cursor with a lower value, deliberately breaking
+     * monotonicity.
+     *
+     * `syncCursor` only ever raises the cursor (a monotonic max), so a cursor
+     * that is *ahead* of the bot's real update_id stream — seeded from a
+     * re-created bot, a reused token, or an intermediary that assigns its own
+     * update_id sequence — can never come back down. Polling would then ask for
+     * updates past the end of the stream forever. Recovery has to be explicit.
+     *
+     * Callers must have proof the stored cursor is not part of the current
+     * stream (see `createTelegramPollingRuntime`), never a guess.
+     */
+    async resetCursor(updateId: number): Promise<number> {
+        return await this.withStateLock(async () => {
+            await this.writeJsonAtomic(this.cursorPath, {
+                updateId,
+                updatedAt: new Date(this.now()).toISOString(),
+            } satisfies CursorState);
+            return updateId;
+        });
+    }
+
+    /**
      * Best-effort, synchronous shutdown cleanup for the session_shutdown path.
      *
      * If this instance is the recorded active AND no other live instance remains,

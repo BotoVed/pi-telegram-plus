@@ -62,10 +62,11 @@ const strictUpstream = process.argv.slice(2).includes("--strict-upstream");
 // normal run never mutates a committed evidence file.
 const record = process.argv.slice(2).includes("--record");
 
-// The suite size is asserted, not assumed: these are the values the matrix has always
-// produced, and a change to either is worth a deliberate decision before it is recorded.
-const TEST_FILES = 33;
-const TEST_COUNT = 426;
+// Suite size, recorded deliberately rather than derived: the run below inherits stdio, so
+// vitest's summary never reaches this process. Update these in the same commit as any
+// change to the suite — the recorded matrix points at them as measured evidence.
+const TEST_FILES = 35;
+const TEST_COUNT = 440;
 
 /**
  * Merge a green matrix run into docs/compat-results.json.

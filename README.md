@@ -88,7 +88,7 @@ Versions marked † carry a caveat — see
 - **Full branch replay** — switching automatically replays the target session's current branch from its first message, including images and the configured `tool` / `thinking` detail levels, then resumes normal routing
 - **Heartbeat failover** — when the active local instance disappears, another live instance claims ownership after its heartbeat expires
 - **Automatic reconnection** — exponential backoff on transient polling failures; a file-based polling lock remains the final safety guard against dual pollers
-- **Shared update cursor** — instances sharing a token keep a coordinated `lastUpdateId`, so handoffs do not re-deliver or skip Telegram updates
+- **Shared update cursor** — instances sharing a token keep a coordinated `lastUpdateId`, so handoffs do not re-deliver or skip Telegram updates; a cursor that ends up outside the bot's id stream (re-created bot, reused token) is detected on the next start and rewound instead of silently discarding messages
 - **Startup auto-enable** — if a bot token is already configured, Telegram is enabled automatically when pi starts (no manual `/tg-*-connect` on every launch)
 - **Bot command menu sync** — automatically syncs available commands to Telegram's BotMenu (up to 100 commands), including `/tg`
 - **Authorized user** — setup generates a one-time local pairing code; the Telegram user must send `/pair <code>` before their user id is persisted; all other users are rejected
@@ -363,6 +363,11 @@ Common issues and diagnostic steps. The extension writes a structured JSON Lines
 ### Polling reconnects repeatedly or reports transient failures
 - The extension uses exponential backoff on transient errors. If failures persist, verify network reachability to `api.telegram.org` and that the bot token has not been revoked in BotFather.
 - A revoked/regenerated token will keep failing until you run `/tg-bot-update <name>` with the new token.
+
+### The bot stops seeing new messages, or a message is repeated
+- If polling looks healthy (the TUI shows `connected(current)`) but new Telegram messages are ignored, check the log for `poll cursor is ahead of the update stream; rewinding`. The shared cursor was seeded from an `update_id` sequence this bot no longer belongs to, so polling asked for updates past the end of the stream. Polling probes the unconfirmed backlog once per start and rewinds the cursor on the first batch it receives, so a restart repairs this — no action needed.
+- If messages are still ignored after that, the Bot API server in use refuses out-of-range requests rather than answering them, so anything that arrived while the bad cursor was live was discarded. Reset the cursor by hand: delete `~/.pi/agent/tg-runtime/<token-hash>/cursor.json` and the `lastUpdateId` field in `<project>/.pi/telegram.json`, then restart pi — Telegram re-delivers whatever it still holds.
+- If the bot repeats the same message several times, a prompt was rejected by a busy session and the delivery path retried it; the log shows `main-delivery prompt raced with a new turn` per attempt. Wait for the current turn to finish (or send `/stop`) before resending.
 
 ### Configuration changes are not picked up
 - The bot registry lives in `~/.pi/agent/tg.json` (version 3). Project bindings live in `<project>/.pi/telegram.json`. After editing by hand, run `/reload` (or restart pi) so the extension re-reads config.

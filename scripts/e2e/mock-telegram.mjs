@@ -161,7 +161,10 @@ const server = createServer(async (req, res) => {
     const timeoutSec = Math.min(Number(body?.timeout ?? 30) || 30, 3);
     const deadline = Date.now() + timeoutSec * 1000;
 
-    // Drop anything the plugin has already acknowledged.
+    // Telegram confirms an update as soon as a request arrives with a HIGHER offset, so
+    // an update leaves the queue only when it falls strictly below the requested offset.
+    // Delivering a batch is not what consumes it: `offset: 0` returns the whole backlog
+    // and confirms none of it, which the startup cursor probe relies on.
     if (typeof offset === "number") {
       pendingUpdates = pendingUpdates.filter((u) => u.update_id >= offset);
     }
@@ -173,7 +176,6 @@ const server = createServer(async (req, res) => {
     if (res.destroyed) return;
 
     const batch = pendingUpdates;
-    pendingUpdates = [];
     if (batch.length > 0) {
       record({
         ts: Date.now(),

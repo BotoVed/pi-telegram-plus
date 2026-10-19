@@ -115,6 +115,21 @@ describe("TelegramInstanceCoordinator", () => {
         expect(await coordinator.syncCursor(12)).toBe(15);
     });
 
+    it("rewinds the cursor only when resetCursor asks for it explicitly", async () => {
+        const coordinator = create("instance-a");
+        await coordinator.persistCursor(500);
+
+        // The monotonic paths must keep refusing to lower it...
+        expect(await coordinator.persistCursor(10)).toBe(500);
+        expect(await coordinator.syncCursor(10)).toBe(500);
+
+        // ...and the explicit rewind is the only way down, so a cursor that is
+        // ahead of the bot's stream can be corrected.
+        expect(await coordinator.resetCursor(9)).toBe(9);
+        expect(await coordinator.syncCursor()).toBe(9);
+        expect(await coordinator.persistCursor(10)).toBe(10);
+    });
+
     it("quarantines a stale dead-owner lock before taking over", async () => {
         const currentNow = Date.now();
         const coordinator = new TelegramInstanceCoordinator({

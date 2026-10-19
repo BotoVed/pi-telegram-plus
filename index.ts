@@ -4,7 +4,7 @@ import { extname, join, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createActiveTelegramTransport } from "./lib/active-transport.ts";
 import { registerTelegramAttachmentTool } from "./lib/attachments.ts";
-import { enableConfiguredTelegramOnStartup, readResolvedTelegramConfig, persistProjectRuntimeState, updateBot, getAgentDir } from "./lib/config.ts";
+import { enableConfiguredTelegramOnStartup, readResolvedTelegramConfig, persistProjectRuntimeState, resetProjectBindingCursor, updateBot, getAgentDir } from "./lib/config.ts";
 import { createTelegramController, type TelegramCommandHandler } from "./lib/controller.ts";
 import { escapeHtml } from "./lib/html.ts";
 import { createHeartbeat } from "./lib/heartbeat.ts";
@@ -393,6 +393,20 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       const currentCoordinator = coordinator;
       if (currentCoordinator && nextConfig.botToken && currentCoordinator.tokenHash === telegramTokenHash(nextConfig.botToken)) {
         await currentCoordinator.persistCursor(update.update_id);
+      }
+    },
+    // Both durable cursors (coordinator + project binding) are monotonic maxes, so
+    // a cursor ahead of the bot's stream has to be rewound in both places at once;
+    // correcting only one would be re-raised by the other on the next persist.
+    resetCursor: async (updateId) => {
+      config = { ...config, lastUpdateId: updateId };
+      if (resolvedConfig) resolvedConfig.config = config;
+      const currentCoordinator = coordinator;
+      if (currentCoordinator && config.botToken && currentCoordinator.tokenHash === telegramTokenHash(config.botToken)) {
+        await currentCoordinator.resetCursor(updateId);
+      }
+      if (resolvedConfig?.projectPath) {
+        await resetProjectBindingCursor(resolvedConfig.projectPath, updateId);
       }
     },
     reloadConfig: async () => {

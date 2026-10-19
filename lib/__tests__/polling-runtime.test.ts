@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     getTelegramUpdates: vi.fn(),
+    getPendingTelegramUpdates: vi.fn(),
 }));
 
 vi.mock("../telegram-api.ts", () => ({
     getTelegramUpdates: mocks.getTelegramUpdates,
+    getPendingTelegramUpdates: mocks.getPendingTelegramUpdates,
 }));
 
 import { createTelegramPollingRuntime } from "../polling.ts";
@@ -29,6 +31,8 @@ describe("TelegramPollingRuntime", () => {
         agentDir = await mkdtemp(join(tmpdir(), "pi-tg-polling-"));
         process.env.PI_CODING_AGENT_DIR = agentDir;
         mocks.getTelegramUpdates.mockReset();
+        mocks.getPendingTelegramUpdates.mockReset();
+        mocks.getPendingTelegramUpdates.mockResolvedValue([]);
     });
 
     afterEach(async () => {
@@ -89,6 +93,121 @@ describe("TelegramPollingRuntime", () => {
             "stopped",
         ]);
         expect(runtime.isActive()).toBe(false);
+    });
+
+    it("rewinds a cursor that is ahead of the delivered updates and still handles the batch", async () => {
+        const token = `rewind-token-${Date.now()}`;
+        let config: TelegramConfig = { botToken: token, lastUpdateId: 500 };
+        const handled: number[] = [];
+        const resets: number[] = [];
+        const errors: unknown[] = [];
+        mocks.getTelegramUpdates.mockImplementationOnce(async () => [update]);
+        mocks.getTelegramUpdates.mockImplementation(async (_config, signal: AbortSignal) => {
+            await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            return [];
+        });
+
+        const runtime = createTelegramPollingRuntime({
+            getConfig: () => config,
+            setConfig: (next) => { config = next; },
+            persistConfig: async () => undefined,
+            persistUpdate: async (next) => { config = next; },
+            resetCursor: async (updateId) => { resets.push(updateId); },
+            handleUpdate: async (batchUpdate) => { handled.push(batchUpdate.update_id); },
+            onError: (error) => { errors.push(error); },
+            shouldPoll: () => true,
+        });
+
+        runtime.start();
+        await vi.waitFor(() => expect(handled).toEqual([10]));
+        await runtime.stop();
+
+        // update_id 10 arrived while the stored cursor claimed 500 was already
+        // handled: rewind to 9 (one below the delivered update), then advance to it.
+        expect(resets).toEqual([9]);
+        expect(config.lastUpdateId).toBe(10);
+        expect(errors).toEqual([]);
+    });
+
+    it("does not rewind a cursor that the delivered updates continue from", async () => {
+        const token = `norwind-token-${Date.now()}`;
+        let config: TelegramConfig = { botToken: token, lastUpdateId: 9 };
+        const handled: number[] = [];
+        const resets: number[] = [];
+        mocks.getTelegramUpdates.mockImplementationOnce(async () => [update]);
+        mocks.getTelegramUpdates.mockImplementation(async (_config, signal: AbortSignal) => {
+            await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            return [];
+        });
+
+        const runtime = createTelegramPollingRuntime({
+            getConfig: () => config,
+            setConfig: (next) => { config = next; },
+            persistConfig: async () => undefined,
+            persistUpdate: async (next) => { config = next; },
+            resetCursor: async (updateId) => { resets.push(updateId); },
+            handleUpdate: async (batchUpdate) => { handled.push(batchUpdate.update_id); },
+            onError: (error) => { throw error; },
+            shouldPoll: () => true,
+        });
+
+        runtime.start();
+        await vi.waitFor(() => expect(handled).toEqual([10]));
+        await runtime.stop();
+
+        // update_id 10 is exactly cursor + 1: the normal long-poll result.
+        expect(resets).toEqual([]);
+        expect(config.lastUpdateId).toBe(10);
+    });
+
+    it("probes the backlog once on start and rewinds a cursor the server keeps hiding", async () => {
+        const token = `probe-token-${Date.now()}`;
+        let config: TelegramConfig = { botToken: token, lastUpdateId: 500 };
+        const resets: number[] = [];
+        // update_id 10 is still unconfirmed: a server that drops out-of-range
+        // requests would never hand it back for the planted cursor of 500.
+        mocks.getPendingTelegramUpdates.mockResolvedValue([update]);
+        mocks.getTelegramUpdates.mockResolvedValue([]);
+
+        const runtime = createTelegramPollingRuntime({
+            getConfig: () => config,
+            setConfig: (next) => { config = next; },
+            persistConfig: async () => undefined,
+            resetCursor: async (updateId) => { resets.push(updateId); },
+            handleUpdate: async () => undefined,
+            onError: (error) => { throw error; },
+            shouldPoll: () => true,
+        });
+
+        runtime.start();
+        await vi.waitFor(() => expect(resets).toEqual([9]));
+        // Let several poll iterations run: the probe must stay one-shot.
+        await vi.waitFor(() => expect(mocks.getTelegramUpdates.mock.calls.length).toBeGreaterThan(2));
+        await runtime.stop();
+
+        expect(mocks.getPendingTelegramUpdates).toHaveBeenCalledTimes(1);
+        expect(config.lastUpdateId).toBe(9);
+    });
+
+    it("does not probe the backlog when no cursor is stored yet", async () => {
+        const token = `probe-skip-${Date.now()}`;
+        mocks.getTelegramUpdates.mockResolvedValue([]);
+
+        const runtime = createTelegramPollingRuntime({
+            getConfig: () => ({ botToken: token }),
+            setConfig: () => undefined,
+            persistConfig: async () => undefined,
+            resetCursor: async () => undefined,
+            handleUpdate: async () => undefined,
+            onError: (error) => { throw error; },
+            shouldPoll: () => true,
+        });
+
+        runtime.start();
+        await vi.waitFor(() => expect(mocks.getTelegramUpdates.mock.calls.length).toBeGreaterThan(1));
+        await runtime.stop();
+
+        expect(mocks.getPendingTelegramUpdates).not.toHaveBeenCalled();
     });
 
     it("quarantines a stale polling lock instead of deleting a new owner", async () => {

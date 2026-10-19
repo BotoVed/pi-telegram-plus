@@ -171,6 +171,27 @@ export async function updateProjectBindingLocked(
   });
 }
 
+/**
+ * Overwrite a project binding's `lastUpdateId` with a lower value.
+ *
+ * `persistProjectRuntimeState` writes that field as a monotonic max, so a cursor
+ * that is ahead of the bot's real update_id stream can never come back down on
+ * its own. Polling calls this — with proof that the stored value is not part of
+ * the current stream — so both the durable seed and the coordinator cursor can
+ * be corrected together.
+ *
+ * Unbound projects have no binding to correct and are a no-op. Writes through
+ * the same config lock as `persistProjectRuntimeState` so it cannot be reverted
+ * by a persist that read the old binding earlier.
+ */
+export async function resetProjectBindingCursor(cwd: string, updateId: number): Promise<void> {
+  const found = await readProjectBinding(cwd);
+  if (!found) return;
+  // Write to the directory the binding was actually found in: a binding may live
+  // in a parent project, and a new .pi/telegram.json must not be invented.
+  await updateProjectBindingLocked(found.path, (existing) => ({ ...existing, lastUpdateId: updateId }));
+}
+
 // ── Resolution ────────────────────────────────────────────────────────────
 
 /**

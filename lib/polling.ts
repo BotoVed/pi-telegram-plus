@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "./config.ts";
-import { getTelegramUpdates } from "./telegram-api.ts";
+import { getPendingTelegramUpdates, getTelegramUpdates } from "./telegram-api.ts";
 import type { TelegramConfig, TelegramUpdate } from "./types.ts";
 import { log } from "./logger.ts";
 
@@ -228,6 +228,11 @@ export type TelegramUpdateBatchDeps = {
   setConfig: (config: TelegramConfig) => void;
   persistConfig: (config: TelegramConfig) => Promise<void>;
   persistUpdate?: (config: TelegramConfig, update: TelegramUpdate) => Promise<void>;
+  /**
+   * Overwrite (lower) the stored cursor after proof that it is not part of the
+   * bot's current update_id stream. See `createTelegramPollingRuntime`.
+   */
+  resetCursor?: (updateId: number) => Promise<void>;
   shouldProcess?: () => boolean;
   handleUpdate: (update: TelegramUpdate) => Promise<void>;
   onError: (error: unknown) => void;
@@ -267,6 +272,47 @@ export async function processTelegramUpdatesBatch(
   }
 }
 
+/**
+ * Rewind a cursor that is ahead of the bot's real update_id stream.
+ *
+ * Telegram returns the first update with `update_id >= offset`, and the poller
+ * always asks for `lastUpdateId + 1`. An update below that offset therefore
+ * proves the stored cursor is not part of this bot's stream — seen in practice
+ * when a bot is deleted and re-created, a token moves between bots, or an
+ * intermediary (proxy or self-hosted Bot API server) assigns its own update_id
+ * sequence.
+ *
+ * Such a cursor is permanent unless corrected: every persist path is a monotonic
+ * max, so polling would keep asking for updates past the end of the stream.
+ * Telegram then re-serves the earliest pending batch, which the poller re-handles
+ * on every cycle — an unbounded replay that ends in chat flood control. Rewinding
+ * to `firstUpdateId - 1` restores the invariant, and the batch below is handled
+ * and persisted normally.
+ *
+ * Best-effort by design: if the rewind fails the batch is still handled (it was
+ * already acknowledged by this very request), leaving the loud log as the signal.
+ */
+async function resyncCursorIfOutOfRange(
+  updates: TelegramUpdate[],
+  deps: TelegramUpdateBatchDeps,
+): Promise<void> {
+  const stale = deps.getConfig().lastUpdateId;
+  const first = updates[0]?.update_id;
+  if (typeof stale !== "number" || typeof first !== "number" || first > stale) return;
+  const corrected = first - 1;
+  pollLog.warn("poll cursor is ahead of the update stream; rewinding", {
+    staleLastUpdateId: stale,
+    deliveredUpdateId: first,
+    correctedLastUpdateId: corrected,
+  });
+  try {
+    await deps.resetCursor?.(corrected);
+  } catch (error) {
+    deps.onError(error);
+  }
+  deps.setConfig({ ...deps.getConfig(), lastUpdateId: corrected });
+}
+
 export function createTelegramPollingRuntime(deps: TelegramUpdateBatchDeps & {
   reloadConfig?: () => Promise<void>;
   onSuccess?: () => void;
@@ -297,6 +343,8 @@ export function createTelegramPollingRuntime(deps: TelegramUpdateBatchDeps & {
 
   const loop = async (signal: AbortSignal) => {
     let backoffMs = MIN_BACKOFF_MS;
+    // One backlog probe per runtime start (see getPendingTelegramUpdates).
+    let probedCursor = false;
 
     try {
       while (!signal.aborted) {
@@ -328,12 +376,32 @@ export function createTelegramPollingRuntime(deps: TelegramUpdateBatchDeps & {
           if (!refreshedToken) continue;
           if (refreshedToken !== token) continue;
 
+          // The first fetch of this runtime asks with the stored cursor, so a
+          // cursor that is ahead of the bot's stream has to be detected before it
+          // is used — otherwise a server that drops out-of-range requests discards
+          // every message without a trace. Non-fatal: a failed probe just leaves
+          // the stored cursor in place and the normal fetch reports real errors.
+          if (!probedCursor) {
+            probedCursor = true;
+            if (typeof deps.getConfig().lastUpdateId === "number") {
+              try {
+                await resyncCursorIfOutOfRange(await getPendingTelegramUpdates(deps.getConfig(), signal), deps);
+              } catch (error) {
+                if (signal.aborted) return;
+                pollLog.warn("cursor backlog probe failed; keeping the stored cursor", {
+                  error: error instanceof Error ? error.message : String(error),
+                });
+              }
+            }
+          }
+
           const updates = await getTelegramUpdates(deps.getConfig(), signal);
           if (deps.getConfig().botToken !== refreshedToken) continue;
           if (deps.shouldPoll && !deps.shouldPoll()) continue;
           backoffMs = MIN_BACKOFF_MS;
           deps.onSuccess?.();
 
+          await resyncCursorIfOutOfRange(updates, deps);
           await processTelegramUpdatesBatch(updates, deps, signal);
         } catch (error) {
           if (signal.aborted) return;

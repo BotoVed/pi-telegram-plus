@@ -571,3 +571,31 @@ export async function getTelegramUpdates(
     config.apiBase,
   );
 }
+
+/**
+ * Fetch the unconfirmed backlog without touching the cursor.
+ *
+ * `offset: 0` returns every update the server still holds and confirms none of
+ * them — confirmation only happens when a request's offset is *above* an
+ * update's id. Used once per polling runtime start to detect a stored cursor
+ * that is ahead of the bot's stream: a server that drops out-of-range requests
+ * (the documented behaviour) never hands back such an update, so the corruption
+ * would otherwise stay invisible while every message was silently discarded.
+ */
+export async function getPendingTelegramUpdates(
+  config: TelegramConfig,
+  signal: AbortSignal,
+): Promise<TelegramUpdate[]> {
+  if (!config.botToken) return [];
+  return telegramApi<TelegramUpdate[]>(
+    config.botToken,
+    "getUpdates",
+    {
+      offset: 0,
+      timeout: 0,
+      allowed_updates: ["message", "callback_query"],
+    },
+    signal,
+    config.apiBase,
+  );
+}

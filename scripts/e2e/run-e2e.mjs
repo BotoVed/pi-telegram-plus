@@ -12,6 +12,11 @@
  *   3. An injected Telegram message is picked up by getUpdates.
  *   4. The plugin drives a pi turn, which reaches the mock provider.
  *   5. The plugin sends the assistant reply back through sendMessage/editMessageText.
+ *   6. Restarted with a `lastUpdateId` that is ahead of the bot's stream (the live
+ *      failure: re-created bot / reused token / reassigned id sequence), an injected
+ *      message is still delivered exactly once and both cursors are rewound. The mock
+ *      Bot API drops out-of-range requests exactly as the documented contract requires,
+ *      so this step can only pass if the plugin probes the backlog it cannot see.
  *
  * Nothing here contacts the real Telegram service or a real model provider.
  *
@@ -19,7 +24,8 @@
  *   node scripts/e2e/run-e2e.mjs [--versions 0.85.0,0.85.1,1.0.4,1.1.0,1.3.0] [--keep] [--timeout 90]
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
@@ -45,6 +51,14 @@ const PROVIDER_PORT = Number(argValue("--provider-port", "9941"));
 const BOT_TOKEN = "111111:E2E_MOCK_TOKEN";
 const CHAT_ID = 777;
 const USER_ID = 777;
+/**
+ * Step 6 plants this cursor — far above any id the mock will ever issue — and then
+ * injects `REWIND_UPDATE_ID` below it, mirroring the live corruption (cursor 636583913
+ * while the bot's stream sat at 5413839xx).
+ */
+const POISONED_CURSOR = 636583913;
+const REWIND_UPDATE_ID = 541383987;
+const TOKEN_HASH = createHash("sha256").update(BOT_TOKEN).digest("hex").slice(0, 24);
 /**
  * All run state lives under /tmp, deliberately.
  *
@@ -364,16 +378,22 @@ async function runVersion(version, report) {
   const envArgs = Object.entries(env)
     .map(([k, v]) => ["-e", `${k}=${v}`])
     .flat();
-  const start = tmux(
-    "new-session", "-d", "-s", session, "-x", "200", "-y", "50", "-c", projectDir,
-    ...envArgs,
-    piCli, ...isolationArgs, "-e", PLUGIN_ENTRY, "--provider", "mock", "--model", "mock-model",
-  );
+  /** Start the plugin inside tmux, capturing the pane to `pane`. */
+  const startPlugin = (pane) => {
+    const result = tmux(
+      "new-session", "-d", "-s", session, "-x", "200", "-y", "50", "-c", projectDir,
+      ...envArgs,
+      piCli, ...isolationArgs, "-e", PLUGIN_ENTRY, "--provider", "mock", "--model", "mock-model",
+    );
+    if (result.status === 0) tmux("pipe-pane", "-t", session, `cat > ${pane}`);
+    return result;
+  };
+
+  const start = startPlugin(paneLog);
   if (start.status !== 0) {
     record("start pi in tmux", false, start.stderr?.trim());
     return { version, steps, ok: false };
   }
-  tmux("pipe-pane", "-t", session, `cat > ${paneLog}`);
   record("start pi in tmux", true, `${session}${isolationArgs.length ? ` (${isolationArgs.join(" ")})` : " (no extra isolation flags)"}`);
 
   // ── 1. Plugin authenticates against the mock Bot API ──────────────────
@@ -454,6 +474,82 @@ async function runVersion(version, report) {
     record("reply contains provider output (MOCK_OK)", hasMockOk, hasMockOk ? "round-trip verified" : "reply seen but MOCK_OK missing");
   } catch (error) {
     record("reply delivered to Telegram", false, String(error.message).slice(0, 500));
+  }
+
+  // ── 6. A foreign cursor must not swallow messages ─────────────────────
+  // Plant a `lastUpdateId` above every id the bot will ever see, queue a message far
+  // below it, then start the plugin. The mock follows the documented contract and drops
+  // requests whose offset is out of range, so the message is unreachable through the
+  // normal poll: only the startup backlog probe can reveal the corruption.
+  killSession(session);
+  await controlPost("/_control/reset");
+  writeFileSync(provLog, "");
+  const rewindPrompt = "reply with MOCK_OK";
+  await controlPost("/_control/inject", {
+    updates: [
+      {
+        update_id: REWIND_UPDATE_ID,
+        message: {
+          message_id: 9002,
+          date: Math.floor(Date.now() / 1000),
+          chat: { id: CHAT_ID, type: "private" },
+          from: { id: USER_ID, is_bot: false, first_name: "E2E" },
+          text: rewindPrompt,
+        },
+      },
+    ],
+  });
+  const bindingPath = join(projectDir, ".pi", "telegram.json");
+  const cursorPath = join(agentDir, "tg-runtime", TOKEN_HASH, "cursor.json");
+  writeFileSync(
+    bindingPath,
+    JSON.stringify({ ...JSON.parse(readFileSync(bindingPath, "utf8")), lastUpdateId: POISONED_CURSOR }, null, 2) + "\n",
+  );
+  const restart = startPlugin(join(runDir, "pane-rewind.log"));
+  record("restart with a foreign lastUpdateId", restart.status === 0, `lastUpdateId=${POISONED_CURSOR}`);
+
+  try {
+    const deadline = Date.now() + STEP_TIMEOUT_MS;
+    let binding;
+    let cursor;
+    let turns = [];
+    while (Date.now() < deadline) {
+      // The message is only delivered if the plugin rewound the cursor it inherited:
+      // the mock deletes anything below the requested offset.
+      try {
+        binding = JSON.parse(readFileSync(bindingPath, "utf8")).lastUpdateId;
+      } catch {
+        binding = undefined;
+      }
+      if (existsSync(cursorPath)) cursor = JSON.parse(readFileSync(cursorPath, "utf8")).updateId;
+      turns = providerLog().filter((entry) => entry.prompt?.includes(rewindPrompt));
+      if (binding === REWIND_UPDATE_ID && cursor === REWIND_UPDATE_ID && turns.length === 1) break;
+      await sleep(500);
+    }
+    record(
+      "backlog below the foreign cursor was delivered exactly once",
+      turns.length === 1,
+      `agent turns=${turns.length}`,
+    );
+    record(
+      "both cursors rewound to the delivered update",
+      binding === REWIND_UPDATE_ID && cursor === REWIND_UPDATE_ID,
+      `binding=${binding} cursor=${cursor}`,
+    );
+  } catch (error) {
+    record("backlog below the foreign cursor was delivered exactly once", false, String(error.message).slice(0, 500));
+  }
+
+  try {
+    const logsDir = join(agentDir, "logs");
+    const logFile = existsSync(logsDir)
+      ? readdirSync(logsDir).filter((name) => name.startsWith("pi-telegram-plus-")).sort().pop()
+      : undefined;
+    const text = logFile ? readFileSync(join(logsDir, logFile), "utf8") : "";
+    const warned = text.includes("poll cursor is ahead of the update stream");
+    record("rewind is reported in the plugin log", warned, logFile ?? "no log file");
+  } catch (error) {
+    record("rewind is reported in the plugin log", false, String(error.message).slice(0, 500));
   }
 
   killSession(session);

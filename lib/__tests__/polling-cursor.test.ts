@@ -8,6 +8,7 @@ import {
   resolveTelegramConfig,
   readProjectBinding,
   persistProjectRuntimeState,
+  resetProjectBindingCursor,
 } from "../config.ts";
 import { TelegramInstanceCoordinator, telegramTokenHash } from "../instance-coordinator.ts";
 import type { BotRecord } from "../types.ts";
@@ -102,6 +103,31 @@ describe("Polling cursor: coordinator authoritative, project lastUpdateId seed/b
     // Project binding was updated as best-effort backup.
     const project = await readProjectBinding(projectDir);
     expect(project?.binding.lastUpdateId).toBe(80);
+  });
+
+  it("resetProjectBindingCursor rewinds the seed without touching other state", async () => {
+    const bot = makeBot({ token: "shared-tok" });
+    await addBot(bot);
+    await writeProjectBinding(projectDir, {
+      botId: bot.id,
+      enabled: true,
+      lastUpdateId: 636583913,
+      activeChatId: 7437801922,
+    });
+
+    await resetProjectBindingCursor(projectDir, 541383986);
+
+    const project = await readProjectBinding(projectDir);
+    expect(project?.binding.lastUpdateId).toBe(541383986);
+    expect(project?.binding.botId).toBe(bot.id);
+    expect(project?.binding.enabled).toBe(true);
+    expect(project?.binding.activeChatId).toBe(7437801922);
+  });
+
+  it("resetProjectBindingCursor is a no-op for an unbound project", async () => {
+    const unbound = await mkdtemp(join(tmpdir(), "ptp-cursor-unbound-"));
+    await resetProjectBindingCursor(unbound, 5);
+    expect(await readProjectBinding(unbound)).toBeUndefined();
   });
 
   it("multi-project shared bot does not regress: /tg-switch uses coordinator cursor", async () => {

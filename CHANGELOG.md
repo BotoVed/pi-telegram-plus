@@ -18,6 +18,28 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **A shared cursor that sat past the end of the bot's `update_id` stream could never
+  recover, so polling permanently asked for updates that do not exist.** Every cursor write
+  is a monotonic max, so a `lastUpdateId` seeded from an update-id sequence the bot no longer
+  belongs to — a re-created bot, a token reused for another bot, or an intermediary that
+  assigns its own ids — was unreachable from below. Observed live: the cursor held
+  `636583913` while the bot's stream was at `541383987`, and every poll asked for
+  `636583914`. Messages still arrived only because the endpoint in use ignores an
+  out-of-range offset; the documented contract is to return nothing, so the same state
+  silently drops every message on a strict Bot API server. Polling now treats a delivered
+  update below the offset it asked for as proof the cursor is foreign, logs `poll cursor is
+  ahead of the update stream; rewinding`, and rewinds both the shared cursor and the project
+  binding to one below the delivered update before handling the batch. A second signal
+  covers the server that answers out-of-range requests with nothing at all (the documented
+  contract): once per start, polling asks for the unconfirmed backlog with `offset: 0`,
+  which confirms nothing, and rewinds if that backlog sits below the stored cursor.
+- **Every Telegram message answered "π session is not ready yet." under OMP
+  (`@oh-my-pi/pi-coding-agent`).** OMP's `AgentSession` has no `bindExtensions()`, so the
+  extension loaded with `session capture disabled` and never held a session to drive. A
+  `/pair <code>` reply still succeeded — pairing resolves before a session is needed — which
+  made the failure look like a pairing bug. Capture now falls back to OMP's process-global
+  agent registry, which holds the live top-level session.
+  See [compatibility.md](docs/compatibility.md#omp-oh-my-pi-pi-coding-agent).
 - **Released versions were shipped with their notes still labelled `[Unreleased]`.**
   `0.0.11` was published with 42 lines of release notes sitting under `## [Unreleased]`, its
   `[Unreleased]` link still comparing from `v0.0.10`. The publish workflow bumped

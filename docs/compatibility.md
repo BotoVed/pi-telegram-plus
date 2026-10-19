@@ -29,10 +29,51 @@ Two details are load-bearing:
 - **The guard, not deferral, is what saves us.** Resolution still happens at load time.
   What prevents a hard failure is the `try`/`catch` around the dynamic `import()`.
 
-This is why the extension tolerates the two upstream defects below. It is robustness work
+This is why the extension tolerates the upstream defects below. It is robustness work
 that protects non-CLI consumers (bundlers, test harnesses, our own matrix) and future
 upstream changes — **not** a fix for a user-reported failure, because inside the pi CLI both
 defects were masked anyway (see each section).
+
+## OMP (`@oh-my-pi/pi-coding-agent`)
+
+OMP is a pi fork with a rewritten session core, so it does not share pi's attach point: its
+`AgentSession` has no `bindExtensions()`. The extension runner is built *before* the session
+and handed to `new AgentSession(...)`, so the patched prototype never fires and capture used
+to log `AgentSession has no bindExtensions(); session capture disabled`, leaving every
+Telegram message answered with "π session is not ready yet." A `/pair <code>` reply still
+succeeded — pairing is resolved before a session is needed — which made the failure look
+like a pairing bug.
+
+Capture now resolves OMP's process-global agent registry on every lookup:
+
+```ts
+AgentRegistry.global().get(MAIN_AGENT_ID)?.session        // "Main"
+  ?? AgentRegistry.global().list().find(ref => ref.kind === "main")?.session
+```
+
+`get(mainId)` is the fast path; the `list()` scan only covers embedded hosts that pass a
+custom root `agentId`. The ref's session is re-attached on `/new` and session switches and
+detached to `null` on dispose, and resolution happens per call rather than once at load —
+so capture also works when the extension loads after the session already exists (`/reload`).
+
+Measured on OMP `18.12.2` (bun-installed, `omp --print`, isolated project plugin root):
+
+- inside an extension, `import("@earendil-works/pi-coding-agent")` is aliased to the host
+  module: 746 exports, `AgentRegistry=function`, `MAIN_AGENT_ID="Main"`,
+  `AgentSession.prototype.bindExtensions === undefined`;
+- `AgentRegistry.global().get("Main").session` is the live top-level session — `prompt`,
+  `extensionRunner` and `extensionRunner.createCommandContext().cwd` all present;
+- the extension's capture module resolves that same object (`captured=true`,
+  `sameAsRegistry=true`).
+
+Two pi-specific behaviors are **not** carried over to OMP, both because OMP has no public
+seam for them:
+
+- **Runner UI-context swap.** `runner.setUIContext()` does not exist and `#uiContext` is
+  private, so the swap that routes agent-raised dialogs (ask/select/confirm) to Telegram is
+  a no-op; such dialogs stay in the OMP terminal.
+- **Shutdown-handler replacement.** OMP's runner keeps its shutdown handler private, so
+  `/quit` issued from Telegram shuts the host down instead of only notifying.
 
 ## pi `0.85.0`: the `pi-server` packaging defect
 
@@ -129,14 +170,19 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 33 files, 426 tests | `npm test` |
+| Unit / regression | 35 files, 440 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
 
 The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates
 against the mock Bot API (`getMe`), enters its `getUpdates` polling loop, picks up an
 injected Telegram message, drives a real pi turn into the mock provider, and sends the
-assistant reply back through `sendMessage`/`editMessageText` — 8 assertions per version.
+assistant reply back through `sendMessage`/`editMessageText`. It then restarts pi with a
+`lastUpdateId` planted above the bot's whole id space and a queued message below it, and
+asserts that the message is still delivered exactly once, that both cursors are rewound to
+it, and that the rewind is logged — a step the mock's contract-conformant
+drop-out-of-range behaviour makes impossible to pass without the backlog probe. Assertion
+counts per version are recorded, not hardcoded here.
 
 ### What is in the publish gate, and what is not
 
