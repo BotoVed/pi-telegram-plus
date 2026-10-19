@@ -16,6 +16,8 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
+## [0.0.12] — 2026-10-19
+
 ### Fixed
 
 - **A shared cursor that sat past the end of the bot's `update_id` stream could never
@@ -214,7 +216,8 @@ missing or mislabelled cannot be published.
 - Initial release: Telegram control of the pi coding agent, with command bridging,
   interactive UI, and streaming output.
 
-[Unreleased]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.11...HEAD
+[Unreleased]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.12...HEAD
+[0.0.12]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.11...v0.0.12
 [0.0.11]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.10...v0.0.11
 [0.0.10]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.9...v0.0.10
 [0.0.9]: https://github.com/jalyfeng/pi-telegram-plus/compare/v0.0.8...v0.0.9
@@ -228,8 +231,8 @@ missing or mislabelled cannot be published.
 [0.0.1]: https://github.com/jalyfeng/pi-telegram-plus/tree/fffc6f5
 
 <!--
-     Versions linked by tag: v0.0.8, v0.0.9, v0.0.10, v0.0.11; versions without
-     a tag are compared by commit SHA. The v0.0.1 tag points at the initial
-     commit, whose package.json still read 0.1.0, so it is linked as a tree, not
-     a range. The v0.0.8 tag (bb69f57) sits one commit past the 0.0.8 release
-     commit (f65e372). -->
+     Versions linked by tag: v0.0.8, v0.0.9, v0.0.10, v0.0.11, v0.0.12; versions
+     without a tag are compared by commit SHA. The v0.0.1 tag points at the
+     initial commit, whose package.json still read 0.1.0, so it is linked as a
+     tree, not a range. The v0.0.8 tag (bb69f57) sits one commit past the 0.0.8
+     release commit (f65e372). -->
