@@ -12,9 +12,9 @@ describe("processTelegramUpdatesBatch", () => {
     let config: TelegramConfig = { botToken: "token", lastUpdateId: 9 };
     const handled: number[] = [];
     const persisted: number[] = [];
-    const errors: unknown[] = [];
+    const errors: { error: unknown; context?: string }[] = [];
 
-    await processTelegramUpdatesBatch([update(10), update(11), update(12)], {
+    const processed = await processTelegramUpdatesBatch([update(10), update(11), update(12)], {
       getConfig: () => config,
       setConfig: (next) => { config = next; },
       persistConfig: vi.fn(async (next) => { persisted.push(next.lastUpdateId!); }),
@@ -22,14 +22,16 @@ describe("processTelegramUpdatesBatch", () => {
         handled.push(item.update_id);
         if (item.update_id === 11) throw new Error("boom 11");
       }),
-      onError: (error) => { errors.push(error); },
+      onError: (error, context) => { errors.push({ error, context }); },
     });
 
+    expect(processed).toBe(false);
     expect(handled).toEqual([10, 11]);
     expect(persisted).toEqual([10]);
     expect(config.lastUpdateId).toBe(10);
     expect(errors).toHaveLength(1);
-    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0].error).toBeInstanceOf(Error);
+    expect(errors[0].context).toBe("processing");
   });
 
   it("stops before the next update when the instance loses its active lease", async () => {
@@ -37,7 +39,7 @@ describe("processTelegramUpdatesBatch", () => {
     let active = true;
     const handled: number[] = [];
 
-    await processTelegramUpdatesBatch([update(31), update(32)], {
+    const processed = await processTelegramUpdatesBatch([update(31), update(32)], {
       getConfig: () => config,
       setConfig: (next) => {
         config = next;
@@ -49,6 +51,7 @@ describe("processTelegramUpdatesBatch", () => {
       onError: vi.fn(),
     });
 
+    expect(processed).toBe(true); // losing the lease is not a retryable failure
     expect(handled).toEqual([31]);
     expect(config.lastUpdateId).toBe(31);
   });
@@ -57,9 +60,9 @@ describe("processTelegramUpdatesBatch", () => {
     let config: TelegramConfig = { botToken: "token", lastUpdateId: 20 };
     const handled: number[] = [];
     const persisted: number[] = [];
-    const errors: unknown[] = [];
+    const errors: { error: unknown; context?: string }[] = [];
 
-    await processTelegramUpdatesBatch([update(21), update(22)], {
+    const processed = await processTelegramUpdatesBatch([update(21), update(22)], {
       getConfig: () => config,
       setConfig: (next) => { config = next; },
       persistConfig: vi.fn(async (next) => {
@@ -67,9 +70,11 @@ describe("processTelegramUpdatesBatch", () => {
         if (next.lastUpdateId === 21) throw new Error("persist failed");
       }),
       handleUpdate: vi.fn(async (item) => { handled.push(item.update_id); }),
-      onError: (error) => { errors.push(error); },
+      onError: (error, context) => { errors.push({ error, context }); },
     });
 
+    expect(processed).toBe(false);
+    expect(errors[0].context).toBe("processing");
     expect(handled).toEqual([21]);
     expect(persisted).toEqual([21]);
     expect(config.lastUpdateId).toBe(20);

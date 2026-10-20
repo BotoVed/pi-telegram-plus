@@ -117,7 +117,7 @@ Every `catch {}`, `.catch(() => undefined)`, and `console.warn` in `lib/` and
 | `commands/session.ts` | 1 `.catch` | `session` | `stat` target-cwd probe at debug (existence check, failure is user-visible via notify) |
 | `heartbeat.ts` | 1 `catch {}` | `heartbeat` | Typing-pulse sendChatAction at debug |
 | `menu-commands.ts` | 1 `catch {}` | `menu-commands` | `syncTelegramCommands` at warn |
-| `index.ts` | 1 `.catch` | `polling` | sendText polling-failure notice at error |
+| `index.ts` | 2 `.catch` | `polling` | One-shot sendText polling-failure/recovery notices at warn (gated: one per outage) |
 
 Non-empty recovery catches (e.g. `renderer.ts`'s edit-failed→sendText fallback,
 `polling.ts`'s rename-failed→rm+return) were left intact — they perform real

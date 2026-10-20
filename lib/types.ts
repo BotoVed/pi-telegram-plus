@@ -174,7 +174,14 @@ export type TelegramTransport = {
    * `text`/HTML path below. `text` must therefore always carry the full HTML
    * rendering of the same content.
    */
-  sendText(chatId: number, text: string, messageThreadId?: number, replyToMessageId?: number, richMarkdown?: string): Promise<TelegramSentMessage[]>;
+  sendText(
+    chatId: number,
+    text: string,
+    messageThreadId?: number,
+    replyToMessageId?: number,
+    richMarkdown?: string,
+    options?: { maxAttempts?: number },
+  ): Promise<TelegramSentMessage[]>;
   sendButtons(
     chatId: number,
     text: string,

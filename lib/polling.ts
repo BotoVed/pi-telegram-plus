@@ -235,7 +235,9 @@ export type TelegramUpdateBatchDeps = {
   resetCursor?: (updateId: number) => Promise<void>;
   shouldProcess?: () => boolean;
   handleUpdate: (update: TelegramUpdate) => Promise<void>;
-  onError: (error: unknown) => void;
+  /** `context` distinguishes a transport/polling failure from an update
+   *  handler or cursor-persist failure ("processing"). */
+  onError: (error: unknown, context?: "polling" | "processing") => void;
 };
 
 /**
@@ -249,27 +251,28 @@ export async function processTelegramUpdatesBatch(
   updates: TelegramUpdate[],
   deps: TelegramUpdateBatchDeps,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<boolean> {
   const batchToken = deps.getConfig().botToken;
   for (const update of updates) {
-    if (signal?.aborted || (deps.shouldProcess && !deps.shouldProcess())) return;
+    if (signal?.aborted || (deps.shouldProcess && !deps.shouldProcess())) return true;
     try {
       await deps.handleUpdate(update);
     } catch (error) {
-      deps.onError(error);
-      return;
+      deps.onError(error, "processing");
+      return false;
     }
-    if (deps.getConfig().botToken !== batchToken) return;
+    if (deps.getConfig().botToken !== batchToken) return true;
     const nextConfig = { ...deps.getConfig(), lastUpdateId: update.update_id };
     try {
       if (deps.persistUpdate) await deps.persistUpdate(nextConfig, update);
       else await deps.persistConfig(nextConfig);
       deps.setConfig(nextConfig);
     } catch (error) {
-      deps.onError(error);
-      return;
+      deps.onError(error, "processing");
+      return false;
     }
   }
+  return true;
 }
 
 /**
@@ -402,7 +405,14 @@ export function createTelegramPollingRuntime(deps: TelegramUpdateBatchDeps & {
           deps.onSuccess?.();
 
           await resyncCursorIfOutOfRange(updates, deps);
-          await processTelegramUpdatesBatch(updates, deps, signal);
+          const processed = await processTelegramUpdatesBatch(updates, deps, signal);
+          if (!processed) {
+            // The cursor stays on the failed update, so the next fetch returns
+            // it again. Back off instead of hammering the API (and the user)
+            // in a tight retry loop.
+            await sleep(backoffMs, signal);
+            backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+          }
         } catch (error) {
           if (signal.aborted) return;
           deps.onError(error);

@@ -29,8 +29,10 @@ export function createActiveTelegramTransport(
 
     return {
         removeInlineKeyboard: (chatId, messageId) => run<void>(undefined, () => transport.removeInlineKeyboard(chatId, messageId)),
-        sendText: (chatId, text, messageThreadId, replyToMessageId, richMarkdown) => run<TelegramSentMessage[]>([], () => (
-            transport.sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown)
+        sendText: (chatId, text, messageThreadId, replyToMessageId, richMarkdown, delivery) => run<TelegramSentMessage[]>([], () => (
+            delivery
+                ? transport.sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown, delivery)
+                : transport.sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown)
         )),
         sendButtons: (chatId, text, rows, messageThreadId, replyToMessageId) => run<TelegramSentMessage>({ message_id: 0 }, () => (
             transport.sendButtons(chatId, text, rows, messageThreadId, replyToMessageId)

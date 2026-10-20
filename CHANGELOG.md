@@ -26,6 +26,16 @@ missing or mislabelled cannot be published.
   applies immediately: an unbound project warns, closes the menu and stops Telegram for that
   process; a bound project stays connected and the menu stays open. `/tg-bot-default clear`
   (also `none` / `off`) provides the same operation without the menu.
+- **A polling outage flooded the chat with identical `Telegram polling failed`
+  messages.** Every failed `getUpdates` (retried at 1s → 30s backoff) sent its own
+  chat notice, and each notice itself retried up to four times on a flaky link.
+  Notices are now collapsed: an outage shorter than 30s stays silent, a sustained
+  outage produces one message that names the failure class (network, auth,
+  conflict, rate limit, server, update processing), repeats only when the class
+  changes or after 30 minutes, and emits one "polling restored" message on
+  recovery. Notice sends are single-attempt. Update-handler and cursor-persist
+  failures are reported as "update processing failed" and now back off instead of
+  re-fetching the same update in a tight loop.
 - **OMP rendered Telegram command confirmations in the terminal, so `/new` never
   answered over Telegram.** OMP's `ExtensionRunner` keeps its UI context in a private field
   and has no `setUIContext()`, so the runner-level UI swap used during Telegram turns was a

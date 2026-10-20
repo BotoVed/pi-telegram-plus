@@ -182,19 +182,27 @@ export function createTelegramTransport(
     if (options.shouldSend && !options.shouldSend(lease)) throw new TelegramSendSuppressedError();
   };
 
-  /** Call a Telegram API method with retry on transient failures. */
-  const callApi = async <T>(method: string, body: Record<string, unknown>, signal: AbortSignal | undefined, lease: unknown): Promise<T> => {
+  /** Call a Telegram API method with retry on transient failures.
+   *  `maxAttempts` overrides the configured retry budget for one call
+   *  (diagnostic notices use 1 so a flaky link cannot duplicate them). */
+  const callApi = async <T>(
+    method: string,
+    body: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    lease: unknown,
+    delivery?: { maxAttempts?: number },
+  ): Promise<T> => {
     const requestSignal = signal ?? options.getAbortSignal?.();
     const token = requireToken();
-    const maxRetries = cfg().retryCount ?? 3;
+    const maxAttempts = Math.max(1, delivery?.maxAttempts ?? ((cfg().retryCount ?? 3) + 1));
     let lastError: unknown;
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         ensureSendAllowed(lease);
         return await telegramApi<T>(token, method, body, requestSignal, cfg().apiBase);
       } catch (error) {
         lastError = error;
-        if (error instanceof TelegramSendSuppressedError || attempt >= maxRetries || requestSignal?.aborted) throw error;
+        if (error instanceof TelegramSendSuppressedError || attempt + 1 >= maxAttempts || requestSignal?.aborted) throw error;
         const retryAfterMs = error instanceof TelegramApiRequestError ? error.retryAfterMs : undefined;
         // Prefer Telegram's explicit flood-control delay; otherwise use exponential backoff.
         await sleep(retryAfterMs ?? 250 * Math.pow(2, attempt));
@@ -285,13 +293,14 @@ export function createTelegramTransport(
     lease: unknown,
     messageThreadId?: number,
     replyToMessageId?: number,
+    delivery?: { maxAttempts?: number },
   ): Promise<TelegramSentMessage | undefined> => {
     try {
       return await callApi<TelegramSentMessage>("sendRichMessage", {
         chat_id: chatId,
         rich_message: { markdown },
         ...messageTargetFields(messageThreadId, replyToMessageId),
-      }, undefined, lease);
+      }, undefined, lease, delivery);
     } catch (err) {
       if (isNetworkError(err)) throw err;
       noteRichFailure("sendRichMessage", err);
@@ -300,10 +309,10 @@ export function createTelegramTransport(
   };
 
   return {
-    async sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown) {
+    async sendText(chatId, text, messageThreadId, replyToMessageId, richMarkdown, delivery) {
       const lease = captureSendLease();
       if (richMarkdown && richMessagesAvailable) {
-        const rich = await sendRich(richMarkdown, chatId, lease, messageThreadId, replyToMessageId);
+        const rich = await sendRich(richMarkdown, chatId, lease, messageThreadId, replyToMessageId, delivery);
         if (rich) return [rich];
       }
       const sent: TelegramSentMessage[] = [];
@@ -318,7 +327,7 @@ export function createTelegramTransport(
           parse_mode: "HTML",
           ...messageTargetFields(messageThreadId, replyToMessageId),
         };
-        const msg = await callApi<TelegramSentMessage>("sendMessage", body, undefined, lease)
+        const msg = await callApi<TelegramSentMessage>("sendMessage", body, undefined, lease, delivery)
           .catch((err) => {
             // Network failure: the plain-text retry will fail identically.
             // Propagate so the caller's `.catch` (or renderer suppression)
@@ -329,7 +338,7 @@ export function createTelegramTransport(
               chat_id: chatId,
               text: stripHtml(chunk),
               ...messageTargetFields(messageThreadId, replyToMessageId),
-            }, undefined, lease);
+            }, undefined, lease, delivery);
           });
         sent.push(msg);
       }

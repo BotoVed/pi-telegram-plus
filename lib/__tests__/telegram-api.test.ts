@@ -79,6 +79,19 @@ describe("createTelegramTransport — network-failure suppression & logging", ()
     expect(logText).not.toMatch(/HTML .*rejected/);
   });
 
+  it("honors a per-call maxAttempts override so notices are one-shot", async () => {
+    const failingFetch = vi.fn(async () => { throw new TypeError("fetch failed"); });
+    globalThis.fetch = failingFetch as unknown as FetchImpl;
+
+    const { transport, setConfig } = makeTransport();
+    setConfig({ botToken: "tok", retryCount: 3 });
+
+    await expect(
+      transport.sendText(1, "<b>error</b>", undefined, undefined, undefined, { maxAttempts: 1 }),
+    ).rejects.toThrow(/fetch failed/);
+    expect(failingFetch).toHaveBeenCalledTimes(1);
+  });
+
   it("honors Telegram retry_after responses before retrying a send", async () => {
     const bodies: Array<Record<string, unknown>> = [];
     const stub = vi.fn(async (_url: string, init: RequestInit) => {

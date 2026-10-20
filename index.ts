@@ -17,6 +17,7 @@ import { createTelegramUiRuntime } from "./lib/telegram-ui.ts";
 import { formatTelegramStatusLine, clearTelegramStatus, TELEGRAM_STATUS_KEY } from "./lib/status.ts";
 import { installTelegramStatusAlignment } from "./lib/status-footer.ts";
 import { createTelegramPollingRuntime } from "./lib/polling.ts";
+import { PollingNoticeGate, classifyPollingError } from "./lib/polling-notice.ts";
 import { initLogger, log, type LogLevel } from "./lib/logger.ts";
 import { authorizeTelegramUser, ensureTelegramPairingCode, formatPairingInstructions } from "./lib/pairing.ts";
 import { getCurrentTelegramTurn } from "./lib/turn-context.ts";
@@ -79,6 +80,8 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   // while allowing different topics in the same supergroup to stay isolated.
   const activeTurns = new Map<string, TelegramTurn>();
   let lastStatusError: string | undefined;
+  // Collapses a retry storm into one outage notice + one recovery notice.
+  const pollingNotices = new PollingNoticeGate();
 
   const setConfig = (nextConfig: TelegramConfig) => {
     const routingChanged = config.botToken !== nextConfig.botToken
@@ -424,8 +427,19 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     },
     onSuccess: () => {
       if (lastStatusError !== undefined) { lastStatusError = undefined; refreshStatus(); }
+      if (!pollingNotices.success()) return;
+      const turn = getCurrentActiveTurn();
+      const chatId = turn?.chatId ?? config.activeChatId;
+      if (chatId !== undefined && config.botToken) {
+        // One recovery message per announced outage; never retried, so a
+        // flapping link cannot duplicate it.
+        transport.sendText(chatId, `<b>ok</b>\nTelegram polling restored`, turn?.messageThreadId, undefined, undefined, { maxAttempts: 1 })
+          .catch(log.child("polling").swallow("warn", "sendText polling-recovery notice failed", { chatId, messageThreadId: turn?.messageThreadId }));
+      } else {
+        getActiveSession()?.extensionRunner.getUIContext().notify("Telegram polling restored", "info");
+      }
     },
-    onError: (error) => {
+    onError: (error, context) => {
       const message = error instanceof Error ? error.message : String(error);
       lastStatusError = message;
       refreshStatus(message);
@@ -433,12 +447,28 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
         getActiveSession()?.extensionRunner.getUIContext().notify(message, "warning");
         return;
       }
+      // One notice per outage (after the debounce), not one per retry. The
+      // cause is included because "polling failed" alone is not actionable.
+      const { kind, label } = classifyPollingError(error, context === "processing");
+      if (!pollingNotices.failure(kind, Date.now())) return;
+
+      const heading = kind === "processing"
+        ? "Telegram update processing failed"
+        : `Telegram polling failed (${label})`;
+      const detail = message.length > 300 ? `${message.slice(0, 299)}…` : message;
       const turn = getCurrentActiveTurn();
       const chatId = turn?.chatId ?? config.activeChatId;
       if (chatId !== undefined && config.botToken) {
-        transport.sendText(chatId, `<b>error</b>\nTelegram polling failed`, turn?.messageThreadId, turn?.sourceMessageId).catch(log.child("polling").swallow("error", "sendText polling-failure notice failed", { chatId, messageThreadId: turn?.messageThreadId }));
+        transport.sendText(
+          chatId,
+          `<b>error</b>\n${escapeHtml(heading)}\n${escapeHtml(detail)}`,
+          turn?.messageThreadId,
+          turn?.sourceMessageId,
+          undefined,
+          { maxAttempts: 1 },
+        ).catch(log.child("polling").swallow("warn", "sendText polling-failure notice failed", { chatId, messageThreadId: turn?.messageThreadId }));
       } else {
-        getActiveSession()?.extensionRunner.getUIContext().notify(`Telegram polling failed: ${message}`, "error");
+        getActiveSession()?.extensionRunner.getUIContext().notify(`${heading}: ${detail}`, "error");
       }
     },
   });
