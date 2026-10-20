@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { decodeUiCallback } from "../callback-protocol.ts";
 import { createTelegramController } from "../controller.ts";
+import type { TelegramCommandHandler } from "../controller.ts";
 import { isRoutedUi, setRunnerUiContext } from "../pi-compat.ts";
 import { createTelegramUiRuntime } from "../telegram-ui.ts";
-import type { TelegramTransport } from "../types.ts";
+import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 
 function createTransport(sent: Array<{ chatId: number; text: string; rows?: Array<Array<{ text: string; value: string }>>; messageThreadId?: number; replyToMessageId?: number; message_id?: number }>): TelegramTransport {
   return {
@@ -613,5 +614,224 @@ class Pi085RunnerDouble {
         },
       ]);
     }
+  });
+
+  it("routes command prompts to Telegram when the runner has no setUIContext (OMP)", async () => {
+    const sent: Array<{ chatId: number; text: string; rows?: Array<Array<{ text: string; value: string }>>; messageThreadId?: number; replyToMessageId?: number; message_id?: number }> = [];
+    const transport = createTransport(sent);
+    const tuiConfirm = vi.fn(async () => true);
+    const tuiUi = {
+      notify: vi.fn(async () => undefined),
+      confirm: tuiConfirm,
+    };
+    const newSession = vi.fn(async () => ({ cancelled: false }));
+    // Partial command context: only the fields this handler and the dispatcher read.
+    const commandCtx = {
+      ui: tuiUi,
+      isIdle: () => false,
+      waitForIdle: async () => undefined,
+      newSession,
+    };
+    // OMP runner shape: getUIContext()/createCommandContext() only, no setUIContext().
+    const session = {
+      extensionRunner: {
+        getUIContext: () => tuiUi,
+        createContext: () => ({ ui: tuiUi }),
+        createCommandContext: () => commandCtx,
+        getCommand: () => undefined,
+      },
+    } as unknown as CapturedAgentSession;
+    const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
+    const commands = new Map<string, TelegramCommandHandler>([
+      ["new", async (_args, ctx) => {
+        const confirmed = await ctx.ui.confirm("New session", "Start a new session? Current session will be saved.");
+        if (!confirmed) return;
+        await ctx.newSession();
+      }],
+    ]);
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport,
+      ui: uiRuntime,
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test-bot",
+      telegramCommands: commands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: (chatId) => ({ chatId, queuedAttachments: [] }),
+      endTelegramTurn: () => undefined,
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 777 }, from: { id: 1 }, text: "/new" });
+    await vi.waitFor(() => expect(uiRuntime.hasPendingInput(777)).toBe(true));
+
+    const sentConfirm = sent.find((item) => item.text.includes("New session"));
+    expect(sentConfirm).toBeDefined();
+    expect(tuiConfirm).not.toHaveBeenCalled();
+    expect(sentConfirm?.rows?.[0]?.map((button) => button.text)).toEqual(["Yes", "No", "Cancel"]);
+
+    const rawCallback = sentConfirm?.rows?.[0]?.[0]?.value ?? "";
+    const callbackValue = decodeUiCallback(rawCallback) ?? rawCallback;
+    const resolveResult = uiRuntime.resolveInput(777, callbackValue, sentConfirm?.message_id, true);
+    expect(resolveResult.handled).toBe(true);
+
+    await vi.waitFor(() => expect(newSession).toHaveBeenCalledTimes(1));
+    expect(tuiConfirm).not.toHaveBeenCalled();
+  });
+
+  it("routes runner getUIContext/createContext dialogs to Telegram on OMP", async () => {
+    const sent: Array<{ chatId: number; text: string; rows?: Array<Array<{ text: string; value: string }>>; messageThreadId?: number; replyToMessageId?: number; message_id?: number }> = [];
+    const transport = createTransport(sent);
+    const tuiConfirm = vi.fn(async (_title: string, _message: string) => true);
+    const tuiSelect = vi.fn(async (_title: string, _options: string[]) => "TUI choice");
+    const tuiUi = {
+      notify: vi.fn(async () => undefined),
+      confirm: tuiConfirm,
+      select: tuiSelect,
+    };
+    // Partial command context: only the fields the dispatcher reads.
+    const commandCtx = {
+      ui: tuiUi,
+      isIdle: () => false,
+      waitForIdle: async () => undefined,
+    };
+    // OMP runner shape: no setUIContext(); agent/tool/hook dialogs read these two methods.
+    const runner = {
+      getUIContext: () => tuiUi,
+      createContext: () => ({ ui: tuiUi }),
+      createCommandContext: () => commandCtx,
+      getCommand: () => undefined,
+    };
+    const session = { extensionRunner: runner } as unknown as CapturedAgentSession;
+    const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
+    const observed: Array<string | undefined> = [];
+    const commands = new Map<string, TelegramCommandHandler>([
+      ["trigger", async () => {
+        const approved = await runner.getUIContext().confirm("Tool approval", "Allow write?");
+        observed.push(approved ? "approved" : "denied");
+        const hookCtx = runner.createContext();
+        observed.push(await hookCtx.ui.select("Hook question", ["One", "Two"]));
+      }],
+    ]);
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport,
+      ui: uiRuntime,
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test-bot",
+      telegramCommands: commands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: (chatId) => ({ chatId, queuedAttachments: [] }),
+      endTelegramTurn: () => undefined,
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 888 }, from: { id: 1 }, text: "/trigger" });
+
+    await vi.waitFor(() => expect(sent.find((item) => item.text.includes("Tool approval"))).toBeDefined());
+    const approval = sent.find((item) => item.text.includes("Tool approval"));
+    expect(tuiConfirm).not.toHaveBeenCalled();
+    expect(approval?.rows?.[0]?.map((button) => button.text)).toEqual(["Yes", "No", "Cancel"]);
+    const approvalCallback = decodeUiCallback(approval?.rows?.[0]?.[0]?.value ?? "") ?? "";
+    expect(uiRuntime.resolveInput(888, approvalCallback, approval?.message_id, true).handled).toBe(true);
+
+    await vi.waitFor(() => expect(sent.find((item) => item.text.includes("Hook question"))).toBeDefined());
+    const hook = sent.find((item) => item.text.includes("Hook question"));
+    expect(tuiSelect).not.toHaveBeenCalled();
+    const hookCallback = decodeUiCallback(hook?.rows?.[0]?.[0]?.value ?? "") ?? "";
+    expect(uiRuntime.resolveInput(888, hookCallback, hook?.message_id, true).handled).toBe(true);
+
+    await vi.waitFor(() => expect(observed).toEqual(["approved", "One"]));
+    expect(tuiConfirm).not.toHaveBeenCalled();
+    expect(tuiSelect).not.toHaveBeenCalled();
+
+    // The patch is permanent per runner but falls back to the host UI once the
+    // Telegram turn's stack entry is gone.
+    await vi.waitFor(() => expect(runner.getUIContext()).toBe(tuiUi));
+    await runner.getUIContext().confirm("Local dialog", "local?");
+    expect(tuiConfirm).toHaveBeenCalledWith("Local dialog", "local?");
+  });
+
+  it("routes built-in ask and eval-prelude tool contexts to Telegram on OMP", async () => {
+    const sent: Array<{ chatId: number; text: string; rows?: Array<Array<{ text: string; value: string }>>; messageThreadId?: number; replyToMessageId?: number; message_id?: number }> = [];
+    const transport = createTransport(sent);
+    const tuiConfirm = vi.fn(async (_title: string, _message: string) => true);
+    const tuiUi = {
+      notify: vi.fn(async () => undefined),
+      confirm: tuiConfirm,
+    };
+    const observed: string[] = [];
+    const toolSession = {
+      getToolContext: (): { ui: typeof tuiUi; hasUI: boolean } => ({ ui: tuiUi, hasUI: true }),
+    };
+    const askTool = {
+      name: "ask",
+      execute: async (
+        _input: unknown,
+        context: { ui: { confirm(title: string, message: string): Promise<boolean> } },
+      ) => {
+        observed.push(await context.ui.confirm("Ask question", "Proceed?") ? "ask-approved" : "ask-denied");
+      },
+    };
+    const bashTool = { name: "bash", session: toolSession };
+    const commandCtx = {
+      ui: tuiUi,
+      isIdle: () => false,
+      waitForIdle: async () => undefined,
+    };
+    const runner = {
+      getUIContext: () => tuiUi,
+      createContext: () => ({ ui: tuiUi }),
+      createCommandContext: () => commandCtx,
+      getCommand: () => undefined,
+    };
+    const session = {
+      extensionRunner: runner,
+      agent: { state: { tools: [askTool, bashTool] } },
+    } as unknown as CapturedAgentSession;
+    const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
+    const commands = new Map<string, TelegramCommandHandler>([
+      ["tools", async () => {
+        await askTool.execute({}, { ui: tuiUi });
+        const context = toolSession.getToolContext();
+        observed.push(context.ui === tuiUi ? "prelude-tui" : "prelude-routed");
+        observed.push(await context.ui.confirm("Computer approval", "Allow?") ? "computer-approved" : "computer-denied");
+      }],
+    ]);
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport,
+      ui: uiRuntime,
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test-bot",
+      telegramCommands: commands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: (chatId) => ({ chatId, queuedAttachments: [] }),
+      endTelegramTurn: () => undefined,
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 999 }, from: { id: 1 }, text: "/tools" });
+
+    await vi.waitFor(() => expect(sent.find((item) => item.text.includes("Ask question"))).toBeDefined());
+    const ask = sent.find((item) => item.text.includes("Ask question"));
+    expect(tuiConfirm).not.toHaveBeenCalled();
+    const askCallback = decodeUiCallback(ask?.rows?.[0]?.[0]?.value ?? "") ?? "";
+    expect(uiRuntime.resolveInput(999, askCallback, ask?.message_id, true).handled).toBe(true);
+    await vi.waitFor(() => expect(observed).toContain("ask-approved"));
+
+    await vi.waitFor(() => expect(sent.find((item) => item.text.includes("Computer approval"))).toBeDefined());
+    const computer = sent.find((item) => item.text.includes("Computer approval"));
+    expect(tuiConfirm).not.toHaveBeenCalled();
+    const computerCallback = decodeUiCallback(computer?.rows?.[0]?.[0]?.value ?? "") ?? "";
+    expect(uiRuntime.resolveInput(999, computerCallback, computer?.message_id, true).handled).toBe(true);
+    await vi.waitFor(() => expect(observed).toContain("computer-approved"));
+    expect(observed).toContain("prelude-routed");
+    expect(tuiConfirm).not.toHaveBeenCalled();
+
+    // Outside a Telegram turn both surfaces fall back to the host UI.
+    await vi.waitFor(() => expect(toolSession.getToolContext().ui).toBe(tuiUi));
+    await toolSession.getToolContext().ui.confirm("Local prelude", "local?");
+    expect(tuiConfirm).toHaveBeenCalledWith("Local prelude", "local?");
   });
 });

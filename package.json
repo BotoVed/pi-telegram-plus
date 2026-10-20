@@ -29,6 +29,7 @@
     "test:watch": "vitest",
     "test:pi-versions": "node scripts/test-pi-versions.mjs",
     "test:e2e": "node scripts/e2e/run-e2e.mjs",
+    "test:e2e:omp": "node scripts/e2e/run-e2e-omp.mjs",
     "compat:gen": "node scripts/gen-compat-matrix.mjs",
     "compat:check": "node scripts/gen-compat-matrix.mjs --check",
     "changelog:draft": "node scripts/changelog-draft.mjs",

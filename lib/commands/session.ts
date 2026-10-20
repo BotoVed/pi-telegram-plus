@@ -88,11 +88,13 @@ export function registerSessionCommands(
       const ui = ctx.ui;
       const confirmed = await ui.confirm("New session", "Start a new session? Current session will be saved.");
       if (!confirmed) return;
-      const result = await ctx.newSession({
-        withSession: async () => {
-          ui.notify("✅ New session started.", "info");
-        },
-      });
+      const result = await ctx.newSession(
+        typeof deps.getSession()?.extensionRunner?.setUIContext === "function"
+          // pi keeps its pre-existing withSession post-replacement hook.
+          ? { withSession: async () => { ui.notify("✅ New session started.", "info"); } }
+          // OMP has no setUIContext() and ignores withSession; it only implements setup.
+          : { setup: async () => { ui.notify("✅ New session started.", "info"); } },
+      );
       if (result.cancelled) ui.notify("Cancelled.", "info");
     },
   });

@@ -447,7 +447,7 @@ async function runVersion(version, report) {
     const deadline = Date.now() + STEP_TIMEOUT_MS;
     let seen;
     while (Date.now() < deadline) {
-      seen = providerLog().find((e) => e.prompt?.includes(promptText));
+      seen = providerLog().find((e) => (e.prompt?.includes(promptText) || e.userText?.includes(promptText)));
       if (seen) break;
       await sleep(500);
     }
@@ -522,7 +522,7 @@ async function runVersion(version, report) {
         binding = undefined;
       }
       if (existsSync(cursorPath)) cursor = JSON.parse(readFileSync(cursorPath, "utf8")).updateId;
-      turns = providerLog().filter((entry) => entry.prompt?.includes(rewindPrompt));
+      turns = providerLog().filter((entry) => (entry.prompt?.includes(rewindPrompt) || entry.userText?.includes(rewindPrompt)));
       if (binding === REWIND_UPDATE_ID && cursor === REWIND_UPDATE_ID && turns.length === 1) break;
       await sleep(500);
     }

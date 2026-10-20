@@ -248,7 +248,122 @@ function createRoutedTelegramUi(baseUi: unknown, telegramUi: ExtensionUIContext,
   }) as ExtensionUIContext;
 }
 
+/**
+ * Replace `ui` on an already-created context object. Interactive modals must
+ * not mutate stateful getters, so the property is redefined in place instead of
+ * spreading the context (some hosts expose `model` and friends as getters).
+ */
+function withUiContext<T extends object>(ctx: T, ui: ExtensionUIContext): T {
+  return Object.defineProperty(ctx, "ui", {
+    value: ui,
+    configurable: true,
+    enumerable: true,
+    writable: true,
+  });
+}
+
+// Runners whose getUIContext()/createContext() consult the Telegram UI stack.
+// The patch is permanent per runner and falls back to the host UI when the
+// stack is empty, so it needs no uninstall.
+const routedRunnerUiPatched = new WeakSet<object>();
+
+/**
+ * Route agent-, tool-, and hook-raised dialogs on hosts without a UI-context
+ * setter (OMP). `getUIContext()` backs tool approvals and session-level
+ * selects; `createContext()` backs extension hooks and extension tools.
+ * Both read the private UI context directly, so overriding the instance
+ * methods is the only public seam. The returned routed proxy falls back to
+ * the host UI whenever no Telegram turn is active, keeping local TUI turns
+ * untouched.
+ */
+function installRoutedRunnerUi(runner: CapturedAgentSession["extensionRunner"]): void {
+  if (routedRunnerUiPatched.has(runner)) return;
+  routedRunnerUiPatched.add(runner);
+  const originalGetUIContext = runner.getUIContext.bind(runner);
+  const originalCreateContext = runner.createContext.bind(runner);
+
+  runner.getUIContext = () =>
+    telegramUiStacks.get(runner)?.entries.at(-1)?.routedUi ?? originalGetUIContext();
+  runner.createContext = (...args: Parameters<typeof originalCreateContext>) => {
+    const ctx = originalCreateContext(...args);
+    const routed = telegramUiStacks.get(runner)?.entries.at(-1)?.routedUi;
+    return routed ? withUiContext(ctx, routed) : ctx;
+  };
+}
+
+// Turn -> routed UI. Built-in tools get their context outside the runner
+// methods, so the AsyncLocalStorage turn is the key that reaches them.
+const routedUiByTurn = new WeakMap<TelegramTurn, ExtensionUIContext>();
+const toolExecutePatched = new WeakSet<object>();
+const toolSessionPatched = new WeakSet<object>();
+
+/**
+ * Built-in tools receive `ui` from OMP's private ToolContextStore, which is not
+ * reachable from AgentSession. Wrap the two places it surfaces:
+ * - the `ask` tool's execute context (agent loop -> ToolContextStore)
+ * - ToolSession.getToolContext (eval preludes such as computer control)
+ * While a Telegram turn is active the context's `ui` is replaced with the
+ * routed UI; otherwise the original context is passed through untouched.
+ */
+function readAgentTools(session: CapturedAgentSession): readonly unknown[] {
+  if (!("agent" in session)) return [];
+  const agent = session.agent;
+  if (!agent || typeof agent !== "object" || !("state" in agent)) return [];
+  const state = agent.state;
+  if (!state || typeof state !== "object" || !("tools" in state)) return [];
+  return Array.isArray(state.tools) ? state.tools : [];
+}
+
+function installToolUiRouting(session: CapturedAgentSession): void {
+  for (const raw of readAgentTools(session)) {
+    if (!raw || typeof raw !== "object") continue;
+    const name = "name" in raw ? raw.name : undefined;
+    const execute = "execute" in raw ? raw.execute : undefined;
+    if (name === "ask" && typeof execute === "function" && !toolExecutePatched.has(raw)) {
+      const originalExecute = execute.bind(raw) as (...args: unknown[]) => unknown;
+      try {
+        Object.defineProperty(raw, "execute", {
+          configurable: true,
+          writable: true,
+          value: (...args: unknown[]) => {
+            const context = args[1];
+            const turn = getCurrentTelegramTurn();
+            const routed = turn ? routedUiByTurn.get(turn) : undefined;
+            if (!routed || !context || typeof context !== "object") return originalExecute(...args);
+            const [input, , ...rest] = args;
+            return originalExecute(input, withUiContext(context, routed), ...rest);
+          },
+        });
+        toolExecutePatched.add(raw);
+      } catch {
+        // Frozen/proxied tools keep the host UI.
+      }
+    }
+    const toolSession = "session" in raw ? raw.session : undefined;
+    if (!toolSession || typeof toolSession !== "object" || toolSessionPatched.has(toolSession)) continue;
+    const getToolContext = "getToolContext" in toolSession ? toolSession.getToolContext : undefined;
+    if (typeof getToolContext !== "function") continue;
+    const originalGetToolContext = getToolContext.bind(toolSession) as () => unknown;
+    try {
+      Object.defineProperty(toolSession, "getToolContext", {
+        configurable: true,
+        writable: true,
+        value: () => {
+          const ctx = originalGetToolContext();
+          const turn = getCurrentTelegramTurn();
+          const routed = turn ? routedUiByTurn.get(turn) : undefined;
+          return routed && ctx && typeof ctx === "object" ? withUiContext(ctx, routed) : ctx;
+        },
+      });
+      toolSessionPatched.add(toolSession);
+    } catch {
+      // Non-writable ToolSession keeps eval preludes on the host UI.
+    }
+  }
+}
+
 function pushTelegramUiContext(runner: CapturedAgentSession["extensionRunner"], ui: ExtensionUIContext, turn: TelegramTurn): () => void {
+  if (typeof runner.setUIContext !== "function") installRoutedRunnerUi(runner);
   let state = telegramUiStacks.get(runner as object);
   if (!state) {
     state = { baseUi: runner.getUIContext(), baseMode: getRunnerMode(runner as any), entries: [] };
@@ -261,6 +376,7 @@ function pushTelegramUiContext(runner: CapturedAgentSession["extensionRunner"], 
     routedUi: createRoutedTelegramUi(previousUi, ui, turn),
   };
   state.entries.push(entry);
+  routedUiByTurn.set(turn, entry.routedUi);
   setRunnerUiContext(runner as any, entry.routedUi, TELEGRAM_EXTENSION_MODE);
 
   return () => {
@@ -270,6 +386,11 @@ function pushTelegramUiContext(runner: CapturedAgentSession["extensionRunner"], 
     if (idx === -1) return;
     const wasTop = idx === current.entries.length - 1;
     current.entries.splice(idx, 1);
+    if (routedUiByTurn.get(turn) === entry.routedUi) {
+      const remaining = current.entries.findLast((candidate) => candidate.turn === turn);
+      if (remaining) routedUiByTurn.set(turn, remaining.routedUi);
+      else routedUiByTurn.delete(turn);
+    }
     if (wasTop) {
       const next = current.entries.at(-1);
       if (next) setRunnerUiContext(runner as any, next.routedUi, TELEGRAM_EXTENSION_MODE);
@@ -285,6 +406,7 @@ async function runWithTelegramUi<T>(deps: {
   turn: TelegramTurn;
   run: () => Promise<T>;
 }): Promise<T> {
+  if (typeof deps.session.extensionRunner.setUIContext !== "function") installToolUiRouting(deps.session);
   const restore = pushTelegramUiContext(deps.session.extensionRunner, deps.ui, deps.turn);
   try {
     return await deps.run();
@@ -529,6 +651,12 @@ export function createTelegramController(deps: {
     // polling loop and block callback processing for that update.
     const telegramUi = deps.ui.create(chatId, messageThreadId, sourceMessageId);
     const ctx = session.extensionRunner.createCommandContext();
+    // OMP has no setUIContext(), so runWithTelegramUi below cannot install the
+    // routed UI. Route the command's own prompts (e.g. /new's confirm) directly
+    // through the Telegram UI instead of letting them open in the terminal.
+    const commandCtx = typeof session.extensionRunner.setUIContext === "function"
+      ? ctx
+      : withUiContext(ctx, telegramUi);
     // Capture idleness BEFORE the handler runs. Commands like /sisyphus and
     // /goals enqueue the agent turn fire-and-forget via pi.sendUserMessage and
     // return immediately; the actual turn (and any goal_question /
@@ -547,7 +675,7 @@ export function createTelegramController(deps: {
       ui: telegramUi,
       turn: commandTurn,
       run: async () => {
-        await handler(args, ctx);
+        await handler(args, commandCtx);
         if (!wasIdle || !idleFn || !waitFn) return;
         // Hold the Telegram UI swap across the command's enqueued turn and any
         // auto-continue chain it spawns. pi-goal schedules continuation turns via

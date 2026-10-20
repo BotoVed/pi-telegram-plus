@@ -70,7 +70,19 @@ const server = createServer(async (req, res) => {
   const promptText = (parsed.messages ?? [])
     .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")))
     .join("\n");
-  record({ ts: Date.now(), direction: "in", model: parsed.model, prompt: promptText.slice(0, 4000) });
+  // pi's system prompt is small enough for `prompt`; OMP's is not, so record the
+  // user-role text separately or assertions silently search a truncated string.
+  const userText = (parsed.messages ?? [])
+    .filter((m) => m.role === "user")
+    .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")))
+    .join("\n");
+  record({
+    ts: Date.now(),
+    direction: "in",
+    model: parsed.model,
+    prompt: promptText.slice(0, 4000),
+    userText: userText.slice(0, 4000),
+  });
 
   const wantsStream = parsed.stream === true;
   const id = "chatcmpl-e2e";

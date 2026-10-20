@@ -16,6 +16,27 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
+### Fixed
+
+- **OMP rendered Telegram command confirmations in the terminal, so `/new` never
+  answered over Telegram.** OMP's `ExtensionRunner` keeps its UI context in a private field
+  and has no `setUIContext()`, so the runner-level UI swap used during Telegram turns was a
+  no-op. `/new`'s `ctx.ui.confirm()` therefore opened in the OMP TUI while Telegram received
+  no prompt and no buttons; the command stayed pending until someone answered in the
+  terminal. The Telegram dispatcher now overrides `ui` on the per-command context whenever
+  the runner cannot accept a UI context, so every command-level prompt (confirm, select,
+  input, editor, custom) routes to Telegram. The runner's `getUIContext()` and
+  `createContext()` are also overridden per runner to consult the active Telegram UI stack,
+  which routes tool approvals, session-level selects, extension hooks, and extension tools
+  (including pi-goal dialogs) while a Telegram turn is active and falls back to the TUI
+  otherwise. Built-in `ask` and eval-prelude (`computer`) contexts get `ui` from OMP's
+  private `ToolContextStore`, so the plugin wraps their execution context and
+  `ToolSession.getToolContext` with the same active-turn routing. The bash PTY overlay is a
+  capability gate rather than a dialog and stays terminal-local. pi keeps its
+  `newSession({ withSession })` post-switch hook; OMP ignores `withSession`, so its
+  “New session started.” notification now uses `newSession({ setup })`.
+  See [compatibility.md](docs/compatibility.md#omp-oh-my-pi-pi-coding-agent).
+
 ## [0.0.12] — 2026-10-19
 
 ### Fixed

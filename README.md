@@ -70,9 +70,11 @@ provider, and the assistant reply delivered back — rather than just startup.
 
 Run them with `npm run test:pi-versions` and `npm run test:e2e`; add `--record` to either to
 write measured results into `docs/compat-results.json`, then `npm run compat:gen` to refresh
-the table above. E2E and the matrix are deliberately kept out of the publish gate: E2E
-installs pi and starts `tmux` per version, so making it mandatory would slow releases enough
-to encourage bypassing it.
+the table above. OMP has its own isolated acceptance run — `npm run test:e2e:omp` — which
+drives a real OMP TUI in `tmux` against the same mocks and additionally asserts the `/new`
+confirmation reaches Telegram. E2E and the matrix are deliberately kept out of the publish
+gate: E2E installs pi and starts `tmux` per version, so making it mandatory would slow
+releases enough to encourage bypassing it.
 
 Versions marked † carry a caveat — see
 [docs/compatibility.md](docs/compatibility.md).

@@ -66,7 +66,7 @@ const record = process.argv.slice(2).includes("--record");
 // vitest's summary never reaches this process. Update these in the same commit as any
 // change to the suite — the recorded matrix points at them as measured evidence.
 const TEST_FILES = 35;
-const TEST_COUNT = 440;
+const TEST_COUNT = 443;
 
 /**
  * Merge a green matrix run into docs/compat-results.json.

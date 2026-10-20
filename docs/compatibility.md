@@ -70,8 +70,15 @@ Two pi-specific behaviors are **not** carried over to OMP, both because OMP has 
 seam for them:
 
 - **Runner UI-context swap.** `runner.setUIContext()` does not exist and `#uiContext` is
-  private, so the swap that routes agent-raised dialogs (ask/select/confirm) to Telegram is
-  a no-op; such dialogs stay in the OMP terminal.
+  private. The plugin installs a per-runner override of `getUIContext()` / `createContext()`
+  that consults the active Telegram UI stack: while a Telegram turn is active those methods
+  return the routed UI, and with no active turn they return the host TUI, so local turns are
+  untouched. That covers command prompts, tool approvals, session-level selects, extension
+  hooks, and extension tools (including pi-goal dialogs). Built-in `ask` and eval-prelude
+  contexts (`computer` control) are routed by wrapping the tool execution context and
+  `ToolSession.getToolContext`, since they receive `ui` from OMP's private `ToolContextStore`
+  rather than the runner. The bash PTY overlay is not a dialog — it is a capability gate on
+  `ctx.ui` — and remains local to the terminal.
 - **Shutdown-handler replacement.** OMP's runner keeps its shutdown handler private, so
   `/quit` issued from Telegram shuts the host down instead of only notifying.
 
@@ -173,6 +180,7 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Unit / regression | 35 files, 440 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
+| OMP E2E acceptance | Real OMP `18.12.x` in `tmux` + the same mocks; asserts round trip, `/new` Telegram confirmation, post-`/new` capture, cursor rewind | `npm run test:e2e:omp` |
 
 The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates
 against the mock Bot API (`getMe`), enters its `getUpdates` polling loop, picks up an

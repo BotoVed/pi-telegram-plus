@@ -189,7 +189,17 @@ const server = createServer(async (req, res) => {
     return ok(res, batch);
   }
 
-  record({ ts: Date.now(), direction: "out", method, token, body });
+  const resultMessageId = method === "sendMessage" || method === "editMessageText"
+    ? 1000 + calls.length + 1
+    : undefined;
+  record({
+    ts: Date.now(),
+    direction: "out",
+    method,
+    token,
+    body,
+    ...(resultMessageId === undefined ? {} : { message_id: resultMessageId }),
+  });
 
   switch (method) {
     case "getMe":
