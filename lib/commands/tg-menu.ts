@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
-import { readBotRegistry, readProjectBinding, clearDefaultBot } from "../config.ts";
+import { readBotRegistry, readProjectBinding } from "../config.ts";
 import type { TelegramInstanceMetadata } from "../instance-coordinator.ts";
 import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
 import type { MenuUi, TelegramCommandDeps } from "./telegram-commands.ts";
@@ -9,6 +9,7 @@ import type { BotRecord, BotRegistry } from "../types.ts";
 import { configToolFlow, configThinkingFlow, configRetryFlow } from "./tg-config.ts";
 import {
   addBotFlow,
+  clearBotDefaultFlow,
   setBotDefaultFlow,
   updateBotFlow,
   removeBotFlow,
@@ -193,31 +194,20 @@ async function botDetailMenu(
       return; // removed elsewhere → back to bot list
     }
     const isDefault = registry.defaultBotId === botNow.id;
+    // The default is a global registry setting: set and clear are explicit
+    // actions, never a project-scoped toggle. Clearing only warns about the
+    // local consequence (an unbound project has nothing left to route).
     const choice = await pick(
       ui,
       `🤖 ${botNow.name}${isDefault ? " ★ default" : ""}`,
-      [`Default: ${isDefault ? "● on" : "○ off"}`, "Update", "Remove", BACK_LABEL],
+      [isDefault ? "Clear default" : "Set as default", "Update", "Remove", BACK_LABEL],
     );
     if (!choice || choice === BACK_LABEL) return; // back to bot list
 
-    if (choice.startsWith("Default:")) {
-      if (isDefault) {
-        // An unbound project runs on the default bot, so clearing it disconnects Telegram here.
-        const followsDefault = !(await readProjectBinding(cwd));
-        if (followsDefault) {
-          const ok = await ui.confirm(
-            "Clear the default bot?",
-            "This project has no binding and runs on the default bot, so clearing it disconnects Telegram here — the /tg menu will close and you can't undo it from Telegram. Set a default or bind a bot in the TUI (/tg-bot-default, /tg-bind-cwd) to reconnect. Continue?",
-          );
-          if (!ok) continue;
-        }
-        ui.notify("Default bot cleared. Unbound projects now have no bot until a default is set again.", "info");
-        if (followsDefault) await ui.closeMenu?.();
-        await clearDefaultBot();
-        if (followsDefault) throw new MenuClosed();
-      } else if (await setBotDefaultFlow(ui, botNow.id, deps, cwd)) {
-        throw new MenuClosed();
-      }
+    if (choice === "Clear default") {
+      if (await clearBotDefaultFlow(ui, deps, cwd)) throw new MenuClosed();
+    } else if (choice === "Set as default") {
+      if (await setBotDefaultFlow(ui, botNow.id, deps, cwd)) throw new MenuClosed();
     } else if (choice === "Update") {
       await updateBotFlow(ui, deps, cwd, botNow.id);
     } else if (choice === "Remove") {

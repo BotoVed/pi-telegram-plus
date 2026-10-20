@@ -18,6 +18,14 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **The global default bot could not be unset cleanly.** `/tg → Bots → Bot list →
+  <bot>` exposed it as a project-aware toggle (`Default: ● on / ○ off`): on an unbound
+  project it demanded a confirmation, and after clearing it never re-resolved the running
+  routing, so the process kept polling the removed default until restart. The action is now
+  a global `Set as default` / `Clear default`, never touches a project binding, and clearing
+  applies immediately: an unbound project warns, closes the menu and stops Telegram for that
+  process; a bound project stays connected and the menu stays open. `/tg-bot-default clear`
+  (also `none` / `off`) provides the same operation without the menu.
 - **OMP rendered Telegram command confirmations in the terminal, so `/new` never
   answered over Telegram.** OMP's `ExtensionRunner` keeps its UI context in a private field
   and has no `setUIContext()`, so the runner-level UI swap used during Telegram turns was a

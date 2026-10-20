@@ -188,7 +188,7 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message.includes("Bot added"))).toBe(true);
   });
 
-  it("Bots → Bot list → bot → Default toggle → sets default bot", async () => {
+  it("Bots → Bot list → bot → Set as default sets the global default", async () => {
     const bot1 = makeBot({ name: "a" });
     const bot2 = makeBot({ name: "b" });
     await addBot(bot1);
@@ -196,7 +196,7 @@ describe("/tg multi-level menu", () => {
     // bot1 is the default (first added). bot2 is not default.
     const bot2Choice = botChoiceFull(bot2, false);
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", bot2Choice, "Default: ○ off", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "Bot list", bot2Choice, "Set as default", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
     const registry = await readBotRegistry();
@@ -204,45 +204,37 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message.includes("Default bot set to"))).toBe(true);
   });
 
-  it("Default toggle off on an unbound project → confirms, clears default and closes the menu", async () => {
+  it("Clear default on an unbound project clears globally, warns, refreshes routing and closes the menu", async () => {
     const bot = makeBot({ name: "solo" });
     await addBot(bot); // becomes default
+    config = { botToken: bot.token };
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Default: ● on"],
-      confirm: [true],
+      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Clear default"],
     });
     const closeMenu = vi.fn(async () => undefined);
     await commands.get("tg")!("", makeCtx({ ...ui, closeMenu }));
     const registry = await readBotRegistry();
     expect(registry.defaultBotId).toBeUndefined();
-    expect(ui.confirm).toHaveBeenCalledTimes(1);
+    expect(ui.confirm).not.toHaveBeenCalled();
     expect(ui.select).toHaveBeenCalledTimes(4); // menu exited right after clearing
     expect(closeMenu).toHaveBeenCalled();
     expect(notifyCalls.some((c) => c.message.includes("Default bot cleared"))).toBe(true);
+    expect(config.botToken).toBeUndefined(); // runtime re-resolved immediately
   });
 
-  it("Default toggle off on an unbound project → declining the confirm keeps the default", async () => {
-    const bot = makeBot({ name: "solo" });
-    await addBot(bot);
-    const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Default: ● on", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
-      confirm: [false],
-    });
-    await commands.get("tg")!("", makeCtx(ui));
-    expect((await readBotRegistry()).defaultBotId).toBe(bot.id);
-  });
-
-  it("Default toggle off on a bound project → clears without confirm and stays in the menu", async () => {
+  it("Clear default on a bound project clears globally and stays in the menu", async () => {
     const bot = makeBot({ name: "solo" });
     await addBot(bot);
     await writeProjectBinding(projectDir, { botId: bot.id, enabled: true });
+    config = { botToken: bot.token };
     const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Default: ● on", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Clear default", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
     expect((await readBotRegistry()).defaultBotId).toBeUndefined();
     expect(ui.confirm).not.toHaveBeenCalled();
     expect(ui.select.mock.calls[4][0]).toBe("🤖 solo"); // detail re-rendered without the ★
+    expect(config.botToken).toBe(bot.token); // binding still routes this project
   });
 
   it("setting another default on an unbound project switches bots → notifies and closes the menu", async () => {
@@ -252,7 +244,7 @@ describe("/tg multi-level menu", () => {
     await addBot(bot2);
     config = { botToken: bot1.token };
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot2, false), "Default: ○ off"],
+      select: ["🤖 Bots", "Bot list", botChoiceFull(bot2, false), "Set as default"],
     });
     const closeMenu = vi.fn(async () => undefined);
     await commands.get("tg")!("", makeCtx({ ...ui, closeMenu }));
@@ -260,6 +252,7 @@ describe("/tg multi-level menu", () => {
     expect(ui.select).toHaveBeenCalledTimes(4);
     expect(closeMenu).toHaveBeenCalled();
     expect(notifyCalls.some((c) => c.message.includes("switches to @b_bot"))).toBe(true);
+    expect(config.botToken).toBe("tok-b"); // runtime switched immediately
   });
 
   it("navigates with ui.menu when available and closes the menu on exit", async () => {
@@ -317,7 +310,7 @@ describe("/tg multi-level menu", () => {
     expect(registry.bots[0].allowedUserId).toBe(99999);
   });
 
-  it("Bots → Bot list → bot → per-bot action menu shows Set default/Update/Remove", async () => {
+  it("Bots → Bot list → bot → per-bot action menu shows explicit Clear/Set default plus Update/Remove", async () => {
     const bot = makeBot({ name: "zeta", token: "t-z" });
     await addBot(bot);
     const { ui } = makeScriptedUi({
@@ -325,7 +318,19 @@ describe("/tg multi-level menu", () => {
     });
     await commands.get("tg")!("", makeCtx(ui));
     const detailCall = ui.select.mock.calls[3]; // 4th select = bot detail (main + Bots + Bot list + detail)
-    expect(detailCall[1]).toEqual(["Default: ● on", "Update", "Remove", "⬅️ Back"]);
+    expect(detailCall[1]).toEqual(["Clear default", "Update", "Remove", "⬅️ Back"]);
+  });
+
+  it("Bots → Bot list → non-default bot → per-bot action menu offers Set as default", async () => {
+    const bot1 = makeBot({ name: "a", token: "t-a" });
+    const bot2 = makeBot({ name: "b", token: "t-b" });
+    await addBot(bot1);
+    await addBot(bot2);
+    const { ui } = makeScriptedUi({
+      select: ["🤖 Bots", "Bot list", botChoiceFull(bot2, false), "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    expect(ui.select.mock.calls[3][1]).toEqual(["Set as default", "Update", "Remove", "⬅️ Back"]);
   });
 
   it("Project → shows current binding in the Bot label", async () => {

@@ -256,7 +256,7 @@ Opens an inline-keyboard menu with four submenus (each with a **⬅️ Back** op
 
 | Menu | Actions |
 |------|--------|
-| **🤖 Bots** | **➕ Add bot** — prompt for name + token, create pairing code · **Bot list** — list registered bots (★ default marker, @username, pairing status); select a bot to open its action menu: **Default: ● on / ○ off** (toggle; turning it off clears the default bot — on an unbound project that disconnects Telegram, so it asks first; making another bot the default moves an unbound project to that bot and closes the menu) / **Update** (token / name / allowedUserId / apiBase) / **Remove** (confirm; warns if default) |
+| **🤖 Bots** | **➕ Add bot** — prompt for name + token, create pairing code · **Bot list** — list registered bots (★ default marker, @username, pairing status); select a bot to open its action menu: **Set as default / Clear default** (global: sets or clears the default bot, never touching a project binding; clearing on an unbound project warns that this process loses Telegram, closes the menu and re-resolves routing immediately; making another bot the default moves an unbound project to that bot and closes the menu) / **Update** (token / name / allowedUserId / apiBase) / **Remove** (confirm; warns if default) |
 | **📁 Project** | **Bot: <current>** — shows the bound bot (or `(default)`); press to change binding (pick another bot or **Unbind**) · **Enabled: ● on / ○ off** — toggle the bot on/off for this project |
 | **⚙️ Config** | **Tool: <current>** — select hidden / brief / full · **Thinking: <current>** — select hidden / brief / full · **Retry: <current>** — input a number 0–10 |
 | **🔄 Switch instance** | List live pi instances sharing this bot token; select one to switch (same logic as `/tg-switch`). Must be run on the currently active instance. |
@@ -276,7 +276,7 @@ All flat commands remain registered and dispatchable (TUI + typing them in Teleg
 | `/tg-bot-list` | List all registered bots (id, name, @username, default marker, pairing status) |
 | `/tg-bot-update <id|name>` | Update a bot's token, name, allowedUserId, apiBase |
 | `/tg-bot-remove <id|name>` | Remove a bot from the registry; warns if it was the default or referenced by project bindings |
-| `/tg-bot-default <id|name>` | Set the default bot (used when a project has no explicit binding) |
+| `/tg-bot-default <id|name|clear>` | Set or clear the global default bot (used when a project has no explicit binding) |
 
 **Project binding** (per-project `.pi/telegram.json` references a registered bot by id — no token re-paste):
 
@@ -295,7 +295,7 @@ All flat commands remain registered and dispatchable (TUI + typing them in Teleg
 | `/tg-config [key] [value]` | Configure tool and thinking rendering levels and retry count. Direct-set: `/tg-config tool full`, `/tg-config retry 5`. No args opens an interactive selector. |
 | `/tg-switch [instance-id|current]` | Switch the active local pi instance that owns this bot token. No args opens an inline selector; an id/prefix targets one live instance; `current` re-replays the active owner. Must be run on the currently active instance. See **Multi-instance Coordination**. |
 
-**How it works:** Bots are registered once with `/tg-bot-add` or `/tg → Bots → Add bot` (token, username, pairing, etc. stored centrally). Projects reference a bot by id via `/tg-bind-cwd` or `/tg → Project → Bot: <current> → pick a bot` — no token re-paste or re-pairing needed. Unbound projects fall back to the **default bot** (`/tg-bot-default` or `/tg → Bots → Bot list → <bot> → Default`), which is the equivalent of the former "global" bot.
+**How it works:** Bots are registered once with `/tg-bot-add` or `/tg → Bots → Add bot` (token, username, pairing, etc. stored centrally). Projects reference a bot by id via `/tg-bind-cwd` or `/tg → Project → Bot: <current> → pick a bot` — no token re-paste or re-pairing needed. Unbound projects fall back to the **default bot** (`/tg-bot-default <id|name>` or `/tg → Bots → Bot list → <bot> → Set as default`; clear it with `/tg-bot-default clear` or the bot's **Clear default** action), which is the equivalent of the former "global" bot.
 
 #### Pairing / authorization
 

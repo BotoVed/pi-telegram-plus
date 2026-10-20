@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { addBot, bindProjectTelegram, findBotByIdOrName, readBotRegistry, removeBot, setDefaultBot, unbindProjectTelegram, updateBot, updateProjectBindingLocked, readProjectBinding, readResolvedTelegramConfig } from "../config.ts";
+import { addBot, bindProjectTelegram, clearDefaultBot, findBotByIdOrName, readBotRegistry, removeBot, setDefaultBot, unbindProjectTelegram, updateBot, updateProjectBindingLocked, readProjectBinding, readResolvedTelegramConfig } from "../config.ts";
 import { escapeHtml } from "../html.ts";
 import { getTelegramBotUsername } from "../telegram-api.ts";
 import { createTelegramPairingCode, ensureTelegramPairingCode, formatPairingInstructions } from "../pairing.ts";
@@ -115,8 +115,50 @@ export async function setBotDefaultFlow(
     await ui.closeMenu?.();
   }
   await setDefaultBot(botId);
+  // The default is global, but this process may route through it (unbound
+  // project). Re-resolve so the switch takes effect now instead of on restart.
+  if (deps && cwd) await refreshRouting(deps, cwd);
   if (!switching) ui.notify(`Default bot set to: ${label}`, "info");
   return switching;
+}
+
+/** Re-resolve this process's routing after a registry change, so a token
+ *  switch or removal takes effect now instead of on restart. The upstream
+ *  status error belongs to the previous routing; drop it so a stopped poller
+ *  does not show a stale "error" instead of "not configured". */
+async function refreshRouting(deps: TelegramCommandDeps, cwd: string): Promise<void> {
+  deps.switchResolvedConfig(await readResolvedTelegramConfig(cwd));
+  deps.clearStatusError();
+  deps.refreshStatus();
+}
+
+/**
+ * Clear the global default bot. This only touches the registry; it never
+ * changes a project binding. Returns true when this project has no binding, so
+ * the caller must treat the menu as closed: nothing routes Telegram here until
+ * a default or a binding exists again.
+ */
+export async function clearBotDefaultFlow(
+  ui: MenuUi,
+  deps: TelegramCommandDeps | undefined,
+  cwd: string,
+): Promise<boolean> {
+  const registry = await readBotRegistry();
+  if (!registry.defaultBotId) {
+    ui.notify("No default bot is set.", "info");
+    return false;
+  }
+  const followsDefault = !(await readProjectBinding(cwd));
+  ui.notify(
+    followsDefault
+      ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg-bind-cwd) or set a default in the TUI to reconnect."
+      : "Default bot cleared.",
+    followsDefault ? "warning" : "info",
+  );
+  if (followsDefault) await ui.closeMenu?.();
+  await clearDefaultBot();
+  if (deps) await refreshRouting(deps, cwd);
+  return followsDefault;
 }
 
 export async function updateBotFlow(
@@ -449,7 +491,11 @@ async function handleTgBotDefault(
 ): Promise<void> {
   const query = args.trim();
   if (!query) {
-    ctx.ui.notify("Usage: /tg-bot-default <id|name>", "error");
+    ctx.ui.notify("Usage: /tg-bot-default <id|name|clear>", "error");
+    return;
+  }
+  if (query === "clear" || query === "none" || query === "off") {
+    await clearBotDefaultFlow(ctx.ui, deps, ctx.cwd || process.cwd());
     return;
   }
   const registry = await readBotRegistry();

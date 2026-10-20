@@ -186,6 +186,23 @@ describe("Telegram commands (bot registry + project binding)", () => {
     expect(registry.defaultBotId).toBe(bot2.id);
   });
 
+  it("/tg-bot-default clear unsets the global default without touching the project binding", async () => {
+    const bot = makeBot({ name: "only", token: "tok-only" });
+    await addBot(bot); // becomes default
+    config = { botToken: bot.token };
+
+    const ctx = makeCtx();
+    await commands.get("tg-bot-default")!("clear", ctx);
+
+    expect((await readBotRegistry()).defaultBotId).toBeUndefined();
+    expect(await readProjectBinding(projectDir)).toBeUndefined();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Default bot cleared"),
+      "warning",
+    );
+    expect(config.botToken).toBeUndefined(); // unbound project re-resolved immediately
+  });
+
   it("/tg-bot-remove removes a bot and warns about default", async () => {
     const bot = makeBot({ name: "only" });
     await addBot(bot);
