@@ -17,7 +17,7 @@ import type { TelegramUiRuntime } from "./telegram-ui.ts";
 import type { TuiBridgeAdapter, TuiSnapshot } from "./tui-bridge.ts";
 import { tuiBridge as defaultTuiBridge } from "./tui-bridge.ts";
 import type { SelectorState } from "./tui-selector.ts";
-import { parseSelectorText, selectorNavigateKeys } from "./tui-selector.ts";
+import { parseSelectorText, readDialogTitle, selectorNavigateKeys } from "./tui-selector.ts";
 import { escapeHtml } from "./html.ts";
 import { stripAnsi } from "./custom-dialogs.ts";
 import { recordCommandUsage } from "./command-usage.ts";
@@ -650,10 +650,19 @@ function tailScreen(text: string, maxBytes: number): string {
   return `…\n${lines.slice(start).join("\n")}`;
 }
 
+// URLs inside <pre> are not linkified by Telegram; repeat them as plain text
+// so OAuth/authorization screens offer a tappable link from the mirror.
+function snapshotLinks(body: string): string {
+  const urls = [...new Set(body.match(/\bhttps?:\/\/[^\s<>"'`]+/g) ?? [])]
+    .map((url) => url.replace(/[).,;:]+$/, ""))
+    .slice(0, 3);
+  return urls.length > 0 ? `\n\n${urls.map((url) => `🔗 ${escapeHtml(url)}`).join("\n")}` : "";
+}
+
 function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: SelectorState): string {
   const shownTitle = selector?.title ?? title;
   const body = selector ? selector.block : snapshot.text || "(empty screen)";
-  return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(tailScreen(body, TUI_SNAPSHOT_MAX_BYTES))}`;
+  return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(tailScreen(body, TUI_SNAPSHOT_MAX_BYTES))}${selector ? "" : snapshotLinks(body)}`;
 }
 
 function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
@@ -816,9 +825,10 @@ export function createTelegramController(deps: {
     const selectorKeyboard = canControl && selector
       ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true })
       : undefined;
+    const dialogTitle = !selector && snapshot.interactive ? readDialogTitle(snapshot.text ?? "") : undefined;
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
-      : snapshot.interactive ? (selector?.title ?? "TUI selector") : "TUI";
+      : snapshot.interactive ? (selector?.title ?? dialogTitle ?? "TUI selector") : "TUI";
     const hint = snapshot.interactive && getTuiMode() !== "full"
       ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
       : "";
@@ -960,9 +970,33 @@ export function createTelegramController(deps: {
     }
 
     if (snapshot.interactive && getTuiMode() === "full") {
+      const key = targetKey(chatId, messageThreadId);
       const mirror: TuiMirror = { chatId, messageThreadId, messageId };
-      tuiMirrors.set(targetKey(chatId, messageThreadId), mirror);
+      tuiMirrors.set(key, mirror);
       await refreshTuiMirror(mirror);
+      // Authorization flows (OAuth wait screens) change without user action:
+      // keep the mirror current until the overlay closes or is replaced.
+      void (async () => {
+        let lastEditAt = Date.now();
+        for (let poll = 0; poll < TUI_PROMPT_MAX_POLLS; poll += 1) {
+          await sleep(TUI_PROMPT_POLL_MS);
+          if (tuiMirrors.get(key) !== mirror) return;
+          let live: TuiSnapshot | undefined;
+          try { live = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { live = undefined; }
+          if (!live) return;
+          // Spinner-bearing screens change every frame; keep them off the
+          // Telegram edit limit, but let selector updates through immediately.
+          const parsed = live.interactive ? parseSelectorText(live.text ?? "") : undefined;
+          const now = Date.now();
+          if (!parsed && now - lastEditAt < TUI_PROMPT_EDIT_MS) {
+            if (!live.interactive) return;
+            continue;
+          }
+          await refreshTuiMirror(mirror);
+          lastEditAt = now;
+          if (!live.interactive) return;
+        }
+      })();
     } else {
       const selector = snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
       const hint = snapshot.interactive

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSelectorText, selectorNavigateKeys } from "../tui-selector.ts";
+import { parseSelectorText, readDialogTitle, selectorNavigateKeys } from "../tui-selector.ts";
 
 // Fixtures are transcribed from real OMP/pi renders (login provider list and
 // settings screens), including the two-column scrollbar remnant "│ │".
@@ -170,6 +170,17 @@ describe("parseSelectorText", () => {
     expect(state?.options).toHaveLength(1);
     expect(state?.options[0]?.selected).toBe(true);
     expect(state?.options[0]?.label).toContain("chenuseai@outlook.com (plus) (active)");
+  });
+
+  it("reads the dialog title from non-selector overlays", () => {
+    const oauthWait = [
+      "╭─ Login to OpenRouter ──────────────────────────────────────╮",
+      "│ https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost │",
+      "│ Waiting for browser authentication...                        │",
+      "╰──────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    expect(parseSelectorText(oauthWait)).toBeUndefined();
+    expect(readDialogTitle(oauthWait)).toBe("Login to OpenRouter");
   });
 
   it("parses pi's provider window and its scroll indicator", () => {

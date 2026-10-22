@@ -246,6 +246,21 @@ function parseBorderlessSelector(lines: string[]): SelectorState | undefined {
   return undefined;
 }
 
+/**
+ * Title of the last dialog box on screen, even when its body is not a selector
+ * (OAuth "Login to OpenRouter", progress panels, …). Keeps the mirror titled
+ * after the dialog instead of a generic "TUI selector".
+ */
+export function readDialogTitle(screenText: string): string | undefined {
+  const lines = screenText.split("\n");
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (!BOX_TOP.test(lines[i])) continue;
+    const title = readTitle(lines[i]);
+    if (title) return title;
+  }
+  return undefined;
+}
+
 /** Returns the parsed selector for the last dialog, if one is visible. */
 export function parseSelectorText(screenText: string): SelectorState | undefined {
   const lines = screenText.split("\n");

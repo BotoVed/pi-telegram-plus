@@ -1005,6 +1005,24 @@ describe("Selector option buttons and pick routing", () => {
     expect(message).toBe("<b>Select authentication method</b>");
   });
 
+  it("titles non-selector overlays after the dialog and links their URLs", async () => {
+    // OAuth wait screens have no options, so the mirror falls back to the
+    // screen — but it must carry the dialog title and a tappable link.
+    const oauthScreen = [
+      "╭─ Login to OpenRouter ──────────────────────────────────────╮",
+      "│ https://openrouter.ai/auth?callback_url=http%3A%2F%2Flocalhost%3A54549 │",
+      "│ Waiting for browser authentication...                        │",
+      "╰──────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const { harness } = harnessWithLiveScreen(oauthScreen);
+    await openMirror(harness);
+
+    const call = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!;
+    expect(call.text).toContain("<b>Login to OpenRouter</b>");
+    expect(call.text).toContain("🔗 https://openrouter.ai/auth");
+    expect(call.text).not.toContain("<b>TUI selector</b>");
+  });
+
   it("offers Next on short windows that render the host scrollbar", async () => {
     // A terminal too short for ten rows still overflows: the scrollbar thumb
     // (U+2588) is the only "more rows follow" signal left.

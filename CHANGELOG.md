@@ -61,6 +61,12 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **Non-selector overlays looked like a raw screen dump.** OAuth wait screens and other
+  informational dialogs carry no options, so they fall back to a screen mirror — but it
+  was titled "TUI selector", hid the authorization URL inside a `<pre>` block (Telegram
+  does not linkify there), and never refreshed while the host waited. Such overlays now
+  keep their dialog title, repeat up to three URLs as tappable `🔗` lines, and refresh on
+  a throttled interval until the overlay closes.
 - **Single-option dialogs were not mirrored.** The parser required two rows, so a
   one-account logout picker ("Select … account to log out" with one entry and its
   `↑/↓ select · cancel` legend) fell back to an arrow-keyboard screen dump. Dialogs that
