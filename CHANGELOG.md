@@ -61,6 +61,12 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **Full-screen host panels were mirrored as the chat screen underneath.** `/settings`
+  opens on the TUI's overlay stack, which `render(width)` does not include — the mirror
+  showed the idle chat (splash, editor) with a `TUI selector` title while the terminal
+  showed the panel. Overlays are now rendered and composited into the snapshot, so the
+  mirror shows the real `Settings` panel (title taken from its border) and keeps its
+  controls, since overlay focus accepts keys.
 - **Finished mirrors kept the editor chrome.** When a dialog closed, the mirror rendered
   the whole final screen, which ends with the editor prompt row and its session-title
   border — so a logout result appeared to trail off into an unrelated "AUDIT: …" line

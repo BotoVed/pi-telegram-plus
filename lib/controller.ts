@@ -532,6 +532,9 @@ const TUI_POLL_ATTEMPTS = 40;
 const TUI_PROMPT_POLL_MS = 150;
 const TUI_PROMPT_EDIT_MS = 1500;
 const TUI_PROMPT_MAX_POLLS = 2400;
+// A command's overlay can draw a frame or two after dispatch; treat a screen as
+// final only after it has been stable this long.
+const TUI_MIRROR_IDLE_MS = 3_000;
 const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
 
 // Mirror-first: these open host dialogs, and the Telegram-native
@@ -862,7 +865,9 @@ export function createTelegramController(deps: {
     const dialogTitle = !selector && snapshot.interactive ? readDialogTitle(snapshot.text ?? "") : undefined;
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
-      : snapshot.interactive ? (selector?.title ?? dialogTitle ?? "TUI selector") : "TUI";
+      : snapshot.interactive
+        ? (selector?.title ?? dialogTitle ?? (selector ? "TUI selector" : "TUI screen"))
+        : "TUI";
     const inputHint = snapshot.interactive && !selector && getTuiMode() === "full"
       && hasInputPrompt(snapshot.text ?? "")
       ? "\n\n<i>⌨️ This dialog expects typed input: tap ⌨️ Type, send the text as the next message, then tap ⏎ Enter.</i>"
@@ -1016,23 +1021,32 @@ export function createTelegramController(deps: {
       // keep the mirror current until the overlay closes or is replaced.
       void (async () => {
         let lastEditAt = Date.now();
+        let lastText = snapshot?.text ?? "";
+        let idleSince = Date.now();
         for (let poll = 0; poll < TUI_PROMPT_MAX_POLLS; poll += 1) {
           await sleep(TUI_PROMPT_POLL_MS);
           if (tuiMirrors.get(key) !== mirror) return;
           let live: TuiSnapshot | undefined;
           try { live = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { live = undefined; }
           if (!live) return;
-          // Spinner-bearing screens change every frame; keep them off the
-          // Telegram edit limit, but let selector updates through immediately.
-          const parsed = live.interactive ? parseSelectorText(live.text ?? "") : undefined;
+          const text = live.text ?? "";
+          const changed = text !== lastText;
           const now = Date.now();
-          if (!parsed && now - lastEditAt < TUI_PROMPT_EDIT_MS) {
-            if (!live.interactive) return;
+          if (changed) idleSince = now;
+          // Never treat the first non-interactive frame as "closed": right after
+          // dispatch the host still shows the old screen (/settings froze on the
+          // pre-panel frame that way). Stop only once the screen stays put.
+          if (!changed) {
+            if (!live.interactive && now - idleSince >= TUI_MIRROR_IDLE_MS) return;
             continue;
           }
+          // Spinner-bearing screens change every frame; keep them off the
+          // Telegram edit limit, but let selector updates through immediately.
+          const parsed = live.interactive ? parseSelectorText(text) : undefined;
+          if (!parsed && now - lastEditAt < TUI_PROMPT_EDIT_MS) continue;
           await refreshTuiMirror(mirror);
           lastEditAt = now;
-          if (!live.interactive) return;
+          lastText = text;
         }
       })();
     } else {
@@ -1040,7 +1054,7 @@ export function createTelegramController(deps: {
       const hint = snapshot.interactive
         ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
         : "";
-      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector" : "TUI", selector)}${hint}`)
+      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, snapshot.interactive ? (selector ? "TUI selector" : "TUI screen") : "TUI", selector)}${hint}`)
         .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
     }
   };

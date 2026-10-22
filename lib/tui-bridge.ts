@@ -234,6 +234,10 @@ function isInteractiveFocus(): boolean {
   // can contain words such as "settings" or brackets.
   const mode = state.mode;
   if (!mode) return false;
+  // OMP mounts full-screen panels (/settings) on the TUI overlay stack; they
+  // hold focus and take keys, so the mirror must keep its controls.
+  const uiObject = state.ui as unknown as Record<string, unknown> | undefined;
+  if (uiObject && visibleOverlays(uiObject).length > 0) return true;
   return [
     "extensionSelector",
     "extensionInput",
@@ -243,6 +247,61 @@ function isInteractiveFocus(): boolean {
     "overlay",
   ].some((name) => asHostObject(mode[name]) !== undefined);
 }
+function overlayWidth(options: Record<string, unknown> | undefined, termWidth: number): number {
+  const width = options?.width;
+  if (typeof width === "number") return Math.max(1, Math.min(termWidth, width));
+  if (typeof width === "string" && width.endsWith("%")) {
+    const percent = Number.parseFloat(width);
+    if (Number.isFinite(percent)) return Math.max(1, Math.min(termWidth, Math.floor((termWidth * percent) / 100)));
+  }
+  return termWidth;
+}
+
+function visibleOverlays(uiObject: Record<string, unknown>): Array<Record<string, unknown>> {
+  const stack = uiObject.overlayStack;
+  if (!Array.isArray(stack)) return [];
+  return stack.filter((entry): entry is Record<string, unknown> => {
+    if (!entry || typeof entry !== "object") return false;
+    if (entry.hidden === true || entry.released === true) return false;
+    return typeof entry.component === "object" && entry.component !== null;
+  });
+}
+
+// Overlays (e.g. /settings) are composited by the host's frame renderer, which
+// render(width) does not include. Render the top overlay ourselves so the
+// mirror shows what the terminal shows.
+function overlayLines(entry: Record<string, unknown>, width: number): string[] | undefined {
+  const component = entry.component as Record<string, unknown>;
+  const render = asCallable(component.render);
+  if (!render) return undefined;
+  const options = (entry.options ?? {}) as Record<string, unknown>;
+  let lines: unknown;
+  try {
+    lines = render.call(component, overlayWidth(options, width));
+  } catch (err) {
+    bridgeLog.debug("TUI overlay render failed", { err });
+    return undefined;
+  }
+  if (!Array.isArray(lines)) return undefined;
+  const rendered = lines.map((line) => stripAnsi(String(line)));
+  // Percentage caps need the terminal height; the viewport slice in
+  // renderScreen already applies it.
+  const maxHeight = options.maxHeight;
+  return typeof maxHeight === "number" && maxHeight > 0 ? rendered.slice(0, maxHeight) : rendered;
+}
+
+function compositeOverlay(base: string[], overlay: string[], anchor: unknown): string[] {
+  const lines = [...base];
+  while (lines.length < overlay.length) lines.push("");
+  const start = anchor === "top" || anchor === "top-left" || anchor === "top-center" || anchor === "top-right"
+    ? 0
+    : anchor === "center" || anchor === "left-center" || anchor === "right-center"
+      ? Math.max(0, Math.floor((lines.length - overlay.length) / 2))
+      : lines.length - overlay.length;
+  lines.splice(start, overlay.length, ...overlay);
+  return lines;
+}
+
 function renderScreen(width: number): string | undefined {
   const ui = state.ui;
   if (!ui) return undefined;
@@ -256,7 +315,21 @@ function renderScreen(width: number): string | undefined {
     return undefined;
   }
   if (!Array.isArray(lines)) return undefined;
-  return lines.map((line) => stripAnsi(String(line))).join("\n");
+  let screen = lines.map((line) => stripAnsi(String(line)));
+
+  const uiObject = ui as unknown as Record<string, unknown>;
+  const overlays = visibleOverlays(uiObject);
+  const top = overlays[overlays.length - 1];
+  if (top) {
+    const overlay = overlayLines(top, width);
+    if (overlay) {
+      const options = (top.options ?? {}) as Record<string, unknown>;
+      screen = options.fullscreen === true ? overlay : compositeOverlay(screen, overlay, options.anchor);
+    }
+  }
+  const rows = Number((uiObject.terminal as { rows?: number } | undefined)?.rows ?? 0);
+  if (rows > 0 && screen.length > rows) screen = screen.slice(screen.length - rows);
+  return screen.join("\n");
 }
 
 function commandList(value: unknown, source: TuiCommand["source"]): TuiCommand[] {
