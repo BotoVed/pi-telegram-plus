@@ -96,7 +96,8 @@ const server = createServer(async (req, res) => {
   const hasToolResult = (parsed.messages ?? []).some((message) =>
     message?.role === "tool" || message?.role === "toolResult");
   const askTool = toolNames.find((name) => name === "ask");
-  const triggerAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE");
+  const triggerAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE")
+    && !userText.includes("ASK_TOOL_PROBE_MULTI") && !userText.includes("ASK_TOOL_PROBE_CHECK");
   const askArguments = JSON.stringify({
     questions: [{
       id: "e2e-color",
@@ -106,6 +107,41 @@ const server = createServer(async (req, res) => {
       recommended: 1,
     }],
   });
+
+  // Multi-question / multi-select variant for the parity suite: the first
+  // question is a checkbox group, the second a single choice, so the mirror
+  // must toggle instead of submitting on the first pick.
+  const triggerMultiAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE_MULTI");
+  const triggerCheckAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE_CHECK");
+  const checkAskArguments = JSON.stringify({
+    questions: [{
+      id: "e2e-toppings",
+      question: "Pick toppings",
+      header: "E2E Multi",
+      multi: true,
+      options: [{ label: "cheese" }, { label: "mushroom" }, { label: "olive" }],
+    }],
+  });
+  const multiAskArguments = JSON.stringify({
+    questions: [
+      {
+        id: "e2e-toppings",
+        question: "Pick toppings",
+        header: "E2E Multi",
+        multi: true,
+        options: [{ label: "cheese" }, { label: "mushroom" }, { label: "olive" }],
+      },
+      {
+        id: "e2e-size",
+        question: "Pick a size",
+        header: "E2E Size",
+        options: [{ label: "small" }, { label: "large" }],
+      },
+    ],
+  });
+
+  const askArgs = triggerCheckAsk ? checkAskArguments : (triggerMultiAsk ? multiAskArguments : askArguments);
+  const triggerAnyAsk = triggerAsk || triggerMultiAsk || triggerCheckAsk;
 
   const wantsStream = parsed.stream === true;
   const id = "chatcmpl-e2e";
@@ -119,7 +155,7 @@ const server = createServer(async (req, res) => {
       connection: "keep-alive",
     });
     res.write(chunk({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] }));
-    if (triggerAsk) {
+    if (triggerAnyAsk) {
       res.write(chunk({
         ...base,
         choices: [{
@@ -129,7 +165,7 @@ const server = createServer(async (req, res) => {
               index: 0,
               id: "call_e2e_ask",
               type: "function",
-              function: { name: askTool, arguments: askArguments },
+              function: { name: askTool, arguments: askArgs },
             }],
           },
           finish_reason: null,
@@ -154,7 +190,7 @@ const server = createServer(async (req, res) => {
       object: "chat.completion",
       created,
       model: parsed.model ?? "mock-model",
-      choices: [triggerAsk
+      choices: [triggerAnyAsk
         ? {
             index: 0,
             message: {
@@ -163,7 +199,7 @@ const server = createServer(async (req, res) => {
               tool_calls: [{
                 id: "call_e2e_ask",
                 type: "function",
-                function: { name: askTool, arguments: askArguments },
+                function: { name: askTool, arguments: askArgs },
               }],
             },
             finish_reason: "tool_calls",

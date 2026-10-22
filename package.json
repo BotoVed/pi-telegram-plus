@@ -38,7 +38,8 @@
     "changelog:roll": "node scripts/changelog-version.mjs",
     "changelog:check": "node scripts/changelog-version.mjs --check",
     "prepublishOnly": "npm test && npm run typecheck && npm run compat:check && npm run changelog:check",
-    "test:e2e:real": "node scripts/e2e/real-telegram-smoke.mjs"
+    "test:e2e:real": "node scripts/e2e/real-telegram-smoke.mjs",
+    "test:e2e:parity": "node scripts/e2e/audit-parity.mjs"
   },
   "pi": {
     "extensions": [

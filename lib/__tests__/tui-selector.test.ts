@@ -131,6 +131,55 @@ describe("parseSelectorText", () => {
     expect(labels(piPrompt)).toEqual(["!alpha", "beta", "gamma"]);
   });
 
+  it("drops subtitle, search and description rows from a switch list", () => {
+    const screen = [
+      "╭─ Switch Model ──────────────────────────────────────────────╮",
+      "│ Session-only switch — role models stay unchanged             │",
+      "│ 🔍 >                                                         │",
+      "│ ❯ mock/mock-model ● 33k ◫ free                               │",
+      "│   other/model ● 8k ◫ free                                    │",
+      "│ Mock Model · 33k ctx · 4.1k out · free per M…                │",
+      "│ ⏎ select · ⎋ cancel                                          │",
+      "╰──────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    expect(labels(screen)).toEqual(["!mock/mock-model ● 33k ◫ free", "other/model ● 8k ◫ free"]);
+  });
+
+  it("parses checkbox rows as a multi-select question", () => {
+    const screen = [
+      "╭─ Ask ────────────────────────────────────────────────────────╮",
+      "│ Pick toppings                                                │",
+      "├──────────────────────────────────────────────────────────────┤",
+      "│ ❯ ☐ cheese                                                   │",
+      "│   ☑ mushroom                                                 │",
+      "│   ☐ olive                                                    │",
+      "├──────────────────────────────────────────────────────────────┤",
+      "│ ␣ toggle · ⏎ submit · ⇥/←/→ question · ⎋ cancel              │",
+      "╰──────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const state = parseSelectorText(screen);
+    expect(state?.multiSelect).toBe(true);
+    expect(state?.multiQuestion).toBe(true);
+    expect(state?.options.map((option) => option.label)).toEqual(["cheese", "mushroom", "olive"]);
+    expect(state?.options.map((option) => option.selected)).toEqual([true, false, false]);
+    expect(state?.options.map((option) => option.checked)).toEqual([false, true, false]);
+  });
+
+  it("treats a two-pane detail view as a panel, not an option list", () => {
+    const screen = [
+      "╭─ BTW history ────────────────────────────────────────────────╮",
+      "│ History (0)      │ Details                                   │",
+      "│                  │                                           │",
+      "│                  │ Use /btw QUESTION to start one.           │",
+      "│                  │                                           │",
+      "│                  │                                           │",
+      "│ ↑/↓ select                                                   │",
+      "│ ⎋ close                                                      │",
+      "╰──────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    expect(parseSelectorText(screen)).toBeUndefined();
+  });
+
   it("parses a radio group without turning the question into an option", () => {
     // Real capture from OMP's ask tool: cursor beside a radio glyph, question
     // text above the group, key legend below.

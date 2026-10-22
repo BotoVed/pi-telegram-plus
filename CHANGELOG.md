@@ -18,6 +18,11 @@ missing or mislabelled cannot be published.
 
 ### Testing
 
+- **Per-command parity audit (`npm run test:e2e:parity`).** Boots a fresh isolated host
+  (real pi/OMP in `tmux`, mock Bot API + provider) for *each* advertised command, records
+  the host screen and the Telegram surface, and fails when a host dialog produced no
+  mirror (or a native picker) at all. The earlier one-host-for-everything audit leaked
+  dialogs into the next command; a fresh host per command makes the matrix deterministic.
 - **Acceptance now checks payloads, not just calls.** The mock Bot API enforces the real
   contract (text/caption limits, HTML tag and entity rules, keyboard shape,
   `callback_data` size, command names) and answers 400 like Telegram, every recorded call
@@ -71,6 +76,19 @@ missing or mislabelled cannot be published.
   tool end-to-end: model → tool → TUI dialog → mirrored option → answer → model reply.
 
 ### Fixed
+
+- **Panel titles were border glyphs.** `readTitle` only stripped `─`/`━`, so a panel whose
+  border uses `┄` (OMP's `/context`, `/mcp`, `/jobs`) produced a title of dashes, and
+  non-interactive panels ignored the boxed title entirely (they showed `TUI`). Titles are
+  now read from any box-drawing border and used for transcript panels too.
+- **Static panels dead-ended in Telegram.** `/mcp`, `/context`, `/jobs`, `/ssh` close with
+  `⎋` in the terminal; the mirror showed the panel with no control at all. Such screens
+  now carry a `⎋ Close` button that sends the same key.
+- **Selectors invented options from detail panels.** Rows from prose lines, key legends,
+  subtitles and two-pane detail views (`/btw`) became tappable buttons that sent blind
+  keystrokes. Sentences, truncated descriptions (`…`), `⎋ close` hints and search rows are
+  dropped, subtitles above the cursor are ignored, and compound layouts fall back to a
+  plain screen mirror with keys instead of fabricated options.
 
 - **Full-screen host panels were mirrored as the chat screen underneath.** `/settings`
   opens on the TUI's overlay stack, which `render(width)` does not include — the mirror

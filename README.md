@@ -95,6 +95,12 @@ The acceptance is not satisfied by "a call happened":
 - `npm run test:e2e:real` sends one temporary message to **api.telegram.org** with the
   bot token from the agent config, edits it, checks that the real API rejects an
   unsupported tag (and that the local validator agrees), then deletes it.
+
+`npm run test:e2e:parity` measures interaction parity instead of response presence: it
+boots a fresh isolated host for *every* advertised command, records the host screen and
+the Telegram surface side by side, and fails when a command opened a host dialog but
+Telegram got neither a mirror nor a native picker. `--host pi|omp|both` and
+`PITG_PARITY_COMMANDS=/model,/settings` narrow the run.
 E2E and the matrix remain outside the publish gate because each run installs hosts and
 starts isolated `tmux` sessions.
 

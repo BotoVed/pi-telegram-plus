@@ -754,8 +754,10 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
     const label = option.label.length > SELECTOR_LABEL_MAX
       ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
       : option.label;
+    // Checkbox questions keep their state visible: ☑/☐ plus the cursor marker.
+    const check = selector.multiSelect ? `${option.checked ? "☑ " : "☐ "}` : "";
     return [{
-      text: `${option.selected ? "▸ " : ""}${label}`,
+      text: `${option.selected ? "▸ " : ""}${check}${label}`,
       value: encodeTuiCallback(`pick:${index}`),
     }];
   });
@@ -772,12 +774,25 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
     if (hasNext) nav.push({ text: "Next ▶", value: encodeTuiCallback("page:next") });
     rows.push(nav);
   }
-  rows.push([
+  // Multi-question dialogs (OMP ask) switch questions with ⇥/←/→; Telegram
+  // needs explicit buttons since arrow keys move inside the option list.
+  if (selector.multiQuestion) {
+    rows.push([
+      { text: "◀ Question", value: encodeTuiCallback("q:prev") },
+      { text: "Question ▶", value: encodeTuiCallback("q:next") },
+    ]);
+  }
+  const footer: TelegramButton[] = [];
+  // Checkbox questions need an explicit submit: Enter confirms the question,
+  // which is a different action from toggling an item.
+  if (selector.multiSelect) footer.push({ text: "⏎ Submit", value: encodeTuiCallback("enter") });
+  footer.push(
     { text: "Esc", value: encodeTuiCallback("esc") },
     { text: "⌨️ Type", value: encodeTuiCallback("type") },
     { text: "Refresh", value: encodeTuiCallback("refresh") },
     { text: "Close", value: encodeTuiCallback("close") },
-  ]);
+  );
+  rows.push(footer);
   return { rows };
 }
 
@@ -862,12 +877,14 @@ export function createTelegramController(deps: {
     const selectorKeyboard = canControl && selector
       ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true })
       : undefined;
-    const dialogTitle = !selector && snapshot.interactive ? readDialogTitle(snapshot.text ?? "") : undefined;
+    // Panels drawn into the transcript (not focusable overlays) still carry a
+  // boxed title; show it instead of the generic "TUI"/"TUI screen" label.
+  const dialogTitle = !selector ? readDialogTitle(snapshot.text ?? "") : undefined;
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
       : snapshot.interactive
         ? (selector?.title ?? dialogTitle ?? (selector ? "TUI selector" : "TUI screen"))
-        : "TUI";
+        : (dialogTitle ?? "TUI");
     const inputHint = snapshot.interactive && !selector && getTuiMode() === "full"
       && hasInputPrompt(snapshot.text ?? "")
       ? "\n\n<i>⌨️ This dialog expects typed input: tap ⌨️ Type, send the text as the next message, then tap ⏎ Enter.</i>"
@@ -969,6 +986,20 @@ export function createTelegramController(deps: {
     messageThreadId?: number,
     sourceMessageId?: number,
   ): Promise<void> => {
+    try {
+      await runTuiCommandInner(name, args, chatId, messageThreadId, sourceMessageId);
+    } catch (err) {
+      ctrlLog.error("runTuiCommand failed", { err, name });
+    }
+  };
+
+  const runTuiCommandInner = async (
+    name: string,
+    args: string,
+    chatId: number,
+    messageThreadId?: number,
+    sourceMessageId?: number,
+  ): Promise<void> => {
     if (getTuiMode() === "off") return;
     await bridge.ready().catch(ctrlLog.swallow("debug", "TUI bridge readiness failed"));
     if (!bridge.isAvailable()) {
@@ -989,9 +1020,12 @@ export function createTelegramController(deps: {
       sourceMessageId,
     ).catch(ctrlLog.swallow("warn", "sendText TUI command status failed", { chatId }));
     const messageId = status?.[0]?.message_id;
+    ctrlLog.debug("TUI command ack", { name, messageId, status });
     if (messageId === undefined) return;
 
-    if (!bridge.submit(commandText)) {
+    const submitted = bridge.submit(commandText);
+    ctrlLog.debug("TUI command submitted", { name, submitted });
+    if (!submitted) {
       await deps.transport.editText(chatId, messageId, "TUI bridge could not submit the command.").catch(ctrlLog.swallow("debug", "editText TUI submit failure failed", { chatId }));
       return;
     }
@@ -1007,6 +1041,7 @@ export function createTelegramController(deps: {
       if (snapshot?.interactive) break;
     }
 
+    ctrlLog.debug("TUI snapshot after command", { name, interactive: snapshot?.interactive, len: snapshot?.text?.length });
     if (!snapshot) {
       await deps.transport.editText(chatId, messageId, "Command sent to TUI; this host did not expose a renderable screen.").catch(ctrlLog.swallow("debug", "editText TUI no snapshot failed", { chatId }));
       return;
@@ -1054,8 +1089,23 @@ export function createTelegramController(deps: {
       const hint = snapshot.interactive
         ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
         : "";
-      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, snapshot.interactive ? (selector ? "TUI selector" : "TUI screen") : "TUI", selector)}${hint}`)
-        .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
+      const panelTitle = selector ? undefined : readDialogTitle(snapshot.text ?? "");
+      const label = snapshot.interactive
+        ? (selector ? "TUI selector" : (panelTitle ?? "TUI screen"))
+        : (panelTitle ?? "TUI");
+      const body = `${formatTuiSnapshot(snapshot, label, selector)}${hint}`;
+      // Static panels (e.g. /mcp, /context) close with Esc in the terminal. Give
+      // the mirror the same escape hatch instead of a dead-end screen.
+      const closable = !snapshot.interactive && panelTitle !== undefined
+        && /(?:\besc\b|⎋|\bclose\b|\bcancel\b)/i.test(snapshot.text ?? "");
+      if (closable) {
+        tuiMirrors.set(targetKey(chatId, messageThreadId), { chatId, messageThreadId, messageId });
+        await deps.transport.editButtons(chatId, messageId, body, [[{ text: "⎋ Close", value: encodeTuiCallback("esc") }]])
+          .catch(ctrlLog.swallow("debug", "editButtons TUI panel failed", { chatId }));
+      } else {
+        await deps.transport.editText(chatId, messageId, body)
+          .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
+      }
     }
   };
 
@@ -1258,7 +1308,10 @@ export function createTelegramController(deps: {
         await refreshTuiMirror(mirror);
         return;
       }
-      const keys = selectorNavigateKeys(live, liveIndex);
+      const navKeys = selectorNavigateKeys(live, liveIndex);
+      // Checkbox questions toggle: Enter would submit the question (and an
+      // empty submit cancels it). Move onto the row, then press Space.
+      const keys = navKeys && live.multiSelect ? [...navKeys.slice(0, -1), "space"] : navKeys;
       if (!keys) {
         mirror.lastText = undefined;
         await deps.transport.sendText(chatId, "Cannot locate the current item in this dialog; use the arrow keys instead.", messageThreadId);
@@ -1271,6 +1324,18 @@ export function createTelegramController(deps: {
           tuiMirrors.delete(key);
           return;
         }
+      }
+      await sleep(TUI_POLL_INTERVAL_MS * 2);
+      mirror.lastText = undefined;
+      mirror.lastKeyboard = undefined;
+      await refreshTuiMirror(mirror);
+      return;
+    }
+    if (action === "q:prev" || action === "q:next") {
+      if (!bridge.key(action === "q:prev" ? "shift-tab" : "tab")) {
+        await deps.transport.sendText(chatId, "The TUI dialog no longer accepts input.", messageThreadId);
+        tuiMirrors.delete(key);
+        return;
       }
       await sleep(TUI_POLL_INTERVAL_MS * 2);
       mirror.lastText = undefined;

@@ -408,9 +408,13 @@ async function runHost(host, label, phase = "main") {
 
   // ── Nested menus: /tg → level 2 → level 3 → level 4 ───────────────────
   const openMain = async () => {
+    const since = await cursor();
     const call = await dispatch("/tg");
     const state = await controlGet();
-    return lastKeyboardCall(state) ?? call;
+    // Scope to this dispatch: panel mirrors from earlier commands now carry
+    // keyboards (⎋ Close) and must not be mistaken for the /tg menu.
+    const menu = state.calls.slice(since).findLast((entry) => findButton(entry, /🤖 Bots/));
+    return menu ?? lastKeyboardCall(state, since) ?? call;
   };
   const menuStep = async (label, parentCall, buttonPattern, checks) => {
     const target = parentCall.body?.message_id ?? parentCall.message_id;

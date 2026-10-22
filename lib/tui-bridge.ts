@@ -400,6 +400,7 @@ const KEY_SEQUENCES: Record<string, string> = {
   esc: "\x1b",
   space: " ",
   tab: "\t",
+  "shift-tab": "\x1b[Z",
   pageup: "\x1b[5~",
   pagedown: "\x1b[6~",
 };

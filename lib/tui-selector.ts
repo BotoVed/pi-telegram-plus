@@ -27,6 +27,8 @@
 // the marker actually is, not from a guessed list position.
 
 export type SelectorOption = {
+  /** Checkbox state (☑/▣); undefined for radio lists, where `selected` is the check. */
+  checked?: boolean;
   label: string;
   selected: boolean;
 };
@@ -47,6 +49,10 @@ export type SelectorState = {
   /** Rows remain above / below the rendered window (pi provider selector). */
   moreAbove?: boolean;
   moreBelow?: boolean;
+  /** Checkbox rows (OMP ask with multi) — picks toggle instead of submitting. */
+  multiSelect?: boolean;
+  /** The dialog holds several questions (footer offers ⇥/←/→ question). */
+  multiQuestion?: boolean;
 };
 
 const BOX_TOP = /^[ \t]*[╭┌]/;
@@ -82,7 +88,7 @@ const SELECTED_MARKER = /^[❯>▶▸➤✦•·*→\uE000-\uF8FF]\s+/;
 // Radio/check groups (OMP's ask dialog: "○ red", "● green") render the cursor
 // beside the glyph. The glyph itself carries the checked state; the question
 // text above the group has no glyph and must not become an option.
-const CHOICE_MARKER = /^([○●◉◯◌])\s*/;
+const CHOICE_MARKER = /^([○●◉◯◌☐☑▢▣])\s*/;
 
 /**
  * Non-option chrome inside a selector box: search hints and key legends.
@@ -94,6 +100,12 @@ const FOOTER_PHRASE = /\b(?:to (?:select|toggle|move|filter|close|confirm|cancel
 
 const isFooterLine = (label: string): boolean => {
   if (FOOTER_PATTERN.test(label)) return true;
+  // "⎋ close" and similar bare key hints.
+  if (/^[⎋✖✕✗×]\s*(?:close|cancel|quit|exit|back)?$/i.test(label)) return true;
+  // Search field rows ("🔍 >") are chrome, not options.
+  if (/^[🔍🔎]\s*>?\s*$/.test(label)) return true;
+  // Key legends ("⏎ select · ⎋ cancel", "⇥/←/→ question") are chrome too.
+  if (/[⏎↵⎋⇥⇧⌥⌃␣]/.test(label) && /\b(select|toggle|move|cancel|close|submit|navigate|question)\b/i.test(label)) return true;
   // Legend rows like "↑↓ move · Enter select · Esc cancel" or "tab: toggle".
   return FOOTER_PHRASE.test(label) || /[↑↓←→]/.test(label);
 };
@@ -144,14 +156,20 @@ function extractBlock(lines: string[]): { start: number; end: number } | undefin
   return { start: top, end };
 }
 
+// U+2500–U+257F is the box-drawing block: borders, corners, tees, dashes.
+const BOX_DRAWING = /[\u2500-\u257F]/;
+const BOX_DRAWING_RUN = /^[\u2500-\u257F\s]+/;
+
 function readTitle(borderLine: string): string | undefined {
+  // Panels draw titles inside the border line ("╭─ Settings ───╮", "╭┄┄┄╮").
+  // Strip every border glyph from both ends; a border-only line has no title.
   const title = borderLine
-    .replace(/^[ \t]*[╭┌]/, "")
-    .replace(/[╮┐][ \t]*$/, "")
-    .replace(/[─━─\s]+$/g, "")
-    .replace(/^[─━\s]+/, "")
+    .replace(BOX_DRAWING_RUN, "")
+    .replace(/[\u2500-\u257F\u2580-\u259F\s]+$/, "")
     .trim();
-  return title.length > 1 && !/^[─━\s]+$/.test(title) ? title : undefined;
+  if (title.length < 2) return undefined;
+  if (!/[\p{L}\p{N}]/u.test(title)) return undefined;
+  return title;
 }
 
 /**
@@ -267,6 +285,21 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
   const region = extractBlock(lines);
   if (!region) return parseBorderlessSelector(lines);
   const blockLines = lines.slice(region.start, region.end + 1);
+  // Compound layouts (a left list joined to a right detail pane by ┬/┴) are
+  // panels, not one list: their cells are not selectable entries. Mirror the
+  // screen instead of inventing buttons from a table. A plain ├──┤ rule inside
+  // a single-column dialog is fine (the ask dialog draws one).
+  if (blockLines.some((line) => /[┬┴]/.test(line))) return undefined;
+  // A two-pane detail view (/btw) renders many rows whose left cell is empty and
+  // only a header with text; a table list (/extensions) fills the left cell on
+  // every row. Only the former is a panel rather than an option list.
+  const firstCells = blockLines
+    .map((line) => line.split("│"))
+    .filter((parts) => parts.length >= 3)
+    .map((parts) => (parts[1] ?? "").trim());
+  const emptyCells = firstCells.filter((cell) => cell.length === 0).length;
+  const filledCells = firstCells.filter((cell) => cell.length > 0).length;
+  if (emptyCells >= 3 && filledCells <= 1) return undefined;
   const contentLines = blockLines.filter((line) => BOX_LINE.test(line));
   if (contentLines.length < 2) return undefined;
 
@@ -294,13 +327,31 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
     parsedRows.push({ label, selected, choice });
   }
 
-  const choiceRows = parsedRows.filter((row) => row.choice !== undefined);
+  // Detail panels render prose under a cursor row (e.g. /btw shows "History (0)"
+  // over a description block). Sentences are not selectable entries: dropping
+  // them keeps such a panel from turning into a list of junk buttons. The
+  // selected row is never dropped — it proves the host has a real cursor.
+  const isProse = (row: { label: string; selected: boolean }): boolean =>
+    !row.selected && (/[.!?…]$/.test(row.label) || !/[\p{L}\p{N}]/u.test(row.label));
+  // A subtitle above the list ("Session-only switch — …") is not an option:
+  // anything before the first cursor row that reads like a sentence is chrome.
+  const firstSelected = parsedRows.findIndex((row) => row.selected);
+  // Only the first row can be a subtitle: treating every long row above the
+  // cursor as chrome also deleted real options in a scrolled window.
+  const isSubtitle = (row: { label: string; selected: boolean }, index: number): boolean =>
+    firstSelected > 0 && index === 0 && !row.selected && row.label.length > 25 && /\s/.test(row.label);
+  const entryRows = parsedRows.filter((row, index) => !isProse(row) && !isSubtitle(row, index));
+
+  const choiceRows = entryRows.filter((row) => row.choice !== undefined);
+  const isCheckbox = choiceRows.some((row) => "☐☑▢▣".includes(row.choice ?? ""));
   const options: SelectorOption[] = choiceRows.length > 0
     ? choiceRows.map((row) => ({
         label: row.label,
-        selected: row.selected || row.choice === "●" || row.choice === "◉",
+        // `selected` is the host cursor; checkbox rows carry their own state.
+        selected: row.selected || (!isCheckbox && (row.choice === "●" || row.choice === "◉")),
+        ...(isCheckbox ? { checked: row.choice === "☑" || row.choice === "▣" } : {}),
       }))
-    : parsedRows.map(({ label, selected }) => ({ label, selected }));
+    : entryRows.map(({ label, selected }) => ({ label, selected }));
 
   if (options.length === 0) return undefined;
   const hasMarker = options.some((option) => option.selected);
@@ -311,11 +362,19 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
 
   const firstLine = blockLines[0] ?? "";
   const title = BOX_TOP.test(firstLine) ? readTitle(firstLine) : undefined;
+  const block = blockLines.join("\n");
   return {
     ...(title ? { title } : {}),
     options,
-    block: blockLines.join("\n"),
+    block,
     windowed: true,
+    // ☐/☑ rows are checkboxes: a tap toggles the item, Enter submits the answer.
+    ...(isCheckbox ? { multiSelect: true } : {}),
+    // The dialog advertises question switching in its key legend ("⇥/←/→
+    // question"). Blocks only carry the focused section, so the legend is the
+    // only reliable signal; showing the buttons for a single question is
+    // harmless (Tab just moves focus to Submit).
+    ...(/[⇥]/.test(block) && /question/i.test(block) ? { multiQuestion: true } : {}),
   };
 }
 
