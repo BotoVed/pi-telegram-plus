@@ -1,9 +1,10 @@
 import type { ExtensionCommandContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { decodeTuiCallback, decodeUiCallback, encodeTuiCallback } from "./callback-protocol.ts";
+import { decodeMoreCallback, decodeRunCallback, decodeTuiCallback, decodeUiCallback, encodeMoreCallback, encodeRunCallback, encodeTuiCallback } from "./callback-protocol.ts";
 import { parseLeadingCommand, normalizeLeadingCommand } from "./command-parser.ts";
 import type {
   CapturedAgentSession,
   TelegramBashConfirm,
+  TelegramButton,
   TelegramCallbackQuery,
   TelegramConfig,
   TelegramDocument,
@@ -18,6 +19,7 @@ import { tuiBridge as defaultTuiBridge } from "./tui-bridge.ts";
 import { escapeHtml } from "./html.ts";
 import { stripAnsi } from "./custom-dialogs.ts";
 import { recordCommandUsage } from "./command-usage.ts";
+import { getTelegramMenuOverflow } from "./menu-commands.ts";
 import { log } from "./logger.ts";
 import { commandErrorMessage, getRunnerMode, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
 import { getCurrentTelegramTurn, runWithTelegramTurn } from "./turn-context.ts";
@@ -431,6 +433,10 @@ const TUI_SCREEN_WIDTH = 100;
 const TUI_POLL_INTERVAL_MS = 80;
 const TUI_POLL_ATTEMPTS = 40;
 const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
+
+// /more overflow keyboard: 30 command buttons per page, three per row.
+const MORE_PAGE_SIZE = 30;
+const MORE_ROW_SIZE = 3;
 
 const DANGEROUS_BASH_PATTERNS: readonly RegExp[] = [
   /\brm\s+(-[a-z]*[rf]|--recursive|--force)\b/i,
@@ -1091,6 +1097,33 @@ export function createTelegramController(deps: {
     });
   };
 
+  const menuOverflow = (): Array<{ command: string; description: string }> => {
+    const config = deps.getConfig?.();
+    return getTelegramMenuOverflow(config?.botToken, config?.apiBase);
+  };
+
+  const moreKeyboard = (page: number): { text: string; rows: TelegramButton[][] } => {
+    const overflow = menuOverflow();
+    const pageCount = Math.max(1, Math.ceil(overflow.length / MORE_PAGE_SIZE));
+    const safePage = Math.min(Math.max(page, 0), pageCount - 1);
+    const slice = overflow.slice(safePage * MORE_PAGE_SIZE, (safePage + 1) * MORE_PAGE_SIZE);
+    const rows: TelegramButton[][] = [];
+    for (let i = 0; i < slice.length; i += MORE_ROW_SIZE) {
+      rows.push(slice.slice(i, i + MORE_ROW_SIZE).map((entry) => ({
+        text: `/${entry.command}`,
+        value: encodeRunCallback(entry.command),
+      })));
+    }
+    if (pageCount > 1) {
+      const nav: TelegramButton[] = [];
+      if (safePage > 0) nav.push({ text: "◀️", value: encodeMoreCallback(safePage - 1) });
+      nav.push({ text: `${safePage + 1} / ${pageCount}`, value: encodeMoreCallback(safePage) });
+      if (safePage < pageCount - 1) nav.push({ text: "▶️", value: encodeMoreCallback(safePage + 1) });
+      rows.push(nav);
+    }
+    return { text: `More commands (${overflow.length} beyond the BotMenu) — tap one to run it.`, rows };
+  };
+
   const dispatchNamedCommand = async (
     name: string,
     args: string,
@@ -1099,6 +1132,14 @@ export function createTelegramController(deps: {
     messageThreadId?: number,
     sourceMessageId?: number,
   ): Promise<boolean> => {
+    // /more opens the overflow keyboard for this bot's menu. Only claimed when
+    // an overflow exists, so a user-registered /more keeps working otherwise.
+    if (name === "more" && menuOverflow().length > 0) {
+      const { text, rows } = moreKeyboard(0);
+      await deps.transport.sendButtons(chatId, text, rows, messageThreadId, sourceMessageId);
+      return true;
+    }
+
     // These commands deliberately use the host selector/confirmation UI when
     // the bridge is enabled. Telegram-native handlers remain the fallback when
     // the host catalog does not expose the command.
@@ -1185,6 +1226,30 @@ export function createTelegramController(deps: {
         // message, and when the strip lands last the message is left with no
         // buttons — the "answered Q1 but Q2 never appeared" bug. Terminal flows
         // clean up themselves, so no controller-side strip is needed.
+        return;
+      }
+
+      const morePage = decodeMoreCallback(data);
+      if (morePage !== undefined) {
+        const pageMessageId = query.message?.message_id;
+        if (pageMessageId !== undefined) {
+          const { text, rows } = moreKeyboard(Number.parseInt(morePage, 10) || 0);
+          await deps.transport.editButtons(chatId, pageMessageId, text, rows).catch(ctrlLog.swallow("debug", "editButtons /more page failed", { chatId }));
+        }
+        return;
+      }
+
+      const runName = decodeRunCallback(data);
+      if (runName !== undefined) {
+        const session = deps.getSession();
+        if (!session) {
+          await deps.transport.sendText(chatId, "π session is not ready yet.", messageThreadId, sourceMessageId);
+          return;
+        }
+        const dispatched = await dispatchNamedCommand(runName.toLowerCase(), "", session, chatId, messageThreadId, sourceMessageId);
+        if (!dispatched) {
+          await deps.transport.sendText(chatId, `/${escapeHtml(runName)} is no longer available.`, messageThreadId, sourceMessageId);
+        }
         return;
       }
 

@@ -32,8 +32,9 @@ missing or mislabelled cannot be published.
   pi-based, so on OMP `/clone`, `/import`, `/name`, and `/reload` reached no handler and
   fell through to the model as prompt text. Once the TUI bridge has captured the live host
   catalog, static entries missing from it are omitted; plugin-served commands (`/tg`,
-  `/cwd`, `/status`, `/scoped-models`, …) stay, and with no captured catalog the curated
-  list is kept unchanged.
+  `/cwd`, `/status`, …) stay, and with no captured catalog the curated list is kept
+  unchanged. `/scoped-models` left the whitelist: OMP serves it neither natively nor
+  through the plugin, so it is no longer menu-visible on OMP.
 - **TUI bridge mirroring and remote controls could stall or target stale state.** Snapshot
   focus detection no longer recurses or guesses from rendered words, submit wrapping is
   isolated per editor/session, and pi/OMP command menus now come from live host registries.
@@ -79,6 +80,12 @@ missing or mislabelled cannot be published.
   `newSession({ withSession })` post-switch hook; OMP ignores `withSession`, so its
   “New session started.” notification now uses `newSession({ setup })`.
   See [compatibility.md](docs/compatibility.md#omp-oh-my-pi-pi-coding-agent).
+- **The Bot menu silently dropped commands past its 100-entry cap.** Telegram's
+  `setMyCommands` accepts at most 100 entries and the builder truncated the rest, so on
+  hosts with large catalogs the tail — including recently used commands — never appeared.
+  When the catalog exceeds the cap the menu now reserves its last slot for `/more`, which
+  opens a paged inline keyboard (30 commands per page) of the overflow; tapping a button
+  runs that command immediately.
 
 ### Removed
 
@@ -88,6 +95,13 @@ missing or mislabelled cannot be published.
   editable under `/tg` → Config (Tool / Thinking / Retry / TUI bridge / Shell confirm), and
   the current binding plus its enabled state show under `/tg` → Project. Typing the removed
   commands now falls through to the model as prompt text, like any unknown command.
+
+- **TUI slash registration of the Telegram management commands.** `/tg-bot-*`,
+  `/tg-bind-cwd`, `/tg-unbind-cwd`, `/tg-cwd-connect`, `/tg-cwd-disconnect` and
+  `/tg-switch` no longer appear in the host TUI slash menu: bot tokens and local-cwd
+  bindings are chat-side management, and `/tg` owns those flows. They stay dispatchable
+  from Telegram (via `/tg` or by typing them). The TUI keeps `/tg`, `/cwd`, `/cd`,
+  `/status`, `/stop`, `/debug`.
 
 ## [0.0.12] — 2026-10-19
 

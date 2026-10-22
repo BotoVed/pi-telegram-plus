@@ -208,17 +208,15 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     persistConfig: persistCurrentConfig,
   };
 
-  // Custom pi-telegram-plus commands that should also appear in the TUI slash menu.
-  // Pi built-in commands (model, session, new, etc.) are already registered by pi core.
+  // Plugin commands that also appear in the host TUI slash menu. Telegram bot
+  // management (tg-*, tg-switch) is deliberately NOT registered in the TUI:
+  // bot tokens and local-cwd bindings must not surface as terminal slash
+  // commands, and the /tg menu owns these flows. They stay in the Telegram
+  // dispatch map, reachable from chats via /tg or by typing them.
+  // /import is excluded too: it is now a built-in pi command; Telegram handler
+  // registration only.
   const TUI_VISIBLE_COMMANDS = new Set([
-    // tg-* commands
-    "tg-bot-add", "tg-bot-list", "tg-bot-update", "tg-bot-remove", "tg-bot-default",
-    "tg-bind-cwd", "tg-unbind-cwd", "tg-cwd-connect", "tg-cwd-disconnect",
-    "tg-switch",
-    // /tg multi-level menu
     "tg",
-    // other pi-telegram-plus custom commands (TUI-only command list excludes /import, which is now
-    // a built-in pi command; keep Telegram handler registration only.
     "cwd", "cd", "status", "stop", "debug",
   ]);
 
@@ -238,7 +236,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   registerTelegramCommands({
     registerCommand: (name: string, options: { description?: string; handler: TelegramCommandHandler }) => {
       telegramCommands.set(name, options.handler);
-      if (options.description) {
+      if (TUI_VISIBLE_COMMANDS.has(name) && options.description) {
         pi.registerCommand(name, { description: options.description, handler: options.handler });
       }
     },
@@ -783,10 +781,8 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     }
   };
   telegramCommands.set("tg-switch", handleTgSwitch);
-  pi.registerCommand("tg-switch", {
-    description: "Switch which local pi instance owns the Telegram bot",
-    handler: handleTgSwitch,
-  });
+  // Telegram-only: switching which local instance owns the bot is a chat-side
+  // operation; it is not registered as a TUI slash command.
 
   function buildStatusState(error?: string): Parameters<typeof formatTelegramStatusLine>[1] {
     const enabled = !!config.botToken && isTelegramEnabled();

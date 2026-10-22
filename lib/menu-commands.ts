@@ -7,9 +7,10 @@ import { getTuiCommands, type TuiCommand } from "./tui-bridge.ts";
 const menuLog = log.child("menu-commands");
 
 // Local-cwd management commands that must NOT appear in the Telegram bot menu
-// (they require interactive prompts / local cwd context). They stay registered
-// as pi slash commands (TUI) and as Telegram-dispatch handlers; only the bot
-// my-commands list excludes them.
+// (they require interactive prompts / local cwd context). They are no longer
+// registered in the host TUI at all; they stay as Telegram-dispatch handlers
+// (reachable via /tg or by typing them) and this set also keeps them out of
+// the bot menu when recent-usage would otherwise inject them.
 const BOT_MENU_EXCLUDED = new Set([
   // Bot CRUD + bind/unbind are local-cwd management commands.
   "tg-bot-add",
@@ -75,9 +76,9 @@ const CORE_COMMAND_PRIORITY = [
 
 // Commands the plugin itself dispatches from Telegram (handlers in
 // telegramCommands, or the /tg hub), valid on every host regardless of the
-// captured catalog. `scoped-models` additionally has no TUI on OMP.
+// captured catalog.
 const TELEGRAM_SERVED_COMMANDS = new Set([
-  "tg", "scoped_models", "cwd", "cd", "status", "stop", "debug",
+  "tg", "cwd", "cd", "status", "stop", "debug",
 ]);
 
 const toTelegramCommandName = (name: string): string | undefined => {
@@ -94,10 +95,17 @@ export type MenuCommandOptions = {
   tuiCommands?: readonly TuiCommand[];
 };
 
-export function buildTelegramMenuCommands(
+export type TelegramMenuBuildResult = {
+  /** The list sent to setMyCommands: at most 100 entries; the last is `more` when there is an overflow. */
+  commands: Array<{ command: string; description: string }>;
+  /** Commands that fit no more in the 100-entry menu; served by the /more inline keyboard. */
+  overflow: Array<{ command: string; description: string }>;
+};
+
+export function buildTelegramMenuCommandsFull(
   pi: Pick<ExtensionAPI, "getCommands">,
   options: MenuCommandOptions = {},
-): Array<{ command: string; description: string }> {
+): TelegramMenuBuildResult {
   const commands = new Map<string, string>();
   const addCommand = (name: string, description?: string) => {
     if (BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(name.replace(/-/g, "_"))) return;
@@ -181,12 +189,25 @@ export function buildTelegramMenuCommands(
     return an.localeCompare(bn);
   });
 
-  for (const d of dynamic) {
-    if (commands.size >= 100) break;
-    addCommand(d.name, d.desc);
-  }
+  for (const d of dynamic) addCommand(d.name, d.desc);
 
-  return Array.from(commands, ([command, description]) => ({ command, description })).slice(0, 100);
+  const all = Array.from(commands, ([command, description]) => ({ command, description }));
+  if (all.length <= 100) return { commands: all, overflow: [] };
+  // Reserve the last menu slot for /more, which opens an inline keyboard over
+  // the overflow; each button dispatches its command like a typed message.
+  const kept = all.slice(0, 99);
+  const overflow = all.slice(99);
+  // A host that defines its own /more already occupies a kept slot; do not
+  // send setMyCommands a duplicate command name.
+  if (!kept.some((entry) => entry.command === "more")) kept.push({ command: "more", description: "Show more commands" });
+  return { commands: kept, overflow };
+}
+
+export function buildTelegramMenuCommands(
+  pi: Pick<ExtensionAPI, "getCommands">,
+  options: MenuCommandOptions = {},
+): Array<{ command: string; description: string }> {
+  return buildTelegramMenuCommandsFull(pi, options).commands;
 }
 
 const menuSyncInFlight = new Map<string, Promise<void>>();
@@ -196,12 +217,22 @@ function syncKey(botToken: string, apiBase?: string): string {
   return `${apiBase ?? "https://api.telegram.org"}\u0000${botToken}`;
 }
 
+const menuOverflowByBot = new Map<string, Array<{ command: string; description: string }>>();
+
+/** Overflow commands from the last menu sync for this bot, newest menu first. */
+export function getTelegramMenuOverflow(botToken: string | undefined, apiBase?: string): Array<{ command: string; description: string }> {
+  if (!botToken) return [];
+  return menuOverflowByBot.get(syncKey(botToken, apiBase)) ?? [];
+}
+
 async function doSyncTelegramCommands(botToken: string, pi: ExtensionAPI, apiBase?: string): Promise<void> {
   const [recent, tuiCommands] = await Promise.all([
     loadRecentCommands().catch(() => []),
     getTuiCommands().catch(() => []),
   ]);
-  await setTelegramMyCommands(botToken, buildTelegramMenuCommands(pi, { recent, tuiCommands }), apiBase);
+  const { commands, overflow } = buildTelegramMenuCommandsFull(pi, { recent, tuiCommands });
+  await setTelegramMyCommands(botToken, commands, apiBase);
+  menuOverflowByBot.set(syncKey(botToken, apiBase), overflow);
 }
 
 export async function syncTelegramCommands(botToken: string | undefined, pi: ExtensionAPI, apiBase?: string): Promise<void> {

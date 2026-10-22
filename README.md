@@ -96,7 +96,7 @@ Versions marked † carry a caveat — see
 - **Automatic reconnection** — exponential backoff on transient polling failures; a file-based polling lock remains the final safety guard against dual pollers
 - **Shared update cursor** — instances sharing a token keep a coordinated `lastUpdateId`, so handoffs do not re-deliver or skip Telegram updates; a cursor that ends up outside the bot's id stream (re-created bot, reused token) is detected on the next start and rewound instead of silently discarding messages
 - **Startup auto-enable** — if a bot token is already configured, Telegram is enabled automatically when pi starts (no manual `/tg-*-connect` on every launch)
-- **Bot command menu sync** — automatically syncs available commands to Telegram's BotMenu (up to 100 commands), including `/tg`
+- **Bot command menu sync** — automatically syncs available commands to Telegram's BotMenu (up to 100 commands), including `/tg`; when the catalog exceeds the cap the last slot becomes `/more`, which opens a paged inline keyboard of the overflow commands
 - **Authorized user** — setup generates a one-time local pairing code; the Telegram user must send `/pair <code>` before their user id is persisted; all other users are rejected
 - **TUI status line** — a right-aligned `telegram+` footer preserves connected / active / awaiting pairing / disconnected / not configured / error states; the owning instance shows `connected(current)` when idle or `active(current)` while processing, together with the bot username
 - **Typing indicator** — sends `typing` chat-action pulses while a turn is active so the Telegram chat shows the bot is working
@@ -183,9 +183,9 @@ are bridged to Telegram inline buttons so remote turns can interact with them:
 ### Command naming
 
 - Commands that mirror pi's native slash commands keep the same names (`/model`, `/session`, `/status`, `/stop`, etc.) so Telegram behaves like a remote pi control surface instead of a separate bot-specific CLI.
-- Commands that configure or manage the Telegram bridge itself use the `/tg-*` prefix (`/tg-bot-add`, `/tg-bind-cwd`, `/tg-switch`, etc.). The `/tg` command opens a multi-level inline-keyboard menu that consolidates all of these into one entry point; the flat commands remain available for direct use.
+- Commands that configure or manage the Telegram bridge itself use the `/tg-*` prefix (`/tg-bot-add`, `/tg-bind-cwd`, `/tg-switch`, etc.). The `/tg` command opens a multi-level inline-keyboard menu that consolidates all of these into one entry point; the flat commands remain dispatchable from Telegram but are deliberately not registered in the host TUI slash menu (bot tokens and local-cwd bindings are chat-side management).
 - `/pair <code>` is a Telegram-only bootstrap authorization message handled before normal command dispatch. It is intentionally short and not `/tg-pair` because the setup prompt is copied into Telegram during first-time pairing, before any user is authorized.
-- Telegram Bot API command menus do not allow hyphens. The bot menu shows `/tg` (the consolidated management menu) plus pi built-in commands; flat `/tg-*` commands are excluded from the bot menu but remain dispatchable when typed. The controller accepts both underscore and hyphen forms.
+- Telegram Bot API command menus do not allow hyphens. The bot menu shows `/tg` (the consolidated management menu) plus host commands; flat `/tg-*` commands are excluded from the bot menu but remain dispatchable when typed. When the catalog exceeds Telegram's 100-entry cap, the last menu slot becomes `/more`, which opens a paged keyboard (30 per page) of the overflow; tapping a button runs that command. The controller accepts both underscore and hyphen forms.
 
 ### Multi-instance Coordination
 
@@ -270,7 +270,7 @@ The menu uses the same UI abstraction that renders Telegram inline keyboards (`c
 
 #### Flat `/tg-*` commands (still available)
 
-All flat commands remain registered and dispatchable (TUI + typing them in Telegram). They share the same underlying logic as the `/tg` menu actions. They are excluded from the Telegram bot menu (only `/tg` appears there), but work identically when typed directly.
+All flat commands remain dispatchable from Telegram (via `/tg` or by typing them directly); they are no longer registered in the host TUI slash menu. They share the same underlying logic as the `/tg` menu actions. They are excluded from the Telegram bot menu (only `/tg` appears there), but work identically when typed directly.
 
 **Bot registry** (user-wide bot identity stored in `~/.pi/agent/tg.json`):
 

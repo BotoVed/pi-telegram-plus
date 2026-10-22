@@ -3,6 +3,8 @@ import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import { createTelegramController } from "../controller.ts";
 import {
   buildTelegramMenuCommands,
+  buildTelegramMenuCommandsFull,
+  getTelegramMenuOverflow,
   scheduleTelegramCommandRefresh,
   syncTelegramCommands,
 } from "../menu-commands.ts";
@@ -116,14 +118,23 @@ describe("dynamic TUI catalog in BotMenu", () => {
     expect(commands).toContainEqual({ command: "theme", description: "Change theme" });
   });
 
-  it("keeps the BotMenu at Telegram's 100-command limit", () => {
+  it("reserves the last menu slot for /more when the catalog exceeds 100", () => {
     const tuiCommands = Array.from({ length: 140 }, (_, index) => ({
       name: `cmd_${index}`,
       description: `Command ${index}`,
       source: "builtin" as const,
     }));
-    const commands = buildTelegramMenuCommands({ getCommands: () => [] }, { tuiCommands });
+    const { commands, overflow } = buildTelegramMenuCommandsFull({ getCommands: () => [] }, { tuiCommands });
     expect(commands).toHaveLength(100);
+    expect(commands[99]).toEqual({ command: "more", description: "Show more commands" });
+    expect(overflow.length).toBeGreaterThan(0);
+    expect(overflow.some((c) => c.command === "more")).toBe(false);
+  });
+
+  it("has no /more entry or overflow when the catalog fits", () => {
+    const { commands, overflow } = buildTelegramMenuCommandsFull({ getCommands: () => [] }, {});
+    expect(commands.some((c) => c.command === "more")).toBe(false);
+    expect(overflow).toHaveLength(0);
   });
 
   it("omits the thinking entry when the host has no native thinking command", () => {
@@ -161,6 +172,8 @@ describe("dynamic TUI catalog in BotMenu", () => {
     expect(names.has("reload")).toBe(false);
     expect(names.has("settings")).toBe(true);
     expect(names.has("model")).toBe(true);
+    // scoped-models has no TUI on OMP: it is not menu-visible there either.
+    expect(names.has("scoped_models")).toBe(false);
   });
 
   it("keeps plugin-served commands even when the host catalog lacks them", () => {
@@ -170,7 +183,6 @@ describe("dynamic TUI catalog in BotMenu", () => {
     );
     const names = new Set(commands.map((c) => c.command));
     expect(names.has("tg")).toBe(true);
-    expect(names.has("scoped_models")).toBe(true);
     expect(names.has("cwd")).toBe(true);
     expect(names.has("status")).toBe(true);
   });
@@ -241,5 +253,85 @@ describe("Telegram menu refresh scheduling", () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await vi.advanceTimersByTimeAsync(700);
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("/more overflow keyboard", () => {
+  const overflowPi = {
+    getCommands: () => Array.from({ length: 140 }, (_, index) => ({
+      name: `cmd_${index}`,
+      description: `Command ${index}`,
+      source: "extension" as const,
+    })),
+  } as any;
+
+  it("sends the overflow keyboard on /more and dispatches run callbacks", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await syncTelegramCommands("token-more-flow", overflowPi, "https://api.example");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const overflow = getTelegramMenuOverflow("token-more-flow", "https://api.example");
+    expect(overflow.length).toBeGreaterThan(0);
+
+    const handler = vi.fn(async () => undefined);
+    const telegramCommands = new Map<string, any>();
+    const transport = {
+      sendButtons: vi.fn(async () => ({ message_id: 5 })),
+      editButtons: vi.fn(async () => undefined),
+      sendText: vi.fn(async () => [{ message_id: 6 }]),
+      answerCallbackQuery: vi.fn(async () => undefined),
+    };
+    let currentUi: unknown = {};
+    const session = {
+      extensionRunner: {
+        getUIContext: () => currentUi,
+        setUIContext: (ui: unknown) => { currentUi = ui; },
+        getCommand: () => undefined,
+        createCommandContext: () => ({}),
+      },
+    } as any;
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport: transport as any,
+      ui: {
+        create: () => ({}) as any,
+        resolveInput: () => ({ handled: false }),
+        isSensitiveInput: () => false,
+        hasPendingInput: () => false,
+        dispose: () => undefined,
+      },
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test_bot",
+      telegramCommands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: () => undefined,
+      endTelegramTurn: () => undefined,
+      getConfig: () => ({ botToken: "token-more-flow", apiBase: "https://api.example" }) as any,
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 42 }, from: { id: 7 }, text: "/more" });
+    expect(transport.sendButtons).toHaveBeenCalledTimes(1);
+    const rows = (transport.sendButtons.mock.calls[0] as unknown as unknown[])[2] as Array<Array<{ text: string; value: string }>>;
+    const commandButtons = rows.flat().filter((button) => button.value.startsWith("tgplus:run:"));
+    expect(commandButtons.length).toBe(Math.min(30, overflow.length));
+    const target = commandButtons[0]!;
+    const runName = target.value.slice("tgplus:run:".length);
+    expect(target.text).toBe(`/${runName}`);
+
+    telegramCommands.set(runName, handler);
+    await controller.handleCallbackQuery({
+      id: "q1",
+      from: { id: 7 },
+      message: { chat: { id: 42 }, message_id: 5 },
+      data: target.value,
+    } as any);
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
   });
 });
