@@ -22,6 +22,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
@@ -268,9 +269,14 @@ function startHost(host, piCli, projectDir, agentDir, paneLog, session) {
   const args = host === "omp"
     ? [OMP_CLI, "-e", PLUGIN_ENTRY, "--model", "mock/mock-model", "--no-extensions", "--no-skills", "--no-rules", "--no-lsp", "--approval-mode", "yolo", "--no-title"]
     : [piCli, "--no-skills", "--no-extensions", "-e", PLUGIN_ENTRY, "--provider", "mock", "--model", "mock-model"];
+  // The tmux server's own cwd may be a deleted directory (harness cleanup),
+  // which poisons every new pane's initial cwd; cd inside the command instead
+  // of relying on -c alone.
+  const shq = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
+  const command = `cd ${shq(projectDir)} && exec ${args.map(shq).join(" ")}`;
   const result = tmux(
     "new-session", "-d", "-s", session, "-x", "200", "-y", "50", "-c", projectDir,
-    ...envArgs, ...args,
+    ...envArgs, command,
   );
   if (result.status === 0) tmux("pipe-pane", "-t", session, `cat > ${paneLog}`);
   return result;
@@ -548,6 +554,10 @@ async function runHost(host, piCli, label) {
       const hit = paneText.split("\n").find((line) => /login|oauth|auth|provider|credential/i.test(line));
       if (!hit) throw new Error(`host pane shows no login UI: ${paneText.slice(-200)}`);
       record(loginStep, true, hit.trim().slice(0, 80));
+      await waitFor("login dialog mirrored as an interactive selector", (state) =>
+        state.calls.slice(callOffset).some((call) =>
+          call.method === "editMessageText"
+          && String(call.body?.text ?? "").includes("TUI selector")));
     } else {
       await waitFor("native Telegram auth menu", (state) => {
         const call = state.calls.slice(callOffset).find((entry) => {
@@ -578,6 +588,17 @@ async function main() {
     throw new Error(`invalid --host ${HOST_ARG}; expected pi, omp, or both`);
   }
 
+  // A leftover run (zombie script or foreign mock) holding these ports would
+  // silently steal the injected updates; fail fast with a named cause instead.
+  for (const [label, port] of [["telegram mock", TG_PORT], ["provider mock", PROVIDER_PORT]]) {
+    await new Promise((resolveReady, rejectBusy) => {
+      const probe = createServer();
+      probe.once("error", (error) => rejectBusy(new Error(
+        `${label} port ${port} is already in use (${error.code}); another e2e run is likely alive — kill it or pass --tg-port/--provider-port`,
+      )));
+      probe.listen(port, "127.0.0.1", () => probe.close(resolveReady));
+    });
+  }
   const runs = [];
   if (HOST_ARG === "pi" || HOST_ARG === "both") {
     if (CUSTOM_PI_CLI) {
