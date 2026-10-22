@@ -61,6 +61,11 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **Finished mirrors kept the editor chrome.** When a dialog closed, the mirror rendered
+  the whole final screen, which ends with the editor prompt row and its session-title
+  border — so a logout result appeared to trail off into an unrelated "AUDIT: …" line
+  with a `❯`. Those rows are chrome, not dialog output, and are now trimmed (trailing
+  blank lines included) before the result is sent.
 - **Input dialogs had no visible way to type.** The OAuth code prompt (and every other
   host input overlay) mirrored as arrow keys, so nothing told the user how to answer.
   Such screens now carry an explicit hint — tap `⌨️ Type`, send the text as the next

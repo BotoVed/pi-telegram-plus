@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTelegramController } from "../controller.ts";
+import { createTelegramController, trimScreenChrome } from "../controller.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
@@ -667,6 +667,27 @@ describe("Host capability routing", () => {
     });
     const keyboard = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.rows as Array<Array<{ text: string; value: string }>>;
     expect(keyboard.flat().map((button) => button.text)).toContain("▸ alpha");
+  });
+});
+
+describe("Mirror result chrome", () => {
+  it("drops the editor prompt and its title border from finished screens", () => {
+    const screen = [
+      " Successfully logged out chenuseai@outlook.com (plus) from openai-codex",
+      " Credential removed from /Users/jaly/.omp/agent/agent.db",
+      "",
+      "─────────────────────  AUDIT: Fix two-column test expected values  ─────────────────────",
+      "❯",
+    ].join("\n");
+    expect(trimScreenChrome(screen)).toBe([
+      " Successfully logged out chenuseai@outlook.com (plus) from openai-codex",
+      " Credential removed from /Users/jaly/.omp/agent/agent.db",
+    ].join("\n"));
+  });
+
+  it("keeps ordinary output that has no editor chrome", () => {
+    const screen = "line one\nline two";
+    expect(trimScreenChrome(screen)).toBe(screen);
   });
 });
 

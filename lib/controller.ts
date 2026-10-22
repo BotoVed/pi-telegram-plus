@@ -669,9 +669,33 @@ function hasInputPrompt(body: string): boolean {
   });
 }
 
+// A finished screen ends with the editor chrome: an optional title border plus
+// the prompt row. That is not dialog output (it made a logout result look like
+// it ended with an unrelated session title), so trim it from mirrored results.
+export function trimScreenChrome(text: string): string {
+  const lines = text.split("\n");
+  let end = lines.length;
+  while (end > 0 && lines[end - 1].trim() === "") end -= 1;
+  const trimmed = lines.slice(0, end);
+  const isPromptRow = (line: string): boolean => /^\s*(?:[❯>]|π\s*[>❯])\s*$/.test(line);
+  let cut = trimmed.length;
+  for (let i = trimmed.length - 1; i >= Math.max(0, trimmed.length - 6); i -= 1) {
+    if (!isPromptRow(trimmed[i])) continue;
+    cut = i;
+    // The editor's top border carries the session title: ─── TITLE ───
+    const above = (trimmed[i - 1] ?? "").trim();
+    if (/^[─━]+\s+\S.*[─━]+$/.test(above) && (above.match(/[─━]/g) ?? []).length >= 8) cut = i - 1;
+    break;
+  }
+  const keep = trimmed.slice(0, cut);
+  while (keep.length > 0 && keep[keep.length - 1].trim() === "") keep.pop();
+  return keep.join("\n");
+}
+
 function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: SelectorState): string {
   const shownTitle = selector?.title ?? title;
-  const body = selector ? selector.block : snapshot.text || "(empty screen)";
+  const rawBody = selector ? selector.block : snapshot.text || "(empty screen)";
+  const body = selector ? rawBody : trimScreenChrome(rawBody);
   return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(tailScreen(body, TUI_SNAPSHOT_MAX_BYTES))}${selector ? "" : snapshotLinks(body)}`;
 }
 
