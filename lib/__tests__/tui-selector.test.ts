@@ -87,6 +87,66 @@ describe("parseSelectorText", () => {
     for (const label of parsed) expect(label).not.toMatch(/[\uE000-\uF8FF]/);
   });
 
+  it("parses pi's borderless selector by its cursor rows and key legend", () => {
+    // Real capture from pi 0.81.1: extension selectors have no side borders,
+    // the title ends with ":" and the overlay closes with a key legend.
+    const piAuthSelector = [
+      "────────────────────────────────────────────────────────",
+      "",
+      " Select authentication method:",
+      "",
+      " → Sign in with an account",
+      "   Sign in with an API key",
+      "",
+      " ↑↓ navigate  enter select  escape/ctrl+c cancel",
+      "",
+      "────────────────────────────────────────────────────────",
+    ].join("\n");
+    const state = parseSelectorText(piAuthSelector);
+    expect(state?.title).toBe("Select authentication method");
+    expect(state?.windowed).toBe(false);
+    expect(labels(piAuthSelector)).toEqual([
+      "!Sign in with an account",
+      "Sign in with an API key",
+    ]);
+  });
+
+  it("parses pi's provider window and its scroll indicator", () => {
+    // Real capture from pi 0.81.1: eight rows of a 39-provider list, with the
+    // search input above and "(cursor/total)" underneath.
+    const screen = (scroll: string) => [
+      "─────────────────────────────────────────────────",
+      "",
+      " Select provider to configure:",
+      "",
+      ">",
+      "",
+      " → Amazon Bedrock • unconfigured",
+      "   Ant Ling • unconfigured",
+      "   Anthropic • unconfigured",
+      "   Azure OpenAI • unconfigured",
+      "   Cerebras • unconfigured",
+      "   Cloudflare AI Gateway • unconfigured",
+      "   Cloudflare Workers AI • unconfigured",
+      "   DeepSeek • unconfigured",
+      `   ${scroll}`,
+      "",
+      "─────────────────────────────────────────────────",
+    ].join("\n");
+
+    const first = parseSelectorText(screen("(1/39)"));
+    expect(first?.title).toBe("Select provider to configure");
+    expect(first?.options).toHaveLength(8);
+    expect(first?.windowed).toBe(true);
+    expect(first?.total).toBe(39);
+    expect(first?.moreAbove).toBe(false);
+    expect(first?.moreBelow).toBe(true);
+
+    const scrolled = parseSelectorText(screen("(20/39)"));
+    expect(scrolled?.moreAbove).toBe(true);
+    expect(scrolled?.moreBelow).toBe(true);
+  });
+
   it("excludes search hints and key legends from options", () => {
     const withLegends = [
       "╭─ Settings ──────────────╮",

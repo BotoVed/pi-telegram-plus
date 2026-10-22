@@ -1,8 +1,8 @@
 // Parse a rendered TUI screen into a selectable list, so Telegram can show
 // one button per option instead of a keystroke emulator.
 //
-// Both supported hosts render selection dialogs as a box made of
-// box-drawing characters, with one row per option, e.g.:
+// OMP renders selection dialogs as a box made of box-drawing characters, with
+// one row per option, e.g.:
 //
 //   ╭─ Select provider to login ────────────────╮
 //   │ ❯ ChatGPT Plus/Pro (Codex Subscription) ██ │
@@ -10,9 +10,21 @@
 //   │ Type to search                            │
 //   ╰───────────────────────────────────────────╯
 //
-// The "❯" glyph marks the current item, which is what makes absolute
-// selection possible: the navigation distance is computed from where the
-// marker actually is, not from a guessed list position.
+// pi renders extension selectors without side borders, anchored by a key
+// legend instead:
+//
+//   ────────────────────────────────────────────
+//    Select authentication method:
+//
+//    → Sign in with an account
+//      Sign in with an API key
+//
+//    ↑↓ navigate  ↵ select  esc cancel
+//   ────────────────────────────────────────────
+//
+// The marker glyph ("❯"/"→") marks the current item, which is what makes
+// absolute selection possible: the navigation distance is computed from where
+// the marker actually is, not from a guessed list position.
 
 export type SelectorOption = {
   label: string;
@@ -25,6 +37,16 @@ export type SelectorState = {
   options: SelectorOption[];
   /** Raw rendered block (borders included) for the mirror display. */
   block: string;
+  /**
+   * True when the host renders a scrolling window of a longer list (OMP).
+   * False when the host renders the complete list (pi extension selectors).
+   */
+  windowed?: boolean;
+  /** Total option count when the host renders a "<cursor>/<total>" indicator. */
+  total?: number;
+  /** Rows remain above / below the rendered window (pi provider selector). */
+  moreAbove?: boolean;
+  moreBelow?: boolean;
 };
 
 const BOX_TOP = /^[ \t]*[╭┌]/;
@@ -32,12 +54,30 @@ const BOX_BOTTOM = /^[ \t]*[╰└]/;
 const BOX_LINE = /^[ \t]*[│┃]/;
 const BORDER_CHARS = "│┃█▌▐|";
 
+// Borderless (pi) selectors: a "→ " cursor line among plain rows, closed by a
+// key legend such as "↑↓ navigate  ↵ select  esc cancel".
+const CURSOR_ROW = /^[ \t]*[→❯▸]\s+(.+)$/;
+const PLAIN_ROW = /^[ \t]{2,}(\S.*)$/;
+const LEGEND_ROW = /[↑↓]|navigate/i;
+const LEGEND_ACTION = /\b(?:select|confirm|cancel)\b/i;
+const RULE_ROW = /^[ \t]*[─━—]{4,}[ \t]*$/;
+
+const optionRowLabel = (line: string): string | undefined => {
+  const cursor = CURSOR_ROW.exec(line);
+  const raw = cursor?.[1] ?? PLAIN_ROW.exec(line)?.[1];
+  if (raw === undefined) return undefined;
+  const label = raw.replace(/\s+/g, " ").trim();
+  if (!label || label.length < 2 || isFooterLine(label)) return undefined;
+  if (/^[─━\s│┃|·•—]+$/.test(label)) return undefined;
+  return label;
+};
+
 /**
  * Leading selection markers recognizable after ANSI stripping. The PUA range
  * U+E000–U+F8FF covers nerd-font presets, where the same cursor glyph ships
  * as a private-area chevron (e.g. U+F054) instead of "❯".
  */
-const SELECTED_MARKER = /^[❯>▶▸➤✦•·*\uE000-\uF8FF]\s+/;
+const SELECTED_MARKER = /^[❯>▶▸➤✦•·*→\uE000-\uF8FF]\s+/;
 
 /**
  * Non-option chrome inside a selector box: search hints and key legends.
@@ -109,11 +149,100 @@ function readTitle(borderLine: string): string | undefined {
   return title.length > 1 && !/^[─━\s]+$/.test(title) ? title : undefined;
 }
 
-/** Returns the parsed selector for the last dialog box, if one is visible. */
+/**
+ * pi's selectors have no side borders, and come in two shapes:
+ *
+ *   extension selector:  cursor row ("→ …") among plain rows, closed by a key
+ *                        legend ("↑↓ navigate ↵ select esc cancel"); the list
+ *                        is rendered in full, so there is nothing to page.
+ *   provider selector:   a title ending in ":", a search input line, the same
+ *                        cursor rows, then a "(<cursor>/<total>)" scroll line
+ *                        and a closing rule. Only a window of the list is
+ *                        rendered, so paging has to move the host cursor.
+ *
+ * Both are anchored below (legend or rule), which ordinary screen output never
+ * renders right under a ":"-titled run of cursor rows.
+ */
+const SCROLL_INFO = /^\((\d+)\/(\d+)\)$/;
+const SEARCH_INPUT = /^[>\s]{0,3}$/;
+
+function parseBorderlessSelector(lines: string[]): SelectorState | undefined {
+  for (let cursorLine = lines.length - 1; cursorLine >= 0; cursorLine -= 1) {
+    if (!CURSOR_ROW.test(lines[cursorLine])) continue;
+
+    let start = cursorLine;
+    while (start - 1 >= 0 && (CURSOR_ROW.test(lines[start - 1]) || PLAIN_ROW.test(lines[start - 1]))) start -= 1;
+    let end = cursorLine;
+    while (end + 1 < lines.length && (CURSOR_ROW.test(lines[end + 1]) || PLAIN_ROW.test(lines[end + 1]))) end += 1;
+
+    let total: number | undefined;
+    let cursorPosition: number | undefined;
+    const rows: SelectorOption[] = [];
+    for (let i = start; i <= end; i += 1) {
+      const scroll = SCROLL_INFO.exec(lines[i].trim());
+      if (scroll) {
+        cursorPosition = Number(scroll[1]);
+        total = Number(scroll[2]);
+        continue;
+      }
+      const label = optionRowLabel(lines[i]);
+      if (label === undefined) continue;
+      rows.push({ label, selected: CURSOR_ROW.test(lines[i]) });
+    }
+    if (rows.length < 2) continue;
+    if (rows.filter((row) => row.selected).length !== 1) continue;
+
+    // Anchor: a key legend (extension selector) or a closing rule (provider
+    // selector), within a couple of lines under the run.
+    const anchored = lines.slice(end + 1, end + 4).some((line) =>
+      (LEGEND_ROW.test(line) && LEGEND_ACTION.test(line)) || RULE_ROW.test(line));
+    if (!anchored) continue;
+
+    // Title: nearest non-empty line above the run that is not the search field.
+    let titleIndex = start - 1;
+    while (titleIndex >= 0) {
+      const text = lines[titleIndex].trim();
+      if (text === "" || SEARCH_INPUT.test(text)) { titleIndex -= 1; continue; }
+      break;
+    }
+    if (titleIndex < 0) continue;
+    const titleLine = lines[titleIndex].trim();
+    if (!titleLine.endsWith(":") || RULE_ROW.test(titleLine)) continue;
+    const title = titleLine.replace(/:\s*$/, "").trim();
+    if (!title) continue;
+
+    const windowed = total !== undefined;
+    let moreAbove: boolean | undefined;
+    let moreBelow: boolean | undefined;
+    if (windowed) {
+      // pi keeps the cursor centered in its window; derive which slice of the
+      // full list is on screen so paging knows whether anything remains.
+      const size = rows.length;
+      const selected = Math.max(0, (cursorPosition ?? 1) - 1);
+      const startIndex = Math.max(0, Math.min(selected - Math.floor(size / 2), (total ?? size) - size));
+      moreAbove = startIndex > 0;
+      moreBelow = startIndex + size < (total ?? size);
+    }
+
+    const blockEnd = Math.min(lines.length - 1, end + 3);
+    return {
+      title,
+      options: rows,
+      block: lines.slice(titleIndex, blockEnd + 1).join("\n"),
+      windowed,
+      ...(total !== undefined ? { total } : {}),
+      ...(moreAbove !== undefined ? { moreAbove } : {}),
+      ...(moreBelow !== undefined ? { moreBelow } : {}),
+    };
+  }
+  return undefined;
+}
+
+/** Returns the parsed selector for the last dialog, if one is visible. */
 export function parseSelectorText(screenText: string): SelectorState | undefined {
   const lines = screenText.split("\n");
   const region = extractBlock(lines);
-  if (!region) return undefined;
+  if (!region) return parseBorderlessSelector(lines);
   const blockLines = lines.slice(region.start, region.end + 1);
   const contentLines = blockLines.filter((line) => BOX_LINE.test(line));
   if (contentLines.length < 2) return undefined;
@@ -147,6 +276,7 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
     ...(title ? { title } : {}),
     options,
     block: blockLines.join("\n"),
+    windowed: true,
   };
 }
 

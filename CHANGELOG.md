@@ -32,9 +32,23 @@ missing or mislabelled cannot be published.
   so and rebuilds the keyboard instead of firing blind arrows. Cursor detection covers
   both the default `❯` marker and the private-area chevron emitted under
   `symbolPreset: nerd`, verified end-to-end against both presets.
+- **The host dialog owns `/login` and `/logout`.** In `full` mode those commands are
+  routed to the terminal on every host instead of a Telegram-native re-implementation,
+  so both surfaces show the same labels, ordering, status markers and paging; the native
+  handlers remain the fallback when the bridge is off or the host catalog lacks the
+  command. pi renders its selectors without side borders — a `→` cursor row closed by a
+  key legend (complete list) or a provider window with an `(n/total)` indicator — which
+  the parser now recognizes; windowed pi lists page by walking arrow steps because pi
+  ignores PageUp/PageDown. Mirrored lines strip APC/OSC/CSI control strings, not just
+  SGR colors.
 
 ### Fixed
 
+- **Every option past the first screen of a mirrored selector was unreachable.** OMP
+  renders ten rows of its scrolling selector window over a catalog that holds 100+
+  providers; the mirror treated the rendered rows as the whole list, so it always showed
+  a single page. Paging now drives the host window and the end of the list is learned
+  from a no-op page, so the whole catalog is reachable from Telegram.
 - **`/status` crashed on hosts whose session omits fields.** OMP sessions can report
   no `thinkingLevel` (and hosts may omit token/cost stats entirely), and the status
   snapshot fed those straight into string operations — `undefined is not an object`.

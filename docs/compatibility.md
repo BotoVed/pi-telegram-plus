@@ -189,7 +189,7 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 38 files, 518 tests | `npm test` |
+| Unit / regression | 38 files, 525 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
 | TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selector mirrors incl. per-option buttons and Prev/Next paging, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
@@ -238,6 +238,13 @@ behavior exactly; it is a host catalog quirk, not a routing bug.
   login catalog looked like a single page and the rest was unreachable from Telegram.
   Paging now drives the host itself (PageUp/PageDown), re-parses the new window, and
   learns the end of the list from a no-op page; picks resolve against the live window.
+- pi renders its selectors without side borders, so the box parser never matched them and
+  `/login` stayed an arrow-keyboard mirror. Two shapes are now recognized: a `→` cursor
+  row closed by a key legend (extension selector, rendered in full) and a provider window
+  with an `(n/total)` scroll indicator (windowed; paged by arrow steps because pi ignores
+  PageUp/PageDown). pi parks the hardware cursor with an APC string inside its search
+  field, which the old SGR-only stripper left in the text and broke title detection;
+  control strings (APC/OSC/CSI) are now stripped, not just colors.
 - Bash confirmation awaited the Telegram callback inside the serial polling handler, so
   the callback could never be fetched. Bash workflows now detach after accepting the
   update; the poll loop remains free to receive the approval or rejection.

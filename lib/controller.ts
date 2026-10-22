@@ -437,6 +437,13 @@ const TUI_POLL_INTERVAL_MS = 80;
 const TUI_POLL_ATTEMPTS = 40;
 const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
 
+// Mirror-first: these open host dialogs, and the Telegram-native
+// re-implementation cannot stay faithful to the terminal (labels, ordering,
+// status markers, paging). With the bridge in `full` mode the host owns the
+// interaction and Telegram mirrors it; native handlers remain the fallback
+// when the bridge cannot serve the command.
+const MIRROR_FIRST_COMMANDS = new Set(["login", "logout"]);
+
 // Commands whose Telegram-native handlers depend on host APIs that differ
 // between pi and OMP. When the capability is missing the command is routed to
 // the host's own TUI through the bridge (the host serves it there), or refused
@@ -571,6 +578,9 @@ function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
 // presses Enter (see selectorNavigateKeys); ▸ marks the live cursor.
 const SELECTOR_PAGE_SIZE = 10;
 const SELECTOR_LABEL_MAX = 45;
+// Telegram rejects keyboards over 100 buttons; leave room for the nav and
+// function rows when a host renders a complete (unwindowed) list.
+const SELECTOR_MAX_BUTTONS = 90;
 
 type SelectorPaging = {
   /** Net host pages moved away from the window the dialog opened on. */
@@ -592,7 +602,11 @@ function selectorOverflows(selector: SelectorState): boolean {
 
 function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging): SelectorKeyboard | undefined {
   if (!selector.options.some((option) => option.selected)) return undefined;
-  const window = selector.options.slice(0, SELECTOR_PAGE_SIZE);
+  // Windowed hosts (OMP) show one page of their scrolling window; complete
+  // lists (pi) render everything, capped only by Telegram's button budget.
+  const window = selector.windowed === false
+    ? selector.options.slice(0, SELECTOR_MAX_BUTTONS)
+    : selector.options.slice(0, SELECTOR_PAGE_SIZE);
   const rows: TelegramButton[][] = window.map((option, index) => {
     const label = option.label.length > SELECTOR_LABEL_MAX
       ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
@@ -602,10 +616,13 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
       value: encodeTuiCallback(`pick:${index}`),
     }];
   });
-  const hasPrev = paging.page > 0 && window.length > 0;
+  const hasPrev = (paging.page > 0 || selector.moreAbove === true) && window.length > 0;
   // A full window cannot tell whether rows follow; the first Next tap does.
-  // The scrollbar covers short terminals whose window is below the page size.
-  const hasNext = paging.hasNext && (window.length >= SELECTOR_PAGE_SIZE || selectorOverflows(selector));
+  // The scrollbar covers short terminals whose window is below the page size;
+  // pi's provider selector reports the remainder explicitly.
+  const moreBelow = selector.moreBelow
+    ?? (window.length >= SELECTOR_PAGE_SIZE || selectorOverflows(selector));
+  const hasNext = paging.hasNext && selector.windowed !== false && moreBelow;
   if (hasPrev || hasNext) {
     const nav: TelegramButton[] = [];
     if (hasPrev) nav.push({ text: "◀ Prev", value: encodeTuiCallback("page:prev") });
@@ -941,21 +958,29 @@ export function createTelegramController(deps: {
     if (action === "page:next" || action === "page:prev") {
       const forward = action === "page:next";
       const before = mirror.selector?.options.map((option) => option.label).join("\u0000") ?? "";
-      if (!bridge.key(forward ? "pageDown" : "pageUp")) {
-        mirror.lastText = undefined;
-        await refreshTuiMirror(mirror);
-        return;
-      }
       // The host renders on its own frame; poll until the window moves (or the
       // list ends, which is the only way to learn there is nothing more).
+      const windowMoved = async (): Promise<boolean> => {
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          await sleep(40);
+          let snapshot: TuiSnapshot | undefined;
+          try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { snapshot = undefined; }
+          const parsed = snapshot?.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
+          const after = parsed?.options.map((option) => option.label).join("\u0000") ?? "";
+          if (after.length > 0 && after !== before) return true;
+        }
+        return false;
+      };
       let moved = false;
-      for (let attempt = 0; attempt < 12 && !moved; attempt += 1) {
-        await sleep(40);
-        let snapshot: TuiSnapshot | undefined;
-        try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { snapshot = undefined; }
-        const parsed = snapshot?.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
-        const after = parsed?.options.map((option) => option.label).join("\u0000") ?? "";
-        moved = after.length > 0 && after !== before;
+      if (bridge.key(forward ? "pageDown" : "pageUp")) moved = await windowMoved();
+      // pi's selectors do not implement page keys; when their scroll indicator
+      // proves rows remain, page by walking one window of arrow steps.
+      if (!moved && mirror.selector?.moreBelow === true) {
+        const steps = Math.max(1, mirror.selector.options.length);
+        for (let i = 0; i < steps; i += 1) {
+          if (!bridge.key(forward ? "down" : "up")) break;
+        }
+        moved = await windowMoved();
       }
       const paging = mirror.selectorPaging ?? { page: 0, hasNext: true };
       mirror.selectorPaging = forward
@@ -1372,6 +1397,23 @@ export function createTelegramController(deps: {
       deps.telegramCommands.get(name)
       ?? deps.telegramCommands.get(name.replace(/_/g, "-"))
       ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
+
+    // Mirror-first dialogs: with interactive control available, the host's own
+    // UI is the source of truth, so Telegram mirrors it instead of running a
+    // native re-implementation (labels, ordering, status markers and paging
+    // stay identical to the terminal). Applies to every host that serves the
+    // command; the branches below remain as the fallback.
+    if (getTuiMode() === "full" && MIRROR_FIRST_COMMANDS.has(name)) {
+      const mirrorCandidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
+      const mirrorCatalog = await bridge.getCommands().catch(() => []);
+      const served = mirrorCatalog.some((command) => mirrorCandidates.has(command.name)
+        || (command.aliases ?? []).some((alias) => mirrorCandidates.has(alias)));
+      if (served) {
+        recordCommandUsage(name);
+        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
+        return true;
+      }
+    }
 
     if (handler && HOST_CAPABILITY_COMMANDS.has(name) && !nativeHandlerAvailable(name, session, hostIsOmp())) {
       recordCommandUsage(name);

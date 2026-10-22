@@ -537,6 +537,59 @@ describe("Host capability routing", () => {
     await vi.waitFor(() => expect(login).toHaveBeenCalled());
   });
 
+  it("mirrors /login from the host TUI in full mode even when native auth exists", async () => {
+    const submit = vi.fn(() => true);
+    const login = vi.fn();
+    const harness = createHarness({
+      session: piLikeSession(),
+      bridge: createBridge({
+        submit,
+        getCommands: async () => [{ name: "login", description: "Log in", source: "builtin" as const }],
+      }),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      telegramCommands: new Map([["login", login]]),
+    });
+
+    await send(harness, "/login");
+
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledWith("/login"));
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it("keeps the native /login handler outside full mode", async () => {
+    const submit = vi.fn(() => true);
+    const login = vi.fn(async () => undefined);
+    const harness = createHarness({
+      session: piLikeSession(),
+      bridge: createBridge({
+        submit,
+        getCommands: async () => [{ name: "login", description: "Log in", source: "builtin" as const }],
+      }),
+      telegramCommands: new Map([["login", login]]),
+    });
+
+    await send(harness, "/login");
+
+    await vi.waitFor(() => expect(login).toHaveBeenCalled());
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("keeps the native /login handler when the host catalog lacks the command", async () => {
+    const submit = vi.fn(() => true);
+    const login = vi.fn(async () => undefined);
+    const harness = createHarness({
+      session: piLikeSession(),
+      bridge: createBridge({ submit, getCommands: async () => [] }),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      telegramCommands: new Map([["login", login]]),
+    });
+
+    await send(harness, "/login");
+
+    await vi.waitFor(() => expect(login).toHaveBeenCalled());
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("routes /fork to the host TUI on OMP-like hosts", async () => {
     const submit = vi.fn(() => true);
     const fork = vi.fn();
@@ -848,6 +901,61 @@ describe("Selector option buttons and pick routing", () => {
     await tapCallback(harness, "cb-next-end", "tgplus:tui:page:next");
     expect(keys).toEqual(["pageDown"]);
     expect(lastKeyboard(harness).map((button) => button.text)).not.toContain("Next ▶");
+  });
+
+  it("pages pi's provider window by walking arrow steps", async () => {
+    const screen = [
+      "─────────────────────────────────────────────────",
+      "",
+      " Select provider to configure:",
+      "",
+      ">",
+      "",
+      " → Amazon Bedrock • unconfigured",
+      "   Ant Ling • unconfigured",
+      "   Anthropic • unconfigured",
+      "   Azure OpenAI • unconfigured",
+      "   Cerebras • unconfigured",
+      "   Cloudflare AI Gateway • unconfigured",
+      "   Cloudflare Workers AI • unconfigured",
+      "   DeepSeek • unconfigured",
+      "   (1/39)",
+      "",
+      "─────────────────────────────────────────────────",
+    ].join("\n");
+    const { harness, keys } = harnessWithLiveScreen(screen);
+    await openMirror(harness);
+
+    const texts = lastKeyboard(harness).map((button) => button.text);
+    expect(texts).toContain("Next ▶");
+    expect(texts).not.toContain("◀ Prev");
+
+    // pi ignores page keys, so Next falls back to a window of arrow steps.
+    await tapCallback(harness, "cb-pi-next", "tgplus:tui:page:next");
+    expect(keys[0]).toBe("pageDown");
+    expect(keys.slice(1)).toEqual(Array(8).fill("down"));
+  });
+
+  it("shows pi's complete selector list without a Next row", async () => {
+    const options = Array.from({ length: 12 }, (_, index) => `Provider ${index}`);
+    const screen = [
+      "",
+      " Select authentication method:",
+      "",
+      ...options.map((label, index) => (index === 0 ? ` → ${label}` : `   ${label}`)),
+      "",
+      " ↑↓ navigate  enter select  escape/ctrl+c cancel",
+      "",
+    ].join("\n");
+    const { harness } = harnessWithLiveScreen(screen);
+    await openMirror(harness);
+
+    const texts = lastKeyboard(harness).map((button) => button.text);
+    expect(texts).toContain("▸ Provider 0");
+    expect(texts).toContain("Provider 11");
+    expect(texts).not.toContain("Next ▶");
+    const message = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.text!;
+    expect(message).toBe("<b>Select authentication method</b>");
   });
 
   it("offers Next on short windows that render the host scrollbar", async () => {
