@@ -553,11 +553,23 @@ async function runHost(host, piCli, label) {
       const paneText = String(pane.stdout ?? "");
       const hit = paneText.split("\n").find((line) => /login|oauth|auth|provider|credential/i.test(line));
       if (!hit) throw new Error(`host pane shows no login UI: ${paneText.slice(-200)}`);
-      record(loginStep, true, hit.trim().slice(0, 80));
-      await waitFor("login dialog mirrored as an interactive selector", (state) =>
-        state.calls.slice(callOffset).some((call) =>
-          call.method === "editMessageText"
-          && String(call.body?.text ?? "").includes("TUI selector")));
+      const loginMirror = await waitFor("login mirror keyboard", (state) =>
+        messages({ calls: state.calls.slice(callOffset) }).find((call) =>
+          String(call.body?.text ?? "").includes("TUI selector")
+          && Array.isArray(call.body?.reply_markup?.inline_keyboard)
+          && call.body.reply_markup.inline_keyboard.flat()
+            .some((button) => String(button.callback_data ?? "").startsWith("tgplus:tui:"))) ?? false);
+      const loginMirrorMessageId = loginMirror.body?.message_id ?? loginMirror.message_id;
+      const loginRows = loginMirror.body.reply_markup.inline_keyboard;
+      const callbackId = await injectCallback("tgplus:tui:down", loginMirrorMessageId);
+      await waitFor("down callback answered on login mirror", (state) =>
+        state.calls.some((call) =>
+          call.method === "answerCallbackQuery" && call.body?.callback_query_id === callbackId));
+      const paneAfter = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+      if (!/login|oauth|auth|provider|credential/i.test(paneAfter)) {
+        throw new Error("login dialog closed after injected key");
+      }
+      record(loginStep, true, `${loginRows.flat().length} buttons + down callback routed`);
     } else {
       await waitFor("native Telegram auth menu", (state) => {
         const call = state.calls.slice(callOffset).find((entry) => {
