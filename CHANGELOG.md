@@ -23,18 +23,23 @@ missing or mislabelled cannot be published.
   rewound below it, and re-handled it on every cycle — for `/reload` that meant a reload
   loop that swallowed later commands. The rewind now fires only for a cursor strictly
   ahead of the stream, and updates at or below the cursor are skipped instead of re-run.
-- **The Bot menu's thinking entry fell through to the model on OMP.** OMP has no native
-  `/thinking` slash command (its thinking control is a hotkey), so the menu entry reached
-  no handler and the text went to the provider as a prompt. The menu now omits the entry
-  whenever the host catalog lacks native `thinking`; the thinking level is set from
-  `/tg` → Config → **Thinking level**.
+- **The Bot menu's thinking entry fell through to the model on OMP.** OMP has no
+  native `/thinking` slash command (its thinking control is a hotkey) and the plugin
+  registers no `thinking` handler either, so the static menu entry reached nothing and
+  the text went to the provider as a prompt. The static entry is gone: `/thinking`
+  appears in the menu only when the host itself provides the command. The thinking
+  level is set from `/tg` → Config → **Thinking level**.
 - **The Bot menu offered host commands OMP does not serve.** The curated static list is
-  pi-based, so on OMP `/clone`, `/import`, `/name`, and `/reload` reached no handler and
-  fell through to the model as prompt text. Once the TUI bridge has captured the live host
-  catalog, static entries missing from it are omitted; plugin-served commands (`/tg`,
-  `/cwd`, `/status`, …) stay, and with no captured catalog the curated list is kept
-  unchanged. `/scoped-models` left the whitelist: OMP serves it neither natively nor
-  through the plugin, so it is no longer menu-visible on OMP.
+  pi-based, so on OMP the menu advertised `/clone`, `/import`, `/name` and `/reload` —
+  commands absent from OMP's own command surface, where typing them falls through to
+  the model as prompt text. Once the TUI bridge has captured the live host catalog,
+  static entries missing from it are omitted; plugin-served commands (`/tg`, `/cwd`,
+  `/status`, …) stay, and with no captured catalog the curated list is kept unchanged.
+  `/scoped-models` left the whitelist: OMP serves it neither natively nor through the
+  plugin, so it is no longer menu-visible on OMP. Kept static entries now display the
+  host catalog's live description when captured, so menu wording cannot drift from the
+  host's own copy.
+  The curated list also gained pi's `/trust` (dispatched through the TUI bridge).
 - **TUI bridge mirroring and remote controls could stall or target stale state.** Snapshot
   focus detection no longer recurses or guesses from rendered words, submit wrapping is
   isolated per editor/session, and pi/OMP command menus now come from live host registries.

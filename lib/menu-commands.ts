@@ -40,6 +40,7 @@ const TELEGRAM_MENU_COMMANDS: Array<{ command: string; description: string }> = 
   { command: "name", description: "Set or show session name" },
   { command: "session", description: "Show session statistics" },
   { command: "tree", description: "Navigate session tree" },
+  { command: "trust", description: "Save project trust decision" },
   { command: "fork", description: "Fork from a previous message" },
   { command: "clone", description: "Clone at a previous message" },
   { command: "compact", description: "Compact session context" },
@@ -55,7 +56,6 @@ const TELEGRAM_MENU_COMMANDS: Array<{ command: string; description: string }> = 
   { command: "cwd", description: "Show current working directory" },
   { command: "cd", description: "Switch pi working directory" },
   { command: "import", description: "Import a session" },
-  { command: "thinking", description: "Show or change thinking level" },
   { command: "stop", description: "Stop the current agent turn" },
   { command: "debug", description: "Show debug information" },
   { command: "status", description: "Show runtime snapshot (workspace, model, context, messages)" },
@@ -120,21 +120,23 @@ export function buildTelegramMenuCommandsFull(
   // no native command). Filter static entries against the live catalog; keep
   // plugin-served commands. With no captured catalog, keep the curated list.
   const catalogNames = new Set<string>();
-  for (const command of options.tuiCommands ?? []) {
-    const n = toTelegramCommandName(command.name);
-    if (n) catalogNames.add(n);
-  }
-  for (const command of pi.getCommands()) {
-    const n = toTelegramCommandName(command.name);
-    if (n) catalogNames.add(n);
-  }
+  const catalogDescriptions = new Map<string, string>();
+  const noteCatalog = (name: string, description?: string) => {
+    const n = toTelegramCommandName(name);
+    if (!n) return;
+    catalogNames.add(n);
+    const trimmed = description?.trim();
+    if (trimmed && !catalogDescriptions.has(n)) catalogDescriptions.set(n, trimmed);
+  };
+  for (const command of options.tuiCommands ?? []) noteCatalog(command.name, command.description);
+  for (const command of pi.getCommands()) noteCatalog(command.name, command.description);
   const catalogAvailable = (options.tuiCommands?.length ?? 0) > 0;
   for (const command of TELEGRAM_MENU_COMMANDS) {
-    if (catalogAvailable) {
-      const n = toTelegramCommandName(command.command);
-      if (n && !catalogNames.has(n) && !TELEGRAM_SERVED_COMMANDS.has(n)) continue;
-    }
-    addCommand(command.command, command.description);
+    const n = toTelegramCommandName(command.command);
+    if (catalogAvailable && n && !catalogNames.has(n) && !TELEGRAM_SERVED_COMMANDS.has(n)) continue;
+    // The static copy is a fallback wording; the live host description wins so
+    // the BotMenu never shows text the host itself stopped using.
+    addCommand(command.command, (n ? catalogDescriptions.get(n) : undefined) ?? command.description);
   }
 
   const recentPriority = new Map<string, number>();

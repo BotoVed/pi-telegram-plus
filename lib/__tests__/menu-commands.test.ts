@@ -176,6 +176,22 @@ describe("dynamic TUI catalog in BotMenu", () => {
     expect(names.has("scoped_models")).toBe(false);
   });
 
+  it("prefers the live host description over the static copy", () => {
+    const commands = buildTelegramMenuCommands(
+      { getCommands: () => [] },
+      {
+        tuiCommands: [
+          { name: "model", description: "Select model (opens selector UI)", source: "builtin" as const },
+          { name: "quit", description: "Quit pi", source: "builtin" as const },
+        ],
+      },
+    );
+    expect(commands.find((c) => c.command === "model")?.description).toBe("Select model (opens selector UI)");
+    expect(commands.find((c) => c.command === "quit")?.description).toBe("Quit pi");
+    // Entries the catalog does not describe keep the fallback wording.
+    expect(commands.find((c) => c.command === "tg")?.description).toBe("Open the Telegram management menu");
+  });
+
   it("keeps plugin-served commands even when the host catalog lacks them", () => {
     const commands = buildTelegramMenuCommands(
       { getCommands: () => [] },
@@ -192,6 +208,9 @@ describe("dynamic TUI catalog in BotMenu", () => {
     const names = new Set(commands.map((c) => c.command));
     expect(names.has("clone")).toBe(true);
     expect(names.has("reload")).toBe(true);
+    expect(names.has("trust")).toBe(true);
+    // thinking has no owner without a host that provides it: never static.
+    expect(names.has("thinking")).toBe(false);
   });
 });
 
