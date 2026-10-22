@@ -32,8 +32,12 @@ const BOX_BOTTOM = /^[ \t]*[╰└]/;
 const BOX_LINE = /^[ \t]*[│┃]/;
 const BORDER_CHARS = "│┃█▌▐|";
 
-/** Leading selection markers recognizable after ANSI stripping. */
-const SELECTED_MARKER = /^[❯>▶▸➤✦•·*]\s+/;
+/**
+ * Leading selection markers recognizable after ANSI stripping. The PUA range
+ * U+E000–U+F8FF covers nerd-font presets, where the same cursor glyph ships
+ * as a private-area chevron (e.g. U+F054) instead of "❯".
+ */
+const SELECTED_MARKER = /^[❯>▶▸➤✦•·*\uE000-\uF8FF]\s+/;
 
 /**
  * Non-option chrome inside a selector box: search hints and key legends.

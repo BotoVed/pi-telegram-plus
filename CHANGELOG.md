@@ -26,7 +26,9 @@ missing or mislabelled cannot be published.
   region (title plus list), with an `Esc / Type / Refresh / Close` row underneath.
   Stale taps are never guessed at: if the list changed underneath the keyboard, or the
   current position cannot be read, Telegram says so and rebuilds the keyboard instead of
-  firing blind arrows.
+  firing blind arrows. Cursor detection covers both the default `❯` marker and the
+  private-area chevron emitted under `symbolPreset: nerd`, verified end-to-end against
+  both presets.
 
 ### Fixed
 

@@ -21,6 +21,37 @@ const LOGIN_SCREEN = [
   "telegram+ connected(current)",
 ].join("\n");
 
+// Real capture from a machine with `symbolPreset: nerd`: the selection
+// cursor renders as the private-area chevron U+F054 and the screen above the
+// dialog carries QR/banner junk on top of the update box.
+const NERD_LOGIN_SCREEN = [
+  "                                     ██  ██       ▄▀▀▄ █▀▄▀▄ █▀▀▄",
+  "                                     ██  ██       ▀▄▄▀ █ █ █ █▄▄▀",
+  "                                     ▒▒  ██                  █",
+  "                                         ██       v18.12.5",
+  "",
+  "               Tip: Use /tan to fork the current conversation into a background agent",
+  "",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────",
+  " Update Available",
+  " New version 18.12.6 is available. Run: omp update",
+  "────────────────────────────────────────────────────────────────────────────────────────────────────",
+  "",
+  "╭─ Select provider to login ───────────────────────────────────────────────────────────────────────╮",
+  "│ \uF054 ChatGPT Plus/Pro (Codex Subscription)  logged in (login)                                   █ │",
+  "│   Anthropic (Claude Pro/Max)                                                                   │ │",
+  "│   Z.AI (GLM Coding Plan)                                                                       │ │",
+  "│   Z.AI (GLM Coding Plan · Sign in)                                                             │ │",
+  "│   Kimi Code                                                                                    │ │",
+  "│   OpenRouter                                                                                   │ │",
+  "│   GitHub Copilot                                                                               │ │",
+  "│   Cursor (Claude, GPT, etc.)                                                                   │ │",
+  "│   Devin                                                                                        │ │",
+  "│   Google Antigravity (Gemini, Claude, GPT-OSS)                                                 │ │",
+  "│ Type to search                                                                                   │",
+  "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯",
+].join("\n");
+
 const labels = (text: string) => {
   const state = parseSelectorText(text);
   return state?.options.map((option) => `${option.selected ? "!" : ""}${option.label}`);
@@ -45,6 +76,15 @@ describe("parseSelectorText", () => {
     for (const option of state?.options ?? []) {
       expect(option.label).not.toMatch(/[│┃█▌▐|]/);
     }
+  });
+
+  it("parses nerd-preset renders where the cursor is a private-area glyph", () => {
+    const state = parseSelectorText(NERD_LOGIN_SCREEN);
+    expect(state?.title).toBe("Select provider to login");
+    expect(state?.options).toHaveLength(10);
+    const parsed = labels(NERD_LOGIN_SCREEN) ?? [];
+    expect(parsed[0]).toBe("!ChatGPT Plus/Pro (Codex Subscription) logged in (login)");
+    for (const label of parsed) expect(label).not.toMatch(/[\uE000-\uF8FF]/);
   });
 
   it("excludes search hints and key legends from options", () => {
