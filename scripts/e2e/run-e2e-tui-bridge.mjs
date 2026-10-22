@@ -529,6 +529,40 @@ async function runHost(host, piCli, label) {
     record("Telegram !!bash output is excluded from provider context", false, String(error.message).slice(0, 400));
   }
 
+  // ── /login capability routing ──────────────────────────────────────────
+  const loginStep = host === "omp"
+    ? "OMP /login routes to the host TUI login dialog"
+    : "pi /login opens the native Telegram auth menu";
+  try {
+    const before = await controlGet("/_control/log");
+    const callOffset = before.calls.length;
+    await injectMessage("/login", 7220);
+    if (host === "omp") {
+      await waitFor("TUI command notice for /login", (state) =>
+        state.calls.slice(callOffset).some((call) =>
+          String(call.body?.text ?? "").includes("TUI command")
+          && String(call.body?.text ?? "").includes("/login")));
+      await sleep(900);
+      const pane = tmux("capture-pane", "-p", "-t", session);
+      const paneText = String(pane.stdout ?? "");
+      const hit = paneText.split("\n").find((line) => /login|oauth|auth|provider|credential/i.test(line));
+      if (!hit) throw new Error(`host pane shows no login UI: ${paneText.slice(-200)}`);
+      record(loginStep, true, hit.trim().slice(0, 80));
+    } else {
+      await waitFor("native Telegram auth menu", (state) => {
+        const call = state.calls.slice(callOffset).find((entry) => {
+          const rows = entry.body?.reply_markup?.inline_keyboard;
+          return Array.isArray(rows)
+            && rows.flat().some((button) => String(button.callback_data ?? "").startsWith("tgplus:ui:"));
+        });
+        return call ?? false;
+      });
+      record(loginStep, true);
+    }
+  } catch (error) {
+    record(loginStep, false, String(error.message).slice(0, 400));
+  }
+
   killSession(session);
   const failed = steps.filter((step) => !step.ok);
   if (failed.length > 0 && existsSync(paneLog)) {

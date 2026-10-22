@@ -180,6 +180,16 @@ export function getActiveSession(): CapturedAgentSession | undefined {
   return resolveSessionFromRegistry() ?? getState().activeSession;
 }
 
+/**
+ * True when the host module exposes OMP's agent registry (pi exports none).
+ * Used to gate commands whose context API only exists on one of the hosts —
+ * e.g. `ctx.fork` is present on pi but absent on OMP, which offers
+ * `ctx.branch` / `session.fork` instead.
+ */
+export function isOmpHost(): boolean {
+  return HOST.AgentRegistry !== undefined;
+}
+
 export function installAgentSessionCapture(): boolean {
   const state = getState();
   if (state.installed) return true;

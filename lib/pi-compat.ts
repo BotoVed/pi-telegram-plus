@@ -211,6 +211,16 @@ export function hasModelRuntimeAuth(session: unknown): boolean {
     && typeof runtime.logout === "function";
 }
 
+/**
+ * Whether a Telegram-native login/logout flow can work at all: either the
+ * ModelRuntime auth API (pi >= 0.80.8) or the legacy ModelRegistry/AuthStorage
+ * surface (pi <= 0.80.7). OMP exposes neither shape, so this returns false
+ * there and the caller must route to the host TUI instead.
+ */
+export function hasNativeAuthApi(session: unknown, ctx?: unknown): boolean {
+  return hasModelRuntimeAuth(session) || hasLegacyAuthStorage(ctx, session);
+}
+
 export function getRuntimeProviders(session: unknown): PiRuntimeProvider[] {
   const runtime = getModelRuntime(session);
   const providers = typeof runtime?.getProviders === "function" ? runtime.getProviders() : [];

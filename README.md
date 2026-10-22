@@ -242,6 +242,11 @@ Quoted attachments are represented as metadata (`[telegram quoted attachment]`, 
 | `/name` | Set or show session name |
 | `/session` | Show session statistics |
 
+`/fork` and `/clone` need the host's fork API. On hosts that keep it out of reach of
+Telegram (OMP exposes `session.fork`/`ctx.branch` instead of pi's `ctx.fork`), the command
+is routed to the host's own `/fork` through the TUI bridge; with the bridge off you get a
+notice to run it in the terminal.
+
 ### Model & Authentication Commands
 
 - `/model` — View available models / switch current model via interactive selection
@@ -249,6 +254,11 @@ Quoted attachments are represented as metadata (`[telegram quoted attachment]`, 
 - Thinking level — on hosts with a native `/thinking`, use it directly; otherwise `/tg` → Config → **Thinking level** (off/minimal/low/medium/high/xhigh)
 - `/login` — OAuth or API key authentication with full interactive flow
 - `/logout` — Remove stored credentials
+
+`/login` and `/logout` need the host's programmatic auth API. On hosts that keep auth out
+of reach of Telegram (OMP stores credentials in its own layer), they are routed to the
+host's own TUI login dialog through the TUI bridge — the dialog is mirrored back to
+Telegram; with the bridge off you get a notice to run them in the terminal.
 
 ### Telegram Connection Commands
 

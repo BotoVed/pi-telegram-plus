@@ -109,6 +109,10 @@ export function registerSessionCommands(
         ui.notify("No active session", "error");
         return;
       }
+      if (typeof ctx.fork !== "function") {
+        ui.notify("Fork is not available on this host. Run /fork in the terminal.", "error");
+        return;
+      }
 
       if (args) {
         await ctx.fork(args, { position: "before" });
@@ -142,6 +146,10 @@ export function registerSessionCommands(
       const session = deps.getSession();
       if (!session) {
         ui.notify("No active session", "error");
+        return;
+      }
+      if (typeof ctx.fork !== "function") {
+        ui.notify("Clone is not available on this host. Run it in the terminal.", "error");
         return;
       }
 

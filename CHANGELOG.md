@@ -40,6 +40,19 @@ missing or mislabelled cannot be published.
   host catalog's live description when captured, so menu wording cannot drift from the
   host's own copy.
   The curated list also gained pi's `/trust` (dispatched through the TUI bridge).
+- **`/login`, `/logout`, `/fork` and `/clone` crashed or dead-ended on OMP.**
+  Their Telegram handlers call pi-only APIs (`ModelRuntime`/legacy `AuthStorage`
+  auth, `ctx.fork`) that OMP does not expose — OMP keeps auth in its own store
+  and forks through `session.fork`/`ctx.branch` — so the handlers threw
+  `TypeError: ... is not a function` or printed a message blaming the pi
+  version. Dispatch now checks the capability before running the handler: when
+  it is missing and the TUI bridge is on, the command is routed to the host's
+  own `/login` / `/fork` (OMP serves both in its TUI, and the dialog is
+  mirrored back to Telegram); when the host cannot serve it either, Telegram
+  gets an explicit "run it in the terminal" notice instead of a stack trace.
+  On pi nothing changes: the native handlers keep running. The fork/clone
+  handlers gained the same guard as a last resort, and the legacy-auth failure
+  message now names the host and the bridge instead of blaming pi.
 - **TUI bridge mirroring and remote controls could stall or target stale state.** Snapshot
   focus detection no longer recurses or guesses from rendered words, submit wrapping is
   isolated per editor/session, and pi/OMP command menus now come from live host registries.

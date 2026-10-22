@@ -82,6 +82,18 @@ seam for them:
 - **Shutdown-handler replacement.** OMP's runner keeps its shutdown handler private, so
   `/quit` issued from Telegram shuts the host down instead of only notifying.
 
+The **command context API** diverges too: pi exposes `ctx.fork` and a programmatic auth
+API (`ModelRuntime.login` / legacy `AuthStorage.getOAuthProviders`); OMP exposes neither —
+auth lives in its own credential store and forking goes through `session.fork` /
+`ctx.branch`. The Telegram `/login`, `/logout`, `/fork` and `/clone` handlers call those
+pi-only surfaces, so on OMP they threw `TypeError: ... is not a function`. Dispatch now
+probes the capability before invoking the handler (`hasNativeAuthApi(session)` plus an
+OMP host-family check) and, when it is missing, routes the command to the host's own TUI
+through the bridge — OMP serves `/login` and `/fork` there and the dialog mirrors back to
+Telegram — or returns an explicit run-it-in-the-terminal notice when the bridge is off.
+The bridge E2E suite pins both sides: `/login` must open the host login dialog on OMP and
+the native Telegram auth menu on pi.
+
 ## pi `0.85.0`: the `pi-server` packaging defect
 
 pi `0.85.0`'s published tarball statically imports a package it never declares:

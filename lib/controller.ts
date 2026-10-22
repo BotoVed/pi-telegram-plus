@@ -21,7 +21,8 @@ import { stripAnsi } from "./custom-dialogs.ts";
 import { recordCommandUsage } from "./command-usage.ts";
 import { getTelegramMenuOverflow } from "./menu-commands.ts";
 import { log } from "./logger.ts";
-import { commandErrorMessage, getRunnerMode, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
+import { commandErrorMessage, getRunnerMode, hasNativeAuthApi, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
+import { isOmpHost } from "./session-capture.ts";
 import { getCurrentTelegramTurn, runWithTelegramTurn } from "./turn-context.ts";
 
 const ctrlLog = log.child("controller");
@@ -434,6 +435,29 @@ const TUI_POLL_INTERVAL_MS = 80;
 const TUI_POLL_ATTEMPTS = 40;
 const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
 
+// Commands whose Telegram-native handlers depend on host APIs that differ
+// between pi and OMP. When the capability is missing the command is routed to
+// the host's own TUI through the bridge (the host serves it there), or refused
+// with an actionable message — never left to crash inside the handler.
+const HOST_CAPABILITY_COMMANDS = new Set(["login", "logout", "fork", "clone"]);
+
+const nativeHandlerAvailable = (
+  name: string,
+  session: CapturedAgentSession,
+  hostIsOmp: boolean,
+): boolean => {
+  if (name === "login" || name === "logout") return hasNativeAuthApi(session);
+  if (name === "fork" || name === "clone") return !hostIsOmp;
+  return true;
+};
+
+const hostCommandUnavailableNotice = (name: string): string => {
+  if (name === "login" || name === "logout") {
+    return `This host does not expose a programmatic auth API to Telegram and its TUI does not serve /${name}. Run /${name} in the terminal.`;
+  }
+  return `This host does not expose /${name} to Telegram. Run it in the terminal instead.`;
+};
+
 // /more overflow keyboard: 30 command buttons per page, three per row.
 const MORE_PAGE_SIZE = 30;
 const MORE_ROW_SIZE = 3;
@@ -539,10 +563,13 @@ export function createTelegramController(deps: {
   saveIncomingTelegramAttachment?: (fileId: string, fileName: string | undefined, kind: string) => Promise<string>;
   getConfig?: () => TelegramConfig;
   tuiBridge?: TuiBridgeAdapter;
+  /** Host-family probe; overridable for tests. Defaults to the live module check. */
+  isOmpHost?: () => boolean;
   isTelegramActive?: () => boolean;
 }): TelegramController {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
+  const hostIsOmp = deps.isOmpHost ?? isOmpHost;
   const tuiMirrors = new Map<string, TuiMirror>();
   const getTuiMode = () => deps.getConfig?.().tuiBridge ?? "commands";
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1159,6 +1186,19 @@ export function createTelegramController(deps: {
       deps.telegramCommands.get(name)
       ?? deps.telegramCommands.get(name.replace(/_/g, "-"))
       ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
+
+    if (handler && HOST_CAPABILITY_COMMANDS.has(name) && !nativeHandlerAvailable(name, session, hostIsOmp())) {
+      recordCommandUsage(name);
+      if (getTuiMode() !== "off") {
+        const catalog = await bridge.getCommands().catch(() => []);
+        if (catalog.some((command) => command.name === name || (command.aliases ?? []).includes(name))) {
+          void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
+          return true;
+        }
+      }
+      await deps.transport.sendText(chatId, hostCommandUnavailableNotice(name), messageThreadId, sourceMessageId);
+      return true;
+    }
     if (handler) {
       recordCommandUsage(name);
       await runCommandHandler(handler, args, session, chatId, messageThreadId, sourceMessageId);

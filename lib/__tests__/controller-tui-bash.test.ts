@@ -73,6 +73,7 @@ function createHarness(options: {
   confirmResult?: boolean;
   telegramCommands?: Map<string, any>;
   confirm?: ReturnType<typeof vi.fn>;
+  isOmpHost?: () => boolean;
 } = {}) {
   const calls: Call[] = [];
   const transport = createTransport(calls);
@@ -102,6 +103,7 @@ function createHarness(options: {
     endTelegramTurn: () => undefined,
     getConfig: () => config,
     tuiBridge: bridge,
+    isOmpHost: options.isOmpHost,
   });
   return { controller, transport, calls, session, bridge, config, confirm };
 }
@@ -442,4 +444,103 @@ describe("TUI command bridge routing", () => {
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 1)).toBe(true);
   });
 
+});
+
+describe("Host capability routing", () => {
+  const ompLikeSession = () => createSession({
+    modelRegistry: { authStorage: { listProviders: () => [] } },
+  });
+  const piLikeSession = () => createSession({
+    modelRuntime: {
+      getProviders: () => [],
+      login: async () => undefined,
+      logout: async () => undefined,
+    },
+  });
+
+  const send = async (harness: { controller: { handleMessage(m: unknown): Promise<void> } }, text: string) => {
+    await harness.controller.handleMessage({
+      message_id: 30,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text,
+    });
+  };
+
+  it("routes /login to the host TUI when the native auth API is missing", async () => {
+    const submit = vi.fn(() => true);
+    const login = vi.fn();
+    const harness = createHarness({
+      session: ompLikeSession(),
+      bridge: createBridge({
+        submit,
+        getCommands: async () => [{ name: "login", description: "Log in", source: "builtin" as const }],
+      }),
+      telegramCommands: new Map([["login", login]]),
+    });
+
+    await send(harness, "/login");
+
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledWith("/login"));
+    expect(login).not.toHaveBeenCalled();
+  });
+
+  it("refuses /login with an actionable notice when the host TUI cannot serve it either", async () => {
+    const login = vi.fn();
+    const harness = createHarness({
+      session: ompLikeSession(),
+      bridge: createBridge({ getCommands: async () => [] }),
+      config: { tuiBridge: "commands", bashConfirm: "dangerous", activeChatId: 42 },
+      telegramCommands: new Map([["login", login]]),
+    });
+
+    await send(harness, "/login");
+
+    expect(login).not.toHaveBeenCalled();
+    expect(harness.calls.some((call) => call.text?.includes("does not expose a programmatic auth API"))).toBe(true);
+  });
+
+  it("runs the native login handler when ModelRuntime auth exists", async () => {
+    const login = vi.fn(async () => undefined);
+    const harness = createHarness({
+      session: piLikeSession(),
+      telegramCommands: new Map([["login", login]]),
+    });
+
+    await send(harness, "/login");
+
+    await vi.waitFor(() => expect(login).toHaveBeenCalled());
+  });
+
+  it("routes /fork to the host TUI on OMP-like hosts", async () => {
+    const submit = vi.fn(() => true);
+    const fork = vi.fn();
+    const harness = createHarness({
+      session: ompLikeSession(),
+      bridge: createBridge({
+        submit,
+        getCommands: async () => [{ name: "fork", description: "Fork", source: "builtin" as const }],
+      }),
+      isOmpHost: () => true,
+      telegramCommands: new Map([["fork", fork]]),
+    });
+
+    await send(harness, "/fork");
+
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledWith("/fork"));
+    expect(fork).not.toHaveBeenCalled();
+  });
+
+  it("runs the native fork handler on pi-like hosts", async () => {
+    const fork = vi.fn(async () => undefined);
+    const harness = createHarness({
+      session: piLikeSession(),
+      isOmpHost: () => false,
+      telegramCommands: new Map([["fork", fork]]),
+    });
+
+    await send(harness, "/fork");
+
+    await vi.waitFor(() => expect(fork).toHaveBeenCalled());
+  });
 });
