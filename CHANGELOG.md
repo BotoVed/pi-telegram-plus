@@ -16,6 +16,17 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
+### Testing
+
+- **Acceptance now checks payloads, not just calls.** The mock Bot API enforces the real
+  contract (text/caption limits, HTML tag and entity rules, keyboard shape,
+  `callback_data` size, command names) and answers 400 like Telegram, every recorded call
+  is re-validated by `scripts/e2e/telegram-contract.mjs`, and mirrored screens are
+  cross-checked against the host's `tmux` pane so a stale or fabricated mirror fails the
+  step. `npm run test:e2e:real` additionally round-trips one temporary message through
+  api.telegram.org (send → edit → delete) and asserts the real API rejects an unsupported
+  tag while the local validator agrees.
+
 ### Added
 
 - **Remote selection of mirrored TUI dialogs.** With the TUI bridge in `full` mode,

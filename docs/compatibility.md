@@ -194,7 +194,8 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
 | TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selector mirrors incl. per-option buttons and Prev/Next paging, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
 | OMP E2E acceptance | Real OMP `18.12.x` in `tmux` + the same mocks; asserts round trip, `/new` Telegram confirmation, post-`/new` capture, cursor rewind | `npm run test:e2e:omp` |
-| Command acceptance | Real pi + OMP in isolated `tmux` with the same mocks: dispatches every command the bot advertises (plus the hidden `/tg-*` management commands), walks `/tg` levels 1-4 (Bots → list → detail, Project → bind, Config → every flow, Commands → entry, Switch instance), covers `/model`, `/scoped-models`, `/login`, `/logout`, `/settings`, `/reload`, `/quit`, `/exit`, `/tg-cwd-disconnect`, and drives a real `ask` tool call end-to-end (mock provider emits the tool_call; the prompt is mirrored and answered through Telegram) | `npm run test:e2e:commands` |
+| Command acceptance | Real pi + OMP in isolated `tmux` with the same mocks: dispatches every command the bot advertises (plus the hidden `/tg-*` management commands), walks `/tg` levels 1-4 (Bots → list → detail, Project → bind, Config → every flow, Commands → entry, Switch instance), covers `/model`, `/scoped-models`, `/login`, `/logout`, `/settings`, `/reload`, `/quit`, `/exit`, `/tg-cwd-disconnect`, and drives a real `ask` tool call end-to-end (mock provider emits the tool_call; the prompt is mirrored and answered through Telegram). The mock Bot API enforces the real payload contract (400 on violations), every recorded call is re-validated independently, and TUI mirrors are cross-checked against the host's `tmux` pane | `npm run test:e2e:commands` |
+| Real Bot API smoke | Round-trips one temporary message through api.telegram.org (send → edit → delete) with the configured bot, and asserts the real API rejects an unsupported HTML tag while the local validator agrees | `npm run test:e2e:real` |
 
 The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates
 against the mock Bot API (`getMe`), enters its `getUpdates` polling loop, picks up an
@@ -205,6 +206,14 @@ asserts that the message is still delivered exactly once, that both cursors are 
 it, and that the rewind is logged — a step the mock's contract-conformant
 drop-out-of-range behaviour makes impossible to pass without the backlog probe. Assertion
 counts per version are recorded, not hardcoded here.
+
+**What the mocks cannot prove.** The Bot API is mocked, so the suite observes neither real
+rate limits (`429`), network retries, nor the `409` Conflict of two pollers on one token;
+`npm run test:e2e:real` covers the payload contract against the real service, not those
+runtime behaviours. The provider is scripted, so model output is fixed — streaming
+cadence, 4096-character splitting and varied tool arguments only come from real runs.
+Media paths (`sendDocument` for `tg_attach`) are checked against the mock's file surface,
+not against a real upload.
 
 The TUI bridge suite derives its pi versions from `docs/compat-results.json`; it does not
 silently fall back to the development dependency. Each version and OMP runs in its own

@@ -16,6 +16,7 @@
  * Usage: node mock-telegram.mjs [--port 9900] [--log /tmp/x/telegram.jsonl]
  */
 import { createServer } from "node:http";
+import { validateTelegramCall } from "./telegram-contract.mjs";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -187,6 +188,16 @@ const server = createServer(async (req, res) => {
       });
     }
     return ok(res, batch);
+  }
+
+  // The real API rejects malformed payloads with 400; refusing them here keeps
+  // the acceptance from passing on messages Telegram would never accept.
+  const violations = validateTelegramCall({ method, body });
+  if (violations.length > 0) {
+    record({ ts: Date.now(), direction: "out", method, token, body, rejected: violations });
+    res.writeHead(400, { "content-type": "application/json", connection: "close" });
+    res.end(JSON.stringify({ ok: false, error_code: 400, description: `Bad Request: ${violations[0]}` }));
+    return;
   }
 
   const resultMessageId = method === "sendMessage" || method === "editMessageText"

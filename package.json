@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/package",
   "name": "pi-telegram-plus",
   "version": "0.0.12",
-  "description": "Full Telegram control of pi coding agent — commands, menus, interactive UI, model management, and more",
+  "description": "Full Telegram control of pi coding agent \u2014 commands, menus, interactive UI, model management, and more",
   "keywords": [
     "pi-package",
     "pi-extension",
@@ -37,7 +37,8 @@
     "changelog:draft": "node scripts/changelog-draft.mjs",
     "changelog:roll": "node scripts/changelog-version.mjs",
     "changelog:check": "node scripts/changelog-version.mjs --check",
-    "prepublishOnly": "npm test && npm run typecheck && npm run compat:check && npm run changelog:check"
+    "prepublishOnly": "npm test && npm run typecheck && npm run compat:check && npm run changelog:check",
+    "test:e2e:real": "node scripts/e2e/real-telegram-smoke.mjs"
   },
   "pi": {
     "extensions": [

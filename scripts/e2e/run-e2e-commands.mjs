@@ -15,6 +15,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { validateTelegramCalls } from "./telegram-contract.mjs";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
 const PLUGIN = join(REPO, "index.ts");
@@ -613,6 +614,18 @@ async function runHost(host, label, phase = "main") {
     const native = buttonsOf(first).length > 0;
     record("menu /settings opens", (Boolean(mirror) && hasTui(mirror)) || native,
       mirror ? `tui mirror · ${buttonsOf(mirror).slice(0, 4).map((b) => b.text).join(" / ")}` : String(first.body?.text ?? "").replace(/<[^>]+>/g, "").slice(0, 60));
+    // Cross-check the mirror against the host's real terminal, so this step
+    // cannot pass on a fabricated screen.
+    if (mirror && hasTui(mirror)) {
+      const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+      const plain = String(mirror.body?.text ?? "").replace(/<[^>]+>/g, " ");
+      const phrases = (plain.match(/[A-Za-z][A-Za-z0-9 ._-]{7,30}/g) ?? [])
+        .map((phrase) => phrase.trim())
+        .filter((phrase) => phrase.split(/\s+/).length >= 2);
+      const hits = [...new Set(phrases)].filter((phrase) => pane.includes(phrase));
+      record("settings mirror matches the host screen", hits.length >= 3,
+        `${hits.length} phrases found in pane · ${hits.slice(0, 3).join(" / ")}`);
+    }
     await settle();
   } catch (error) {
     record("menu /settings opens", false, String(error.message).slice(0, 200));
@@ -671,6 +684,19 @@ async function runHost(host, label, phase = "main") {
     record("survives /reload", /status|session/i.test(String(call.body?.text ?? "")), String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
   } catch (error) {
     record("survives /reload", false, String(error.message).slice(0, 200));
+  }
+
+  // ── Bot API payload contract ───────────────────────────────────────────
+  // The mock accepts anything; these are the limits the real API enforces.
+  try {
+    const all = (await controlGet()).calls ?? [];
+    const violations = validateTelegramCalls(all);
+    record("telegram payload contract", violations.length === 0,
+      violations.length === 0
+        ? `${all.length} calls valid`
+        : `${violations.length} violations · ${violations.slice(0, 3).join(" | ").slice(0, 260)}`);
+  } catch (error) {
+    record("telegram payload contract", false, String(error.message).slice(0, 200));
   }
 
   const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");

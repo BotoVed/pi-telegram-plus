@@ -81,6 +81,20 @@ that `/new` confirmation and its callback stay on Telegram after the session swi
 `tmux` sessions, every command the bot advertises plus the hidden `/tg-*` commands, and
 the `/tg` menu walked through its nested levels (Bots → list → actions, Project → bind,
 Config → each setting, Commands → entries, Switch instance).
+
+The acceptance is not satisfied by "a call happened":
+
+- the mock Bot API now **enforces the same payload contract as Telegram** (text/caption
+  limits, HTML tag/entity rules, keyboard shape, `callback_data` size, command names) and
+  answers 400 like the real service, so a malformed message cannot pass silently;
+- every recorded call is re-validated independently (`scripts/e2e/telegram-contract.mjs`),
+  and the run fails on any violation;
+- mirrored TUI screens are **cross-checked against the host's real terminal**: phrases
+  from the mirror must be present in the `tmux` pane, so a fabricated or stale mirror
+  fails the step;
+- `npm run test:e2e:real` sends one temporary message to **api.telegram.org** with the
+  bot token from the agent config, edits it, checks that the real API rejects an
+  unsupported tag (and that the local validator agrees), then deletes it.
 E2E and the matrix remain outside the publish gate because each run installs hosts and
 starts isolated `tmux` sessions.
 
