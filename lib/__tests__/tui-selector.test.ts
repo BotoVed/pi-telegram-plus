@@ -156,6 +156,22 @@ describe("parseSelectorText", () => {
     ]);
   });
 
+  it("parses a single-option dialog that renders its legend", () => {
+    // Real capture from OMP's logout account picker (one signed-in account):
+    // a boxed list with a cursor row and a legend, no second option.
+    const oneAccount = [
+      "╭─ Select ChatGPT Plus/Pro (Codex Subscription) account to log out ─────────╮",
+      "│ \uF054 chenuseai@outlook.com (plus) (active)  chenuseai@outlook.com · account e8aa │",
+      "│ ↑/↓ select ·  log out account ·  cancel                                    │",
+      "╰────────────────────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const state = parseSelectorText(oneAccount);
+    expect(state?.title).toBe("Select ChatGPT Plus/Pro (Codex Subscription) account to log out");
+    expect(state?.options).toHaveLength(1);
+    expect(state?.options[0]?.selected).toBe(true);
+    expect(state?.options[0]?.label).toContain("chenuseai@outlook.com (plus) (active)");
+  });
+
   it("parses pi's provider window and its scroll indicator", () => {
     // Real capture from pi 0.81.1: eight rows of a 39-provider list, with the
     // search input above and "(cursor/total)" underneath.

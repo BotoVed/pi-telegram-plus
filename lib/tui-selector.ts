@@ -194,7 +194,7 @@ function parseBorderlessSelector(lines: string[]): SelectorState | undefined {
       if (label === undefined) continue;
       rows.push({ label, selected: CURSOR_ROW.test(lines[i]) });
     }
-    if (rows.length < 2) continue;
+    if (rows.length === 0) continue;
     if (rows.filter((row) => row.selected).length !== 1) continue;
 
     // Anchor: a key legend (extension selector) or a closing rule (provider
@@ -256,6 +256,7 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
   if (contentLines.length < 2) return undefined;
 
   const parsedRows: Array<SelectorOption & { choice: string | undefined }> = [];
+  let sawFooter = false;
   for (const line of contentLines) {
     let rest = stripBorderResidue(line);
     if (!rest) continue;
@@ -271,7 +272,8 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
     // Collapse internal runs so a label stays stable across renders whose
     // column padding differs; stale pick lookups compare labels verbatim.
     const label = rest.replace(/\s+/g, " ").trim();
-    if (!label || label.length < 2 || isFooterLine(label)) continue;
+    if (isFooterLine(label)) { sawFooter = true; continue; }
+    if (!label || label.length < 2) continue;
     // Lines that are only separator dashes or vertical noise.
     if (/^[─━\s│┃|·•·—-]+$/.test(label)) continue;
     parsedRows.push({ label, selected, choice });
@@ -285,9 +287,12 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
       }))
     : parsedRows.map(({ label, selected }) => ({ label, selected }));
 
-  if (options.length < 2) return undefined;
+  if (options.length === 0) return undefined;
   const hasMarker = options.some((option) => option.selected);
   if (!hasMarker) return undefined;
+  // A single row is only a selector when the dialog renders its legend (e.g.
+  // "↑/↓ select · log out account · cancel" for a one-account logout).
+  if (options.length === 1 && !sawFooter) return undefined;
 
   const firstLine = blockLines[0] ?? "";
   const title = BOX_TOP.test(firstLine) ? readTitle(firstLine) : undefined;

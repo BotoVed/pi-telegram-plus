@@ -61,6 +61,10 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **Single-option dialogs were not mirrored.** The parser required two rows, so a
+  one-account logout picker ("Select … account to log out" with one entry and its
+  `↑/↓ select · cancel` legend) fell back to an arrow-keyboard screen dump. Dialogs that
+  render their legend now mirror a single option as a button.
 - **`ask` prompts bypassed the mirror.** Tool execute contexts are not always the second
   argument (OMP's `ask` receives the UI fifth) and tool-context routing was only installed
   on hosts without `setUIContext`, so the tool resolved the host UI directly. Every

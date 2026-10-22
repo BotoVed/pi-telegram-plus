@@ -7,7 +7,7 @@
       "strict-upstream": "passed"
     },
     "testFiles": 38,
-    "tests": 528,
+    "tests": 529,
     "versions": {
       "0.80.7": "passed",
       "0.80.10": "passed",
