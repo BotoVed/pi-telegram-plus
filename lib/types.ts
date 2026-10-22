@@ -5,6 +5,20 @@ export type TelegramRenderLevel = "hidden" | "brief" | "full";
 export const RENDER_LEVELS: readonly TelegramRenderLevel[] = ["hidden", "brief", "full"] as const;
 
 /**
+ * TUI bridge scope.
+ * - off: no TUI capture, no command forwarding.
+ * - commands: forward Telegram commands into the TUI and mirror local command
+ *   results back to Telegram. Interactive selectors are snapshot-only.
+ * - full: additionally mirror interactive selectors with remote key controls.
+ */
+export type TelegramTuiBridgeMode = "off" | "commands" | "full";
+export const TUI_BRIDGE_MODES: readonly TelegramTuiBridgeMode[] = ["off", "commands", "full"] as const;
+
+/** Confirmation policy for Telegram-originated `!`/`!!` shell commands. */
+export type TelegramBashConfirm = "always" | "dangerous" | "never";
+export const BASH_CONFIRM_MODES: readonly TelegramBashConfirm[] = ["always", "dangerous", "never"] as const;
+
+/**
  * User-wide bot registry stored at `<agent dir>/tg.json` (version 3).
  * Holds ONLY bot identity + a defaultBotId. Runtime (polling/chat state)
  * MUST NEVER write this file — only bot CRUD commands do.
@@ -40,8 +54,12 @@ export type ProjectTelegramBinding = {
   enabled?: boolean;
   tool?: TelegramRenderLevel;
   thinking?: TelegramRenderLevel;
-  /** Per-project runtime pref: retries for failed Telegram API calls (0 = no retry, default 3). Edited via /tg-config, never written to the registry. */
+  /** Per-project runtime pref: retries for failed Telegram API calls (0 = no retry, default 3). Edited via /tg → Config, never written to the registry. */
   retryCount?: number;
+  /** TUI bridge scope. Defaults to "commands". */
+  tuiBridge?: TelegramTuiBridgeMode;
+  /** Confirmation policy for Telegram-originated shell commands. Defaults to "dangerous". */
+  bashConfirm?: TelegramBashConfirm;
   /** Runtime state (per-project) — cold-start seed / best-effort backup. */
   lastUpdateId?: number;
   /** Runtime state (per-project). */
@@ -81,6 +99,10 @@ export type TelegramConfig = {
   thinking?: TelegramRenderLevel;
   /** Number of retries for failed Telegram API calls (0 = no retry, default 3). */
   retryCount?: number;
+  /** TUI bridge scope. Defaults to "commands". */
+  tuiBridge?: TelegramTuiBridgeMode;
+  /** Confirmation policy for Telegram-originated shell commands. Defaults to "dangerous". */
+  bashConfirm?: TelegramBashConfirm;
   /** Override the Telegram Bot API base URL (e.g. a self-hosted local Bot API server or a test mock). Defaults to https://api.telegram.org. */
   apiBase?: string;
 };
@@ -123,7 +145,7 @@ export type TelegramMessage = {
   voice?: TelegramDocument;
   animation?: TelegramDocument;
   sticker?: TelegramDocument;
-  chat?: { id?: number };
+  chat?: { id?: number; type?: string };
   from?: { id?: number; is_bot?: boolean; username?: string; first_name?: string; last_name?: string };
   /** Telegram includes a shallow copy of the replied-to message. */
   reply_to_message?: TelegramMessage;

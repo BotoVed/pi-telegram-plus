@@ -80,4 +80,23 @@ describe("processTelegramUpdatesBatch", () => {
     expect(config.lastUpdateId).toBe(20);
     expect(errors).toHaveLength(1);
   });
+
+  it("skips re-delivered updates the cursor already processed", async () => {
+    let config: TelegramConfig = { botToken: "token", lastUpdateId: 10 };
+    const handled: number[] = [];
+    const persisted: number[] = [];
+
+    const processed = await processTelegramUpdatesBatch([update(10), update(11)], {
+      getConfig: () => config,
+      setConfig: (next) => { config = next; },
+      persistConfig: vi.fn(async (next) => { persisted.push(next.lastUpdateId!); }),
+      handleUpdate: vi.fn(async (item) => { handled.push(item.update_id); }),
+      onError: vi.fn(),
+    });
+
+    expect(processed).toBe(true);
+    expect(handled).toEqual([11]);
+    expect(persisted).toEqual([11]);
+    expect(config.lastUpdateId).toBe(11);
+  });
 });

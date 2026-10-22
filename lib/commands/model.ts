@@ -150,42 +150,4 @@ export function registerModelCommands(
     },
   });
 
-  // ── /tg-thinking ─────────────────────────────────────────────────────
-  // Named tg-thinking: pi 1.x ships a built-in /thinking interactive
-  // command, and a name collision would silently drop ours from the
-  // command registry / autocomplete.
-  registry.registerCommand("tg-thinking", {
-    description: "Show or change thinking level",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-
-      if (args) {
-        session.setThinkingLevel(args as any);
-        ui.notify(`Thinking level set: ${args}`, "info");
-        return;
-      }
-
-      const levels = session.getAvailableThinkingLevels();
-      if (levels.length === 0) {
-        ui.notify("Current model does not support thinking levels.", "info");
-        return;
-      }
-
-      const current = session.thinkingLevel;
-      const labels = levels.map((l) =>
-        (l === current ? "● " : "  ") + String(l),
-      );
-      const choice = await ui.select("Thinking level", labels);
-      if (!choice) return;
-      const selected = levels[labels.indexOf(choice)];
-      if (selected === undefined) return;
-      session.setThinkingLevel(selected);
-      ui.notify(`Thinking level set: ${selected}`, "info");
-    },
-  });
 }

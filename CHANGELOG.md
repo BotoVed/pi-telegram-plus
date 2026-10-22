@@ -18,6 +18,25 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **A re-delivered update could replay its side effects forever.** The startup backlog
+  probe re-serves the last processed update; the poller mistook it for a foreign cursor,
+  rewound below it, and re-handled it on every cycle — for `/reload` that meant a reload
+  loop that swallowed later commands. The rewind now fires only for a cursor strictly
+  ahead of the stream, and updates at or below the cursor are skipped instead of re-run.
+- **The Bot menu's thinking entry fell through to the model on OMP.** OMP has no native
+  `/thinking` slash command (its thinking control is a hotkey), so the menu entry reached
+  no handler and the text went to the provider as a prompt. The menu now omits the entry
+  whenever the host catalog lacks native `thinking`; the thinking level is set from
+  `/tg` → Config → **Thinking level**.
+- **TUI bridge mirroring and remote controls could stall or target stale state.** Snapshot
+  focus detection no longer recurses or guesses from rendered words, submit wrapping is
+  isolated per editor/session, and pi/OMP command menus now come from live host registries.
+  Telegram `/settings` waits for the real selector, all key/type/refresh/close callbacks
+  use the host input pipeline, and local command mirroring no longer times out. Menu refresh
+  work is isolated per bot/API endpoint, both delayed refreshes run, and recent commands
+  receive their intended priority. The isolated TUI E2E suite now exercises the recorded pi
+  E2E version matrix plus OMP, including streamed bash output, exit codes, confirmation, and
+  `!!` context exclusion.
 - **The global default bot could not be unset cleanly.** `/tg → Bots → Bot list →
   <bot>` exposed it as a project-aware toggle (`Default: ● on / ○ off`): on an unbound
   project it demanded a confirmation, and after clearing it never re-resolved the running
@@ -54,6 +73,15 @@ missing or mislabelled cannot be published.
   `newSession({ withSession })` post-switch hook; OMP ignores `withSession`, so its
   “New session started.” notification now uses `newSession({ setup })`.
   See [compatibility.md](docs/compatibility.md#omp-oh-my-pi-pi-coding-agent).
+
+### Removed
+
+- **The flat `/tg-thinking`, `/tg-config`, and `/tg-list` commands.** Each duplicated a
+  capability the `/tg` menu already owns: the model thinking level moved to `/tg` → Config
+  → **Thinking level** (hosts with a native `/thinking` keep it), config keys were already
+  editable under `/tg` → Config (Tool / Thinking / Retry / TUI bridge / Shell confirm), and
+  the current binding plus its enabled state show under `/tg` → Project. Typing the removed
+  commands now falls through to the model as prompt text, like any unknown command.
 
 ## [0.0.12] — 2026-10-19
 

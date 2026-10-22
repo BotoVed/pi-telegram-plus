@@ -5,7 +5,6 @@ import { registerAuthCommands } from "./auth.ts";
 import { registerInfoCommands } from "./info.ts";
 import { registerLifecycleCommands } from "./lifecycle.ts";
 import { registerSettingsCommands } from "./settings.ts";
-import { registerTgConfigCommands } from "./tg-config.ts";
 
 export type CommandRegistry = {
   registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: any) => Promise<void> }) => void;
@@ -22,7 +21,7 @@ export type SessionNameDeps = SessionDeps & {
   getSessionName: () => string | undefined;
 };
 
-/** Deps for tg-config command. */
+/** Deps for the /tg Config submenu flows. */
 export type TgConfigDeps = SessionDeps & {
   getConfig: () => import("../types.ts").TelegramConfig;
   setConfig: (c: import("../types.ts").TelegramConfig) => void;
@@ -40,7 +39,6 @@ export function registerAllCommands(
   registry: CommandRegistry,
   sessionDeps: SessionDeps,
   sessionNameDeps: SessionNameDeps,
-  tgConfigDeps?: TgConfigDeps,
   infoDeps?: InfoDeps,
 ): void {
   registerSettingsCommands(registry, sessionDeps);
@@ -49,5 +47,4 @@ export function registerAllCommands(
   registerAuthCommands(registry, sessionDeps);
   registerInfoCommands(registry, { ...sessionDeps, ...(infoDeps ?? {}) });
   registerLifecycleCommands(registry);
-  if (tgConfigDeps) registerTgConfigCommands(registry, tgConfigDeps);
 }

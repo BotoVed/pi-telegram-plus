@@ -1,9 +1,11 @@
 import type { ExtensionCommandContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { decodeUiCallback } from "./callback-protocol.ts";
+import { decodeTuiCallback, decodeUiCallback, encodeTuiCallback } from "./callback-protocol.ts";
 import { parseLeadingCommand, normalizeLeadingCommand } from "./command-parser.ts";
 import type {
   CapturedAgentSession,
+  TelegramBashConfirm,
   TelegramCallbackQuery,
+  TelegramConfig,
   TelegramDocument,
   TelegramMessage,
   TelegramPhotoSize,
@@ -11,6 +13,11 @@ import type {
   TelegramTurn,
 } from "./types.ts";
 import type { TelegramUiRuntime } from "./telegram-ui.ts";
+import type { TuiBridgeAdapter, TuiSnapshot } from "./tui-bridge.ts";
+import { tuiBridge as defaultTuiBridge } from "./tui-bridge.ts";
+import { escapeHtml } from "./html.ts";
+import { stripAnsi } from "./custom-dialogs.ts";
+import { recordCommandUsage } from "./command-usage.ts";
 import { log } from "./logger.ts";
 import { commandErrorMessage, getRunnerMode, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
 import { getCurrentTelegramTurn, runWithTelegramTurn } from "./turn-context.ts";
@@ -20,6 +27,9 @@ const ctrlLog = log.child("controller");
 export type TelegramController = {
   handleMessage(message: TelegramMessage): Promise<void>;
   handleCallbackQuery(query: TelegramCallbackQuery): Promise<void>;
+  /** Dispatch a named command from an inline menu (e.g. /tg → Commands). */
+  runCommand(name: string, args: string, chatId: number, messageThreadId?: number, sourceMessageId?: number): Promise<void>;
+  dispose(): void;
 };
 
 function getIncomingDocumentName(document?: TelegramDocument): string {
@@ -415,6 +425,100 @@ async function runWithTelegramUi<T>(deps: {
   }
 }
 
+const BASH_TIMEOUT_MS = 120_000;
+const BASH_STREAM_DEBOUNCE_MS = 700;
+const TUI_SCREEN_WIDTH = 100;
+const TUI_POLL_INTERVAL_MS = 80;
+const TUI_POLL_ATTEMPTS = 40;
+const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
+
+const DANGEROUS_BASH_PATTERNS: readonly RegExp[] = [
+  /\brm\s+(-[a-z]*[rf]|--recursive|--force)\b/i,
+  /\bsudo\b/i,
+  /\bmkfs(?:\.\w+)?\b/i,
+  /\bdd\s+if=/i,
+  /:\s*\(\s*\)\s*\{/, // fork bomb
+  /\b(shutdown|reboot|halt|poweroff)\b/i,
+  /\bkill(?:all)?\s+-[0-9]/i,
+  /\bchmod\s+(-R\s+)?777\b/i,
+  /\b(chown|chgrp)\s+-R\b/i,
+  /\bcurl\b[^\n|]*\|\s*(?:ba|z|k)?sh\b/i,
+  /\bwget\b[^\n|]*\|\s*(?:ba|z|k)?sh\b/i,
+  />\s*\/dev\/(?:sd|disk|nvme)/i,
+  /\bgit\s+reset\s+--hard\b/i,
+  /\bgit\s+clean\s+-[a-z]*f/i,
+  /\btruncate\s+-s\s*0\b/i,
+  /\b(?:diskutil|fdisk|parted)\b/i,
+];
+
+type BashResult = {
+  exitCode?: number;
+  cancelled?: boolean;
+  truncated?: boolean;
+  output?: string;
+  fullOutputPath?: string;
+};
+
+type BashExecutor = (
+  command: string,
+  onChunk: (chunk: string) => void,
+  options?: { excludeFromContext?: boolean },
+) => Promise<BashResult>;
+
+type BashAbort = () => unknown;
+
+function readBashExecutor(session: CapturedAgentSession): BashExecutor | undefined {
+  // `executeBash` is a host runtime API not present in the shared AgentSession
+  // type; both supported hosts expose it under this exact name.
+  const candidate = (session as unknown as Record<string, unknown>).executeBash;
+  return typeof candidate === "function" ? candidate as BashExecutor : undefined;
+}
+
+function readBashAbort(session: CapturedAgentSession): BashAbort | undefined {
+  const candidate = (session as unknown as Record<string, unknown>).abortBash;
+  return typeof candidate === "function" ? candidate as BashAbort : undefined;
+}
+
+function isBashRunning(session: CapturedAgentSession): boolean {
+  return (session as unknown as Record<string, unknown>).isBashRunning === true;
+}
+
+function isDangerousBash(command: string): boolean {
+  return DANGEROUS_BASH_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+function preformatted(text: string): string {
+  return `<pre>${escapeHtml(text)}</pre>`;
+}
+
+function tailText(text: string, maxChars = 3200): string {
+  return text.length <= maxChars ? text : `…${text.slice(-(maxChars - 1))}`;
+}
+
+function formatTuiSnapshot(snapshot: TuiSnapshot, title: string): string {
+  return `<b>${escapeHtml(title)}</b>\n${preformatted(snapshot.text || "(empty screen)")}`;
+}
+
+function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
+  const button = (text: string, action: string) => ({ text, value: encodeTuiCallback(action) });
+  return [
+    [button("↑", "up"), button("↓", "down")],
+    [button("←", "left"), button("→", "right")],
+    [button("Enter", "enter"), button("Esc", "esc")],
+    [button("Space", "space"), button("Tab", "tab")],
+    [button("Type", "type"), button("Refresh", "refresh"), button("Close", "close")],
+  ];
+}
+
+type TuiMirror = {
+  chatId: number;
+  messageThreadId?: number;
+  messageId: number;
+  lastText?: string;
+  lastCanControl?: boolean;
+  pendingText?: boolean;
+};
+
 export function createTelegramController(deps: {
   getSession: () => CapturedAgentSession | undefined;
   transport: TelegramTransport;
@@ -427,8 +531,292 @@ export function createTelegramController(deps: {
   beginTelegramTurn(chatId: number, replaceMessageId?: number, messageThreadId?: number, sourceMessageId?: number): TelegramTurn | undefined;
   endTelegramTurn(chatId: number, turn: TelegramTurn): void;
   saveIncomingTelegramAttachment?: (fileId: string, fileName: string | undefined, kind: string) => Promise<string>;
+  getConfig?: () => TelegramConfig;
+  tuiBridge?: TuiBridgeAdapter;
+  isTelegramActive?: () => boolean;
 }): TelegramController {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
+  const bridge = deps.tuiBridge ?? defaultTuiBridge;
+  const tuiMirrors = new Map<string, TuiMirror>();
+  const getTuiMode = () => deps.getConfig?.().tuiBridge ?? "commands";
+  const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  const refreshTuiMirror = async (mirror: TuiMirror): Promise<void> => {
+    let snapshot: TuiSnapshot | undefined;
+    try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch {}
+    if (!snapshot) {
+      for (let i = 0; i < 8; i += 1) {
+        await sleep(30);
+        try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch {}
+        if (snapshot) break;
+      }
+    }
+    if (!snapshot) {
+      await deps.transport.editText(mirror.chatId, mirror.messageId, "TUI bridge is no longer available.").catch(ctrlLog.swallow("debug", "editText TUI unavailable failed", { chatId: mirror.chatId }));
+      await deps.transport.removeInlineKeyboard(mirror.chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI unavailable failed", { chatId: mirror.chatId }));
+      tuiMirrors.delete(targetKey(mirror.chatId, mirror.messageThreadId));
+      return;
+    }
+
+    const canControl = snapshot.interactive && getTuiMode() === "full" && !mirror.pendingText;
+    const title = mirror.pendingText
+      ? "TUI · send the next Telegram message as input"
+      : snapshot.interactive ? "TUI selector" : "TUI";
+    const hint = snapshot.interactive && getTuiMode() !== "full"
+      ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
+      : "";
+    const text = `${formatTuiSnapshot(snapshot, title)}${hint}`;
+    if (text === mirror.lastText && mirror.lastCanControl === canControl && !mirror.pendingText) return;
+    mirror.lastText = text;
+    mirror.lastCanControl = canControl;
+
+    if (canControl) {
+      await deps.transport.editButtons(mirror.chatId, mirror.messageId, text, tuiKeyRows()).catch(ctrlLog.swallow("debug", "editButtons failed", { chatId: mirror.chatId }));
+    } else if (mirror.pendingText) {
+      await deps.transport.editButtons(mirror.chatId, mirror.messageId, text, [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]).catch(ctrlLog.swallow("debug", "editButtons cancel failed", { chatId: mirror.chatId }));
+    } else {
+      await deps.transport.editText(mirror.chatId, mirror.messageId, text).catch(ctrlLog.swallow("debug", "editText failed", { chatId: mirror.chatId }));
+      await deps.transport.removeInlineKeyboard(mirror.chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI mirror failed", { chatId: mirror.chatId }));
+      if (!snapshot.interactive) tuiMirrors.delete(targetKey(mirror.chatId, mirror.messageThreadId));
+    }
+  };
+
+  const runTuiCommand = async (
+    name: string,
+    args: string,
+    chatId: number,
+    messageThreadId?: number,
+    sourceMessageId?: number,
+  ): Promise<void> => {
+    if (getTuiMode() === "off") return;
+    await bridge.ready().catch(ctrlLog.swallow("debug", "TUI bridge readiness failed"));
+    if (!bridge.isAvailable()) {
+      await deps.transport.sendText(
+        chatId,
+        "TUI bridge is unavailable on this host; the command was not sent.",
+        messageThreadId,
+        sourceMessageId,
+      ).catch(ctrlLog.swallow("warn", "sendText TUI unavailable failed", { chatId }));
+      return;
+    }
+
+    const commandText = `/${name}${args.trim() ? ` ${args.trim()}` : ""}`;
+    const status = await deps.transport.sendText(
+      chatId,
+      `<b>▶️ TUI command</b>\n${preformatted(commandText)}`,
+      messageThreadId,
+      sourceMessageId,
+    ).catch(ctrlLog.swallow("warn", "sendText TUI command status failed", { chatId }));
+    const messageId = status?.[0]?.message_id;
+    if (messageId === undefined) return;
+
+    if (!bridge.submit(commandText)) {
+      await deps.transport.editText(chatId, messageId, "TUI bridge could not submit the command.").catch(ctrlLog.swallow("debug", "editText TUI submit failure failed", { chatId }));
+      return;
+    }
+
+    let snapshot: TuiSnapshot | undefined;
+    for (let attempt = 0; attempt < TUI_POLL_ATTEMPTS; attempt += 1) {
+      await sleep(TUI_POLL_INTERVAL_MS);
+      try {
+        snapshot = bridge.snapshot(TUI_SCREEN_WIDTH);
+      } catch (err) {
+        ctrlLog.debug("TUI snapshot poll failed", { err, attempt });
+      }
+      if (snapshot?.interactive) break;
+    }
+
+    if (!snapshot) {
+      await deps.transport.editText(chatId, messageId, "Command sent to TUI; this host did not expose a renderable screen.").catch(ctrlLog.swallow("debug", "editText TUI no snapshot failed", { chatId }));
+      return;
+    }
+
+    if (snapshot.interactive && getTuiMode() === "full") {
+      const mirror: TuiMirror = { chatId, messageThreadId, messageId };
+      tuiMirrors.set(targetKey(chatId, messageThreadId), mirror);
+      await refreshTuiMirror(mirror);
+    } else {
+      const hint = snapshot.interactive
+        ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
+        : "";
+      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, "TUI")}${hint}`)
+        .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
+    }
+  };
+
+  const runTelegramBash = async (
+    command: string,
+    excludeFromContext: boolean,
+    chatId: number,
+    messageThreadId: number | undefined,
+    sourceMessageId: number | undefined,
+    userId: number | undefined,
+    chatType: string | undefined,
+  ): Promise<void> => {
+    if (chatType && chatType !== "private") {
+      await deps.transport.sendText(chatId, "Shell commands are only allowed in private chats.", messageThreadId, sourceMessageId);
+      return;
+    }
+    if (!command) {
+      await deps.transport.sendText(chatId, "Usage: !<command> (or !!<command> to exclude output from context).", messageThreadId, sourceMessageId);
+      return;
+    }
+
+    const session = deps.getSession();
+    const executor = session ? readBashExecutor(session) : undefined;
+    if (!session || !executor) {
+      await deps.transport.sendText(chatId, "Shell execution is not available in this session.", messageThreadId, sourceMessageId);
+      return;
+    }
+
+    const policy: TelegramBashConfirm = deps.getConfig?.().bashConfirm ?? "dangerous";
+    if (policy === "always" || (policy === "dangerous" && isDangerousBash(command))) {
+      const confirmUi = deps.ui.create(chatId, messageThreadId, sourceMessageId);
+      const approved = await confirmUi.confirm(
+        "Run shell command?",
+        `${command}\n\ncwd: ${process.cwd()}\ncontext: ${excludeFromContext ? "excluded" : "included"}`,
+      );
+      if (!approved) {
+        await deps.transport.sendText(chatId, "Shell command cancelled.", messageThreadId, sourceMessageId);
+        return;
+      }
+    }
+
+    const status = await deps.transport.sendText(
+      chatId,
+      `<b>▶️ bash</b>\n${preformatted(`$ ${command}`)}`,
+      messageThreadId,
+      sourceMessageId,
+    ).catch(ctrlLog.swallow("warn", "sendText bash status failed", { chatId }));
+    const messageId = status?.[0]?.message_id;
+    let output = "";
+    let lastEditAt = 0;
+    let editChain: Promise<void> = Promise.resolve();
+
+    const editProgress = (final: boolean, result?: BashResult): void => {
+      if (messageId === undefined) return;
+      const clean = stripAnsi(output || result?.output || "").replace(/\r\n/g, "\n");
+      const header = final ? "bash finished" : "bash";
+      const exitLine = final
+        ? `\nexit: ${result?.cancelled ? "cancelled" : result?.exitCode ?? "unknown"}${result?.truncated ? " · output truncated" : ""}`
+        : "";
+      const pathLine = final && result?.fullOutputPath ? `\nfull output: ${result.fullOutputPath}` : "";
+      const body = `<b>▶️ ${header}</b>\n${preformatted(`$ ${command}`)}\n${preformatted(tailText(clean || "(no output)"))}${exitLine}${pathLine}`;
+      editChain = editChain
+        .then(() => deps.transport.editText(chatId, messageId, body))
+        .catch(ctrlLog.swallow("debug", "editText bash progress failed", { chatId, messageId }));
+    };
+
+    const onChunk = (chunk: string): void => {
+      output += chunk;
+      const now = Date.now();
+      if (now - lastEditAt < BASH_STREAM_DEBOUNCE_MS) return;
+      lastEditAt = now;
+      editProgress(false);
+    };
+
+    let timedOut = false;
+    const abort = readBashAbort(session);
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<BashResult>((resolve) => {
+      timeoutTimer = setTimeout(() => {
+        timedOut = true;
+        void Promise.resolve(abort?.()).catch(ctrlLog.swallow("debug", "abortBash after timeout failed"));
+        resolve({ exitCode: 124, cancelled: true });
+      }, BASH_TIMEOUT_MS);
+      timeoutTimer.unref?.();
+    });
+
+    let result: BashResult;
+    try {
+      result = await Promise.race([
+        executor.call(session, command, onChunk, { excludeFromContext }),
+        timeout,
+      ]);
+    } catch (err) {
+      ctrlLog.warn("telegram bash failed", { chatId, command, err });
+      await deps.transport.sendText(chatId, `⚠️ Shell command failed: ${commandErrorMessage(err)}`, messageThreadId, sourceMessageId);
+      return;
+    } finally {
+      clearTimeout(timeoutTimer);
+    }
+
+    if (timedOut) output += `\n[timed out after ${Math.round(BASH_TIMEOUT_MS / 1000)}s]`;
+    editProgress(true, result);
+    await editChain;
+    ctrlLog.info("telegram bash executed", {
+      chatId,
+      userId,
+      cwd: process.cwd(),
+      command,
+      excludeFromContext,
+      exitCode: result.exitCode,
+      cancelled: result.cancelled,
+      timedOut,
+    });
+  };
+
+  const handleTuiCallback = async (
+    action: string,
+    chatId: number,
+    messageThreadId: number | undefined,
+  ): Promise<void> => {
+    await bridge.ready().catch(ctrlLog.swallow("debug", "TUI callback bridge readiness failed"));
+    const key = targetKey(chatId, messageThreadId);
+    const mirror = tuiMirrors.get(key);
+    if (!mirror) {
+      await deps.transport.sendText(chatId, "This TUI prompt is no longer active.", messageThreadId);
+      return;
+    }
+    if (action === "close") {
+      bridge.key("esc");
+      tuiMirrors.delete(key);
+      await deps.transport.editText(chatId, mirror.messageId, "TUI mirror closed.").catch(ctrlLog.swallow("debug", "editText TUI close failed", { chatId }));
+      await deps.transport.removeInlineKeyboard(chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI close failed", { chatId }));
+      return;
+    }
+    if (action === "type") {
+      mirror.pendingText = true;
+      mirror.lastText = undefined;
+      await refreshTuiMirror(mirror);
+      return;
+    }
+    if (action === "cancel-type") {
+      mirror.pendingText = false;
+      mirror.lastText = undefined;
+      await refreshTuiMirror(mirror);
+      return;
+    }
+    if (action !== "refresh") {
+      if (!bridge.key(action)) {
+        await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId);
+        tuiMirrors.delete(key);
+        return;
+      }
+      await sleep(TUI_POLL_INTERVAL_MS);
+    }
+    mirror.lastText = undefined;
+    await refreshTuiMirror(mirror);
+  };
+
+  const unsubscribeLocalTui = bridge.onLocalSubmit((text) => {
+    if (getTuiMode() === "off" || deps.isTelegramActive?.() === false) return;
+    const command = text.trim();
+    if (!command.startsWith("/") && !command.startsWith("!")) return;
+    if (/^\/?tg(?:-|$)/.test(command)) return;
+    const chatId = deps.getConfig?.().activeChatId;
+    if (chatId === undefined) return;
+    void (async () => {
+      await deps.transport.sendText(chatId, `<b>⌨️ TUI command</b>\n${preformatted(command)}`)
+        .catch(ctrlLog.swallow("warn", "sendText local TUI command failed", { chatId }));
+      await sleep(450);
+      const snapshot = bridge.snapshot(TUI_SCREEN_WIDTH);
+      if (!snapshot) return;
+      await deps.transport.sendText(chatId, formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector (local)" : "TUI result"))
+        .catch(ctrlLog.swallow("warn", "sendText local TUI snapshot failed", { chatId }));
+    })();
+  });
+
   // Per chat/thread prompt queues: each Telegram topic chains independently.
   const promptTails = new Map<string, Promise<void>>();
   // Increasing generation per chat/thread lets stop invalidate pending queue items.
@@ -703,6 +1091,62 @@ export function createTelegramController(deps: {
     });
   };
 
+  const dispatchNamedCommand = async (
+    name: string,
+    args: string,
+    session: CapturedAgentSession,
+    chatId: number,
+    messageThreadId?: number,
+    sourceMessageId?: number,
+  ): Promise<boolean> => {
+    // These commands deliberately use the host selector/confirmation UI when
+    // the bridge is enabled. Telegram-native handlers remain the fallback when
+    // the host catalog does not expose the command.
+    if (getTuiMode() !== "off" && TUI_NATIVE_SELECTOR_COMMANDS.has(name)) {
+      const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
+      const catalog = await bridge.getCommands().catch(() => []);
+      const known = catalog.some((command) => candidates.has(command.name)
+        || (command.aliases ?? []).some((alias) => candidates.has(alias)));
+      if (known) {
+        recordCommandUsage(name);
+        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
+        return true;
+      }
+    }
+
+    const handler =
+      deps.telegramCommands.get(name)
+      ?? deps.telegramCommands.get(name.replace(/_/g, "-"))
+      ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
+    if (handler) {
+      recordCommandUsage(name);
+      await runCommandHandler(handler, args, session, chatId, messageThreadId, sourceMessageId);
+      return true;
+    }
+    const externalCommand =
+      session.extensionRunner.getCommand(name)
+      ?? session.extensionRunner.getCommand(name.replace(/_/g, "-"))
+      ?? session.extensionRunner.getCommand(name.replace(/-/g, "_"));
+    if (externalCommand) {
+      recordCommandUsage(name);
+      await runCommandHandler(externalCommand.handler, args, session, chatId, messageThreadId, sourceMessageId);
+      return true;
+    }
+
+    if (getTuiMode() !== "off") {
+      const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
+      const catalog = await bridge.getCommands().catch(() => []);
+      const known = catalog.some((command) => candidates.has(command.name)
+        || (command.aliases ?? []).some((alias) => candidates.has(alias)));
+      if (known) {
+        recordCommandUsage(name);
+        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
+        return true;
+      }
+    }
+    return false;
+  };
+
   const tryHandleSlashCommand = async (text: string, chatId: number, messageThreadId?: number, sourceMessageId?: number): Promise<boolean> => {
     const parsed = parseLeadingCommand(text);
     if (!parsed) return false;
@@ -711,25 +1155,7 @@ export function createTelegramController(deps: {
       await deps.transport.sendText(chatId, "π session is not ready yet.", messageThreadId, sourceMessageId);
       return true;
     }
-
-    const name = parsed.name.toLowerCase();
-    const handler =
-      deps.telegramCommands.get(name)
-      ?? deps.telegramCommands.get(name.replace(/_/g, "-"))
-      ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
-    if (handler) {
-      await runCommandHandler(handler, parsed.args, session, chatId, messageThreadId, sourceMessageId);
-      return true;
-    }
-    const externalCommand =
-      session.extensionRunner.getCommand(name)
-      ?? session.extensionRunner.getCommand(name.replace(/_/g, "-"))
-      ?? session.extensionRunner.getCommand(name.replace(/-/g, "_"));
-    if (externalCommand) {
-      await runCommandHandler(externalCommand.handler, parsed.args, session, chatId, messageThreadId, sourceMessageId);
-      return true;
-    }
-    return false;
+    return await dispatchNamedCommand(parsed.name.toLowerCase(), parsed.args, session, chatId, messageThreadId, sourceMessageId);
   };
 
   return {
@@ -762,6 +1188,12 @@ export function createTelegramController(deps: {
         return;
       }
 
+      const tuiAction = decodeTuiCallback(data);
+      if (tuiAction !== undefined) {
+        await handleTuiCallback(tuiAction, chatId, messageThreadId);
+        return;
+      }
+
       if (data) {
         const messageId = query.message?.message_id;
         await submitText(data, chatId, messageId, messageThreadId, sourceMessageId);
@@ -790,9 +1222,45 @@ export function createTelegramController(deps: {
         return;
       }
 
+      const pendingTuiMirror = tuiMirrors.get(targetKey(chatId, messageThreadId));
+      if (pendingTuiMirror?.pendingText && message.text !== undefined) {
+        pendingTuiMirror.pendingText = false;
+        pendingTuiMirror.lastText = undefined;
+        if (!bridge.write(message.text)) {
+          await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId, sourceMessageId);
+          tuiMirrors.delete(targetKey(chatId, messageThreadId));
+          return;
+        }
+        await sleep(TUI_POLL_INTERVAL_MS);
+        await refreshTuiMirror(pendingTuiMirror);
+        return;
+      }
+
       const text = normalizeLeadingCommand(rawText, deps.getBotUsername());
       const trimmed = text.trim();
       const replyToInput = message.reply_to_message?.message_id;
+      if (trimmed.startsWith("!")) {
+        const excludeFromContext = trimmed.startsWith("!!");
+        const command = trimmed.slice(excludeFromContext ? 2 : 1).trim();
+        void runTelegramBash(
+          command,
+          excludeFromContext,
+          chatId,
+          messageThreadId,
+          sourceMessageId,
+          message.from?.id,
+          message.chat?.type,
+        ).catch(async (err) => {
+          ctrlLog.error("telegram bash failed", { err, chatId, userId: message.from?.id });
+          await deps.transport.sendText(
+            chatId,
+            `Shell command failed: ${escapeHtml(commandErrorMessage(err))}`,
+            messageThreadId,
+            sourceMessageId,
+          ).catch(ctrlLog.swallow("warn", "sendText bash failure failed", { chatId }));
+        });
+        return;
+      }
       if (message.reply_to_message || message.quote || message.text_quote || message.external_reply) logTelegramReplyContext(message);
       if (trimmed === "/stop") {
         // /stop cancellation priority: first try canceling a reply-targeted
@@ -802,6 +1270,13 @@ export function createTelegramController(deps: {
         if (cancelAnyResult.handled) {
           if (cancelAnyResult.promptMessageId) void deps.transport.removeInlineKeyboard(chatId, cancelAnyResult.promptMessageId);
           await deps.transport.sendText(chatId, "Cancelled.", messageThreadId, sourceMessageId);
+          return;
+        }
+        const stopSession = deps.getSession();
+        if (stopSession && isBashRunning(stopSession)) {
+          const abort = readBashAbort(stopSession);
+          await Promise.resolve(abort?.()).catch(ctrlLog.swallow("debug", "abortBash from /stop failed"));
+          await deps.transport.sendText(chatId, "⏹️ Bash stopped.", messageThreadId, sourceMessageId);
           return;
         }
         await fastInterrupt(chatId, messageThreadId, sourceMessageId);
@@ -851,6 +1326,7 @@ export function createTelegramController(deps: {
       }
       if (hasPromptInput) {
         const mediaBlock = (() => {
+
           if (!hasMediaInput) return "";
           const lines = [mediaSummary];
           const statusLines = [...downloadedMediaLines, ...failedMediaLines];
@@ -875,5 +1351,18 @@ export function createTelegramController(deps: {
       }
     },
 
+    async runCommand(name, args, chatId, messageThreadId, sourceMessageId) {
+      const session = deps.getSession();
+      if (!session) {
+        await deps.transport.sendText(chatId, "π session is not ready yet.", messageThreadId, sourceMessageId);
+        return;
+      }
+      await dispatchNamedCommand(name.toLowerCase(), args, session, chatId, messageThreadId, sourceMessageId);
+    },
+
+    dispose() {
+      unsubscribeLocalTui();
+      tuiMirrors.clear();
+    },
   };
 }

@@ -160,6 +160,42 @@ describe("TelegramPollingRuntime", () => {
         expect(config.lastUpdateId).toBe(10);
     });
 
+    it("does not rewind or re-handle when the backlog probe re-serves the last processed update", async () => {
+        const token = `equal-token-${Date.now()}`;
+        let config: TelegramConfig = { botToken: token, lastUpdateId: 10 };
+        const handled: number[] = [];
+        const resets: number[] = [];
+        // The offset-0 startup probe returns the whole backlog, including the
+        // update the cursor already processed. That is ordinary re-delivery,
+        // not a foreign cursor: neither rewind nor re-handle it.
+        mocks.getPendingTelegramUpdates.mockResolvedValue([update]);
+        mocks.getTelegramUpdates.mockImplementation(async (_config, signal: AbortSignal) => {
+            const { promise, resolve } = Promise.withResolvers<void>();
+            signal.addEventListener("abort", () => resolve(), { once: true });
+            await promise;
+            return [];
+        });
+
+        const runtime = createTelegramPollingRuntime({
+            getConfig: () => config,
+            setConfig: (next) => { config = next; },
+            persistConfig: async () => undefined,
+            persistUpdate: async (next) => { config = next; },
+            resetCursor: async (updateId) => { resets.push(updateId); },
+            handleUpdate: async (batchUpdate) => { handled.push(batchUpdate.update_id); },
+            onError: (error) => { throw error; },
+            shouldPoll: () => true,
+        });
+
+        runtime.start();
+        await vi.waitFor(() => expect(mocks.getTelegramUpdates).toHaveBeenCalled());
+        await runtime.stop();
+
+        expect(resets).toEqual([]);
+        expect(handled).toEqual([]);
+        expect(config.lastUpdateId).toBe(10);
+    });
+
     it("probes the backlog once on start and rewinds a cursor the server keeps hiding", async () => {
         const token = `probe-token-${Date.now()}`;
         let config: TelegramConfig = { botToken: token, lastUpdateId: 500 };

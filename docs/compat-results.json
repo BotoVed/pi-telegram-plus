@@ -1,13 +1,13 @@
 {
   "$comment": "RECORDED RESULTS ONLY - no prose, no policy. Every entry is produced by a measured run (see docs/compatibility.md for how). Update with `npm run test:pi-versions -- --record` and `npm run test:e2e -- --record`; regenerate README with `npm run compat:gen`. `npm run compat:check` runs in prepublishOnly and fails the release if this file drifts from the test scripts or from the peer range in package.json.",
   "matrix": {
-    "recordedAt": "2026-10-19",
+    "recordedAt": "2026-10-22",
     "modes": {
       "default": "passed",
       "strict-upstream": "passed"
     },
-    "testFiles": 35,
-    "tests": 440,
+    "testFiles": 37,
+    "tests": 481,
     "versions": {
       "0.80.7": "passed",
       "0.80.10": "passed",

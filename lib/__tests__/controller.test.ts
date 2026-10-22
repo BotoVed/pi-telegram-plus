@@ -14,7 +14,7 @@ describe("parseLeadingCommand", () => {
   });
 
   it("parses command with multi-word args", () => {
-    expect(parseLeadingCommand("/tg-config tool full")).toEqual({ name: "tg-config", args: "tool full" });
+    expect(parseLeadingCommand("/tg-switch current")).toEqual({ name: "tg-switch", args: "current" });
   });
 
   it("handles @botUsername via normalizeLeadingCommand, not parseLeadingCommand", () => {
@@ -35,7 +35,7 @@ describe("parseLeadingCommand", () => {
   });
 
   it("parses command with hyphen name", () => {
-    expect(parseLeadingCommand("/tg-config")).toEqual({ name: "tg-config", args: "" });
+    expect(parseLeadingCommand("/tg-switch")).toEqual({ name: "tg-switch", args: "" });
   });
 
   it("parses command with remaining text as args", () => {

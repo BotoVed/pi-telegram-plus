@@ -263,6 +263,8 @@ export function materializeTelegramConfig(
     if (binding.tool !== undefined) config.tool = binding.tool;
     if (binding.thinking !== undefined) config.thinking = binding.thinking;
     if (binding.retryCount !== undefined) config.retryCount = binding.retryCount;
+    if (binding.tuiBridge !== undefined) config.tuiBridge = binding.tuiBridge;
+    if (binding.bashConfirm !== undefined) config.bashConfirm = binding.bashConfirm;
     if (binding.lastUpdateId !== undefined) config.lastUpdateId = binding.lastUpdateId;
     if (binding.activeChatId !== undefined) config.activeChatId = binding.activeChatId;
   } else {
@@ -329,6 +331,8 @@ export async function persistProjectRuntimeState(
     if (config.tool !== undefined) binding.tool = config.tool;
     if (config.thinking !== undefined) binding.thinking = config.thinking;
     if (config.retryCount !== undefined) binding.retryCount = config.retryCount;
+    if (config.tuiBridge !== undefined) binding.tuiBridge = config.tuiBridge;
+    if (config.bashConfirm !== undefined) binding.bashConfirm = config.bashConfirm;
 
     await writeProjectBinding(projectDir, binding);
 
@@ -375,6 +379,8 @@ export function preserveInMemoryRuntimeState(
     ...(persisted.retryCount === undefined && memory.retryCount !== undefined
       ? { retryCount: memory.retryCount }
       : {}),
+    ...(persisted.tuiBridge === undefined && memory.tuiBridge !== undefined ? { tuiBridge: memory.tuiBridge } : {}),
+    ...(persisted.bashConfirm === undefined && memory.bashConfirm !== undefined ? { bashConfirm: memory.bashConfirm } : {}),
   };
 }
 
@@ -385,7 +391,7 @@ export function preserveInMemoryRuntimeState(
 export async function bindProjectTelegram(
   cwd: string,
   botId: string,
-  options?: { enabled?: boolean; tool?: TelegramRenderLevel; thinking?: TelegramRenderLevel },
+  options?: { enabled?: boolean; tool?: TelegramRenderLevel; thinking?: TelegramRenderLevel; tuiBridge?: TelegramConfig["tuiBridge"]; bashConfirm?: TelegramConfig["bashConfirm"] },
 ): Promise<ResolvedTelegramConfig> {
   const projectDir = resolve(cwd);
   const binding: ProjectTelegramBinding = {
@@ -393,6 +399,8 @@ export async function bindProjectTelegram(
     enabled: options?.enabled ?? true,
     ...(options?.tool === undefined ? {} : { tool: options.tool }),
     ...(options?.thinking === undefined ? {} : { thinking: options.thinking }),
+    ...(options?.tuiBridge === undefined ? {} : { tuiBridge: options.tuiBridge }),
+    ...(options?.bashConfirm === undefined ? {} : { bashConfirm: options.bashConfirm }),
   };
   await updateProjectBindingLocked(projectDir, () => binding);
   return resolveTelegramConfig(projectDir);
@@ -487,6 +495,8 @@ async function migrateToV3(value: unknown): Promise<BotRegistry> {
           ...(workspace.config.tool === undefined ? {} : { tool: workspace.config.tool }),
           ...(workspace.config.thinking === undefined ? {} : { thinking: workspace.config.thinking }),
           ...(workspace.config.retryCount === undefined ? {} : { retryCount: workspace.config.retryCount }),
+          ...(workspace.config.tuiBridge === undefined ? {} : { tuiBridge: workspace.config.tuiBridge }),
+          ...(workspace.config.bashConfirm === undefined ? {} : { bashConfirm: workspace.config.bashConfirm }),
           ...(workspace.config.lastUpdateId === undefined ? {} : { lastUpdateId: workspace.config.lastUpdateId }),
           ...(workspace.config.activeChatId === undefined ? {} : { activeChatId: workspace.config.activeChatId }),
         };

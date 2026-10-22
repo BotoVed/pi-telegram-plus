@@ -1,6 +1,18 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import { createTelegramController } from "../controller.ts";
-import { buildTelegramMenuCommands } from "../menu-commands.ts";
+import {
+  buildTelegramMenuCommands,
+  scheduleTelegramCommandRefresh,
+  syncTelegramCommands,
+} from "../menu-commands.ts";
+
+const hostCommand = (name: string, description: string): SlashCommandInfo => ({
+  name,
+  description,
+  source: "extension",
+  sourceInfo: { path: `/test/${name}.ts`, source: "test", scope: "user", origin: "top-level" },
+});
 
 describe("Telegram command menu", () => {
     it("exposes /tg as the consolidated management menu command", () => {
@@ -22,9 +34,7 @@ describe("Telegram command menu", () => {
                 { name: "tg-bot-update", description: "Update" },
                 { name: "tg-bot-remove", description: "Remove" },
                 { name: "tg-bot-default", description: "Default" },
-                { name: "tg-config", description: "Config" },
                 { name: "tg-switch", description: "Switch" },
-                { name: "tg-list", description: "List binding" },
                 { name: "tg-bind-cwd", description: "Bind" },
                 { name: "tg-unbind-cwd", description: "Unbind" },
                 { name: "tg-cwd-connect", description: "Connect" },
@@ -38,9 +48,7 @@ describe("Telegram command menu", () => {
         expect(names).not.toContain("tg_bot_update");
         expect(names).not.toContain("tg_bot_remove");
         expect(names).not.toContain("tg_bot_default");
-        expect(names).not.toContain("tg_config");
         expect(names).not.toContain("tg_switch");
-        expect(names).not.toContain("tg_list");
         expect(names).not.toContain("tg_bind_cwd");
         expect(names).not.toContain("tg_unbind_cwd");
         expect(names).not.toContain("tg_cwd_connect");
@@ -91,4 +99,108 @@ describe("Telegram command menu", () => {
             expect(handler).toHaveBeenCalledWith("current", expect.anything());
         });
     });
+});
+
+describe("dynamic TUI catalog in BotMenu", () => {
+  it("merges host builtins that are absent from the static list", () => {
+    const commands = buildTelegramMenuCommands(
+      { getCommands: () => [] },
+      {
+        tuiCommands: [
+          { name: "tools", description: "Manage tools", source: "builtin" },
+          { name: "theme", description: "Change theme", source: "builtin" },
+        ],
+      },
+    );
+    expect(commands).toContainEqual({ command: "tools", description: "Manage tools" });
+    expect(commands).toContainEqual({ command: "theme", description: "Change theme" });
+  });
+
+  it("keeps the BotMenu at Telegram's 100-command limit", () => {
+    const tuiCommands = Array.from({ length: 140 }, (_, index) => ({
+      name: `cmd_${index}`,
+      description: `Command ${index}`,
+      source: "builtin" as const,
+    }));
+    const commands = buildTelegramMenuCommands({ getCommands: () => [] }, { tuiCommands });
+    expect(commands).toHaveLength(100);
+  });
+
+  it("omits the thinking entry when the host has no native thinking command", () => {
+    const commands = buildTelegramMenuCommands(
+      { getCommands: () => [hostCommand("model", "Change model")] },
+      { tuiCommands: [{ name: "tools", description: "Manage tools", source: "builtin" }] },
+    );
+    expect(commands.some((c) => c.command === "thinking")).toBe(false);
+    expect(commands.some((c) => c.command === "tg_thinking")).toBe(false);
+  });
+
+  it("keeps native thinking in the menu when the host provides it", () => {
+    const commands = buildTelegramMenuCommands(
+      { getCommands: () => [hostCommand("thinking", "Change thinking level")] },
+    );
+    expect(commands.some((c) => c.command === "thinking")).toBe(true);
+    expect(commands.some((c) => c.command === "tg_thinking")).toBe(false);
+  });
+});
+
+describe("dynamic command ordering", () => {
+  it("boosts recently used non-core commands ahead of other dynamic commands", () => {
+    const commands = buildTelegramMenuCommands(
+      {
+        getCommands: () => [
+          { name: "alpha", description: "Alpha" },
+          { name: "middle", description: "Middle" },
+          { name: "zulu", description: "Zulu" },
+        ],
+      } as any,
+      { recent: ["middle"] },
+    );
+    const names = commands.map((command) => command.command);
+    expect(names.indexOf("middle")).toBeLessThan(names.indexOf("alpha"));
+  });
+});
+
+describe("Telegram menu refresh scheduling", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("isolates in-flight sync by token and API base", async () => {
+    const fetchMock = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pi = { getCommands: () => [] } as any;
+
+    await Promise.all([
+      syncTelegramCommands("token-a", pi, "https://api-a.example"),
+      syncTelegramCommands("token-b", pi, "https://api-b.example"),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining("api-a.example"),
+      expect.stringContaining("api-b.example"),
+    ]));
+  });
+
+  it("keeps the 300ms and 1000ms refreshes independently scheduled", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (_url: string | URL | Request) => new Response(JSON.stringify({ ok: true, result: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+    const pi = { getCommands: () => [] } as any;
+
+    scheduleTelegramCommandRefresh("token-dual-delay", pi, "https://api.example", 300);
+    scheduleTelegramCommandRefresh("token-dual-delay", pi, "https://api.example", 1000);
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(700);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  });
 });

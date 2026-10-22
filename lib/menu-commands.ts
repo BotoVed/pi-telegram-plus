@@ -1,6 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { setTelegramMyCommands } from "./telegram-api.ts";
 import { log } from "./logger.ts";
+import { loadRecentCommands } from "./command-usage.ts";
+import { getTuiCommands, type TuiCommand } from "./tui-bridge.ts";
 
 const menuLog = log.child("menu-commands");
 
@@ -21,9 +23,7 @@ const BOT_MENU_EXCLUDED = new Set([
   // Flat tg-* commands are consolidated into the /tg menu. They stay
   // registered as dispatchable slash commands but are excluded from the
   // bot menu so only /tg appears as the single management entry point.
-  "tg-config",
   "tg-switch",
-  "tg-list",
   "tg-bot-list",
 ]);
 
@@ -62,6 +62,17 @@ const TELEGRAM_MENU_COMMANDS: Array<{ command: string; description: string }> = 
   { command: "tg", description: "Open the Telegram management menu" },
 ];
 
+/**
+ * Host commands that should stay near the top of the 100-entry BotMenu. These
+ * are the common interactive entry points, not an attempt to mirror the full
+ * (unbounded) TUI catalog.
+ */
+const CORE_COMMAND_PRIORITY = [
+  "tools", "mcp", "agents", "permissions", "hooks", "skills", "plugins", "marketplace",
+  "plan", "goal", "review", "theme", "trust", "init", "help", "commands",
+  "clear", "cost", "context", "diff", "undo", "redo",
+];
+
 const toTelegramCommandName = (name: string): string | undefined => {
   // Telegram bot menu commands allow only [A-Za-z0-9_] and max 32 chars.
   const telegramName = name.replace(/-/g, "_").toLowerCase();
@@ -69,28 +80,155 @@ const toTelegramCommandName = (name: string): string | undefined => {
   return telegramName;
 };
 
-export function buildTelegramMenuCommands(pi: ExtensionAPI): Array<{ command: string; description: string }> {
+export type MenuCommandOptions = {
+  /** Recently used commands, newest first. */
+  recent?: readonly string[];
+  /** Host builtin/autocomplete catalog captured by the TUI bridge. */
+  tuiCommands?: readonly TuiCommand[];
+};
+
+export function buildTelegramMenuCommands(
+  pi: Pick<ExtensionAPI, "getCommands">,
+  options: MenuCommandOptions = {},
+): Array<{ command: string; description: string }> {
   const commands = new Map<string, string>();
   const addCommand = (name: string, description?: string) => {
+    if (BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(name.replace(/-/g, "_"))) return;
     const telegramName = toTelegramCommandName(name);
     if (!telegramName || commands.has(telegramName)) return;
     commands.set(telegramName, (description?.trim() || `Run /${telegramName}`).slice(0, 256));
   };
 
-  for (const command of TELEGRAM_MENU_COMMANDS) addCommand(command.command, command.description);
-  for (const command of pi.getCommands()) {
-    if (BOT_MENU_EXCLUDED.has(command.name)) continue;
-    addCommand(command.name, command.description);
+  // pi 1.x ships a built-in /thinking slash command; OMP's thinking control is a
+  // hotkey with no slash command, so a `thinking` menu entry there would reach no
+  // handler and fall through to the model as prompt text. Omit the entry when the
+  // host catalog has no native `thinking`; Telegram users set the level via
+  // /tg → Config → Thinking level.
+  const hostHasThinking = (options.tuiCommands ?? []).some((c) => c.name === "thinking")
+    || pi.getCommands().some((c) => c.name === "thinking");
+  for (const command of TELEGRAM_MENU_COMMANDS) {
+    if (command.command === "thinking" && !hostHasThinking) continue;
+    addCommand(command.command, command.description);
   }
 
-  // Telegram accepts at most 100 bot commands. Keep the curated built-in-style
-  // commands first, then fill the rest with extension/prompt/skill commands.
+  const recentPriority = new Map<string, number>();
+  for (const [index, name] of (options.recent ?? []).entries()) {
+    const telegramName = toTelegramCommandName(name);
+    if (!telegramName || BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(telegramName)) continue;
+    if (!recentPriority.has(telegramName)) recentPriority.set(telegramName, index);
+  }
+
+  // Priority queue for dynamic commands (host + extensions + recent)
+  const dynamic: Array<{ name: string; desc?: string }> = [];
+  const seenDynamic = new Set<string>();
+  for (const command of options.tuiCommands ?? []) {
+    const n = toTelegramCommandName(command.name);
+    if (!n) continue;
+    if (BOT_MENU_EXCLUDED.has(command.name) || BOT_MENU_EXCLUDED.has(n)) continue;
+    if (commands.has(n)) continue;
+    if (seenDynamic.has(n)) continue;
+    seenDynamic.add(n);
+    dynamic.push({ name: command.name, desc: command.description });
+  }
+  for (const cmd of pi.getCommands()) {
+    const n = toTelegramCommandName(cmd.name);
+    if (!n) continue;
+    if (BOT_MENU_EXCLUDED.has(cmd.name) || BOT_MENU_EXCLUDED.has(n)) continue;
+    if (commands.has(n)) continue;
+    if (seenDynamic.has(n)) continue;
+    seenDynamic.add(n);
+    dynamic.push({ name: cmd.name, desc: cmd.description });
+  }
+  for (const name of options.recent ?? []) {
+    const n = toTelegramCommandName(name);
+    if (!n) continue;
+    if (BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(n)) continue;
+    if (commands.has(n) || seenDynamic.has(n)) continue;
+    seenDynamic.add(n);
+    dynamic.push({ name, desc: undefined });
+  }
+
+  // Core host commands stay first. Recent usage then boosts non-core dynamic
+  // commands without displacing the curated Telegram entry points.
+  const pri = new Map(CORE_COMMAND_PRIORITY.map((c, i) => [c.replace(/-/g, "_").toLowerCase(), i]));
+  dynamic.sort((a, b) => {
+    const an = toTelegramCommandName(a.name) ?? a.name.replace(/-/g, "_").toLowerCase();
+    const bn = toTelegramCommandName(b.name) ?? b.name.replace(/-/g, "_").toLowerCase();
+    const pa = pri.get(an) ?? Number.MAX_SAFE_INTEGER;
+    const pb = pri.get(bn) ?? Number.MAX_SAFE_INTEGER;
+    if (pa !== pb) return pa - pb;
+    const ra = recentPriority.get(an) ?? Number.MAX_SAFE_INTEGER;
+    const rb = recentPriority.get(bn) ?? Number.MAX_SAFE_INTEGER;
+    if (ra !== rb) return ra - rb;
+    return an.localeCompare(bn);
+  });
+
+  for (const d of dynamic) {
+    if (commands.size >= 100) break;
+    addCommand(d.name, d.desc);
+  }
+
   return Array.from(commands, ([command, description]) => ({ command, description })).slice(0, 100);
+}
+
+const menuSyncInFlight = new Map<string, Promise<void>>();
+const menuSyncScheduled = new Map<string, ReturnType<typeof setTimeout>>();
+
+function syncKey(botToken: string, apiBase?: string): string {
+  return `${apiBase ?? "https://api.telegram.org"}\u0000${botToken}`;
+}
+
+async function doSyncTelegramCommands(botToken: string, pi: ExtensionAPI, apiBase?: string): Promise<void> {
+  const [recent, tuiCommands] = await Promise.all([
+    loadRecentCommands().catch(() => []),
+    getTuiCommands().catch(() => []),
+  ]);
+  await setTelegramMyCommands(botToken, buildTelegramMenuCommands(pi, { recent, tuiCommands }), apiBase);
 }
 
 export async function syncTelegramCommands(botToken: string | undefined, pi: ExtensionAPI, apiBase?: string): Promise<void> {
   if (!botToken) return;
+  const key = syncKey(botToken, apiBase);
+  const existing = menuSyncInFlight.get(key);
+  if (existing) {
+    try {
+      await existing;
+    } catch (err) {
+      menuLog.warn("syncTelegramCommands failed", { err });
+    }
+    return;
+  }
+
+  const sync = doSyncTelegramCommands(botToken, pi, apiBase);
+  menuSyncInFlight.set(key, sync);
   try {
-    await setTelegramMyCommands(botToken, buildTelegramMenuCommands(pi), apiBase);
-  } catch (err) { menuLog.warn("syncTelegramCommands failed", { err }); }
+    await sync;
+  } catch (err) {
+    menuLog.warn("syncTelegramCommands failed", { err });
+  } finally {
+    if (menuSyncInFlight.get(key) === sync) menuSyncInFlight.delete(key);
+  }
+}
+
+export function scheduleTelegramCommandRefresh(botToken: string | undefined, pi: ExtensionAPI, apiBase?: string, delayMs = 250): void {
+  if (!botToken) return;
+  const key = `${syncKey(botToken, apiBase)}\u0000${delayMs}`;
+  const existing = menuSyncScheduled.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    menuSyncScheduled.delete(key);
+    void syncTelegramCommands(botToken, pi, apiBase);
+  }, delayMs);
+  timer.unref?.();
+  menuSyncScheduled.set(key, timer);
+}
+
+/**
+ * Drop pending command refreshes; call from extension dispose. The scheduled
+ * sync captured this instance's `pi` context, which the host invalidates on
+ * reload — firing afterwards only logs "extension ctx is stale".
+ */
+export function cancelTelegramCommandRefreshes(): void {
+  for (const timer of menuSyncScheduled.values()) clearTimeout(timer);
+  menuSyncScheduled.clear();
 }

@@ -1,15 +1,17 @@
-import type { CommandRegistry, TgConfigDeps } from "./register.ts";
-import type { TelegramConfig, TelegramRenderLevel } from "../types.ts";
-import { RENDER_LEVELS } from "../types.ts";
+import type { TgConfigDeps } from "./register.ts";
+import type { TelegramBashConfirm, TelegramConfig, TelegramRenderLevel, TelegramTuiBridgeMode } from "../types.ts";
+import { BASH_CONFIRM_MODES, RENDER_LEVELS, TUI_BRIDGE_MODES } from "../types.ts";
 import type { MenuUi } from "./telegram-commands.ts";
 
 const KEY_LABELS: Record<string, string> = {
   tool: "🔧 Tool rendering",
   thinking: "💭 Thinking rendering",
   retry: "🔄 Retry count",
+  tui: "🖥 TUI bridge",
+  bash: "🐚 Shell confirm",
 };
 
-// ── Reusable config flow functions (shared by /tg-config and /tg menu) ─────
+// ── Reusable config flow functions (used by the /tg Config submenu) ───────
 
 export async function configToolFlow(
   ui: MenuUi,
@@ -77,6 +79,60 @@ export async function configRetryFlow(
   ui.notify(`${KEY_LABELS.retry} set to ${n}`, "info");
 }
 
+export async function configTuiFlow(
+  ui: MenuUi,
+  deps: TgConfigDeps,
+  value?: string,
+): Promise<void> {
+  const config = deps.getConfig();
+  const current = config.tuiBridge ?? "commands";
+  let selected: TelegramTuiBridgeMode | undefined;
+  if (value && (TUI_BRIDGE_MODES as readonly string[]).includes(value)) {
+    selected = value as TelegramTuiBridgeMode;
+  } else if (!value) {
+    const labels = [...TUI_BRIDGE_MODES].map((mode) => (mode === current ? `● ${mode}` : `  ${mode}`));
+    const choice = await ui.select(KEY_LABELS.tui, labels);
+    if (!choice) return;
+    const index = labels.indexOf(choice);
+    if (index >= 0) selected = TUI_BRIDGE_MODES[index];
+  } else {
+    ui.notify("Invalid. Use: off, commands, or full", "error");
+    return;
+  }
+  if (!selected) return;
+  const next: TelegramConfig = { ...config, tuiBridge: selected };
+  deps.setConfig(next);
+  await deps.persistConfig(next);
+  ui.notify(`${KEY_LABELS.tui} set to ${selected}`, "info");
+}
+
+export async function configBashFlow(
+  ui: MenuUi,
+  deps: TgConfigDeps,
+  value?: string,
+): Promise<void> {
+  const config = deps.getConfig();
+  const current = config.bashConfirm ?? "dangerous";
+  let selected: TelegramBashConfirm | undefined;
+  if (value && (BASH_CONFIRM_MODES as readonly string[]).includes(value)) {
+    selected = value as TelegramBashConfirm;
+  } else if (!value) {
+    const labels = [...BASH_CONFIRM_MODES].map((mode) => (mode === current ? `● ${mode}` : `  ${mode}`));
+    const choice = await ui.select(KEY_LABELS.bash, labels);
+    if (!choice) return;
+    const index = labels.indexOf(choice);
+    if (index >= 0) selected = BASH_CONFIRM_MODES[index];
+  } else {
+    ui.notify("Invalid. Use: always, dangerous, or never", "error");
+    return;
+  }
+  if (!selected) return;
+  const next: TelegramConfig = { ...config, bashConfirm: selected };
+  deps.setConfig(next);
+  await deps.persistConfig(next);
+  ui.notify(`${KEY_LABELS.bash} set to ${selected}`, "info");
+}
+
 async function pickRenderLevel(ui: MenuUi, title: string, current: TelegramRenderLevel): Promise<TelegramRenderLevel | undefined> {
   const labels = [...RENDER_LEVELS].map((v) => (v === current ? `● ${v}` : `  ${v}`));
   const choice = await ui.select(title, labels);
@@ -84,50 +140,4 @@ async function pickRenderLevel(ui: MenuUi, title: string, current: TelegramRende
   const idx = labels.indexOf(choice);
   if (idx < 0 || idx >= RENDER_LEVELS.length) return undefined;
   return RENDER_LEVELS[idx];
-}
-
-// ── /tg-config command (direct-set + interactive) ─────────────────────────
-
-export function registerTgConfigCommands(
-  registry: CommandRegistry,
-  deps: TgConfigDeps,
-): void {
-  registry.registerCommand("tg-config", {
-    description: "Configure Telegram message rendering and mode",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      const parts = args.trim().split(/\s+/);
-
-      // Direct-set mode: /tg-config <key> <value>
-      if (parts.length >= 2 && parts[0]) {
-        const [key, value] = parts;
-        if (key === "tool") await configToolFlow(ui, deps, value);
-        else if (key === "thinking") await configThinkingFlow(ui, deps, value);
-        else if (key === "retry") await configRetryFlow(ui, deps, value);
-        else ui.notify("Invalid key. Use: tool, thinking, or retry", "error");
-        return;
-      }
-
-      // Interactive mode
-      const config = deps.getConfig();
-      const currentTool = config.tool ?? "brief";
-      const currentThinking = config.thinking ?? "brief";
-      const currentRetry = config.retryCount ?? 3;
-
-      const choice = await ui.select("⚙️ Telegram Config", [
-        `${KEY_LABELS.tool}: ${currentTool}`,
-        `${KEY_LABELS.thinking}: ${currentThinking}`,
-        `${KEY_LABELS.retry}: ${currentRetry}`,
-      ]);
-      if (!choice) return;
-
-      if (choice.startsWith(KEY_LABELS.tool)) {
-        await configToolFlow(ui, deps);
-      } else if (choice.startsWith(KEY_LABELS.thinking)) {
-        await configThinkingFlow(ui, deps);
-      } else if (choice.startsWith(KEY_LABELS.retry)) {
-        await configRetryFlow(ui, deps);
-      }
-    },
-  });
 }

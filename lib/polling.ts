@@ -255,6 +255,12 @@ export async function processTelegramUpdatesBatch(
   const batchToken = deps.getConfig().botToken;
   for (const update of updates) {
     if (signal?.aborted || (deps.shouldProcess && !deps.shouldProcess())) return true;
+    // Telegram re-serves updates that were processed but not yet confirmed
+    // (a backlog probe with offset 0, or a fetch issued before the cursor
+    // advanced). Re-running one would repeat its side effects — fatally so for
+    // /reload, which would fire ctx.reload() again on every re-delivery.
+    const cursor = deps.getConfig().lastUpdateId;
+    if (typeof cursor === "number" && update.update_id <= cursor) continue;
     try {
       await deps.handleUpdate(update);
     } catch (error) {
@@ -292,6 +298,12 @@ export async function processTelegramUpdatesBatch(
  * to `firstUpdateId - 1` restores the invariant, and the batch below is handled
  * and persisted normally.
  *
+ * Only an update STRICTLY below the cursor proves this. `first === stale` is the
+ * ordinary re-delivery of the last processed (not yet confirmed) update — the
+ * offset-0 backlog probe at startup returns it on every restart — and rewinding
+ * for it would drop the cursor below an already-handled update, replaying its
+ * side effects. The batch loop's `update_id <= cursor` skip covers that case.
+ *
  * Best-effort by design: if the rewind fails the batch is still handled (it was
  * already acknowledged by this very request), leaving the loud log as the signal.
  */
@@ -301,7 +313,7 @@ async function resyncCursorIfOutOfRange(
 ): Promise<void> {
   const stale = deps.getConfig().lastUpdateId;
   const first = updates[0]?.update_id;
-  if (typeof stale !== "number" || typeof first !== "number" || first > stale) return;
+  if (typeof stale !== "number" || typeof first !== "number" || first >= stale) return;
   const corrected = first - 1;
   pollLog.warn("poll cursor is ahead of the update stream; rewinding", {
     staleLastUpdateId: stale,

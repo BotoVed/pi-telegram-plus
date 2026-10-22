@@ -1,12 +1,13 @@
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import { readBotRegistry, readProjectBinding } from "../config.ts";
 import type { TelegramInstanceMetadata } from "../instance-coordinator.ts";
 import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
 import type { MenuUi, TelegramCommandDeps } from "./telegram-commands.ts";
-import type { TgConfigDeps } from "./register.ts";
+import type { TgConfigDeps, SessionDeps } from "./register.ts";
 import type { BotRecord, BotRegistry } from "../types.ts";
-import { configToolFlow, configThinkingFlow, configRetryFlow } from "./tg-config.ts";
+import { configToolFlow, configThinkingFlow, configRetryFlow, configTuiFlow, configBashFlow } from "./tg-config.ts";
 import {
   addBotFlow,
   clearBotDefaultFlow,
@@ -34,6 +35,7 @@ export function formatInstanceChoice(instance: TelegramInstanceMetadata, activeI
 const MAIN_MENU_OPTIONS = [
   "🤖 Bots",
   "📁 Project",
+  "⌨️ Commands",
   "⚙️ Config",
   "🔄 Switch instance",
   "❌ Close",
@@ -70,6 +72,13 @@ function pick(ui: MenuUi, title: string, options: string[]): Promise<string | un
 
 // ── Switch instance flow deps ──────────────────────────────────────────────
 
+export type CommandMenuDeps = {
+  /** Full catalog (plugin + host builtins/extensions), deduped by the caller. */
+  getCommands: () => Promise<Array<{ name: string; description?: string }>>;
+  /** Execute a command in the current Telegram chat. */
+  runCommand: (name: string, args: string) => Promise<void>;
+};
+
 export type SwitchInstanceDeps = {
   getCoordinator: () => TelegramInstanceCoordinator | undefined;
   getCurrentChatId: () => number | undefined;
@@ -86,14 +95,22 @@ export type SwitchInstanceDeps = {
 // ── Menu registration ──────────────────────────────────────────────────────
 
 export function registerTgMenuCommand(
-  registry: { registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: any) => Promise<void> }) => void },
+  registry: { registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => void },
   deps: TelegramCommandDeps,
   configDeps: TgConfigDeps,
   switchDeps: SwitchInstanceDeps,
+  commandDeps?: CommandMenuDeps,
+  sessionDeps?: SessionDeps,
 ): void {
   registry.registerCommand("tg", {
     description: "Open the Telegram management menu",
-    handler: (_args, ctx) => runTgMenu(ctx.ui, deps, configDeps, switchDeps, ctx.cwd || process.cwd()),
+    handler: (_args, ctx) => runTgMenu(
+      // MenuUi is the structural subset of ExtensionUIContext the menu flows
+      // consume (plus Telegram-only menu/closeMenu hooks injected by the
+      // controller's run-with-UI wrapper).
+      ctx.ui as unknown as MenuUi,
+      deps, configDeps, switchDeps, commandDeps, sessionDeps, ctx.cwd || process.cwd(),
+    ),
   });
 }
 
@@ -104,10 +121,12 @@ async function runTgMenu(
   deps: TelegramCommandDeps,
   configDeps: TgConfigDeps,
   switchDeps: SwitchInstanceDeps,
+  commandDeps: CommandMenuDeps | undefined,
+  sessionDeps: SessionDeps | undefined,
   cwd: string,
 ): Promise<void> {
   try {
-    await mainMenu(ui, deps, configDeps, switchDeps, cwd);
+    await mainMenu(ui, deps, configDeps, switchDeps, commandDeps, sessionDeps, cwd);
   } catch (error) {
     if (!(error instanceof MenuClosed)) throw error;
   } finally {
@@ -120,10 +139,15 @@ async function mainMenu(
   deps: TelegramCommandDeps,
   configDeps: TgConfigDeps,
   switchDeps: SwitchInstanceDeps,
+  commandDeps: CommandMenuDeps | undefined,
+  sessionDeps: SessionDeps | undefined,
   cwd: string,
 ): Promise<void> {
+  const options = commandDeps
+    ? [...MAIN_MENU_OPTIONS]
+    : MAIN_MENU_OPTIONS.filter((option) => option !== "⌨️ Commands");
   while (true) {
-    const choice = await pick(ui, "Telegram Management", [...MAIN_MENU_OPTIONS]);
+    const choice = await pick(ui, "Telegram Management", options);
     if (!choice || choice === "❌ Close") return;
 
     if (choice === "🤖 Bots") {
@@ -132,8 +156,11 @@ async function mainMenu(
     } else if (choice === "📁 Project") {
       if (await projectMenu(ui, deps, cwd)) continue;
       return;
+    } else if (choice === "⌨️ Commands") {
+      if (commandDeps) await commandsMenu(ui, commandDeps);
+      continue;
     } else if (choice === "⚙️ Config") {
-      if (await configMenu(ui, configDeps)) continue;
+      if (await configMenu(ui, configDeps, sessionDeps)) continue;
       return;
     } else if (choice === "🔄 Switch instance") {
       if (await switchInstanceMenu(ui, switchDeps)) continue;
@@ -141,6 +168,23 @@ async function mainMenu(
     }
     // Unknown choice — return to main menu
   }
+}
+
+// ── Full command catalog ───────────────────────────────────────────────────
+
+async function commandsMenu(ui: MenuUi, deps: CommandMenuDeps): Promise<void> {
+  const commands = (await deps.getCommands()).filter((command) => command.name !== "tg");
+  if (commands.length === 0) {
+    ui.notify("No commands are available.", "info");
+    return;
+  }
+  const labels = commands.map((command) => `/${command.name}${command.description ? ` — ${command.description}` : ""}`);
+  const selected = await pick(ui, `⌨️ Commands (${commands.length})`, [...labels, BACK_LABEL]);
+  if (!selected || selected === BACK_LABEL) return;
+  const index = labels.indexOf(selected);
+  const command = commands[index];
+  if (!command) return;
+  await deps.runCommand(command.name, "");
 }
 
 // ── Bots submenu ───────────────────────────────────────────────────────────
@@ -272,17 +316,28 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
 
 // ── Config submenu ─────────────────────────────────────────────────────────
 
-async function configMenu(ui: MenuUi, configDeps: TgConfigDeps): Promise<boolean> {
+async function configMenu(ui: MenuUi, configDeps: TgConfigDeps, sessionDeps?: SessionDeps): Promise<boolean> {
   while (true) {
     const config = configDeps.getConfig();
     const currentTool = config.tool ?? "brief";
     const currentThinking = config.thinking ?? "brief";
     const currentRetry = config.retryCount ?? 3;
+    const currentTui = config.tuiBridge ?? "commands";
+    const currentBash = config.bashConfirm ?? "dangerous";
+    // Model thinking level lives on the session, not the bridge config; the
+    // flat /tg-thinking command was removed, so this menu is its Telegram-side
+    // home (pi users also have native /thinking; OMP has no Telegram-reachable
+    // hotkey).
+    const session = sessionDeps?.getSession();
+    const thinkingLevels = session?.getAvailableThinkingLevels() ?? [];
 
     const choice = await pick(ui, CONFIG_MENU_PREFIX, [
       `🔧 Tool: ${currentTool}`,
       `💭 Thinking: ${currentThinking}`,
+      ...(thinkingLevels.length > 0 ? [`🧠 Thinking level: ${session?.thinkingLevel ?? "off"}`] : []),
       `🔄 Retry: ${currentRetry}`,
+      `🖥 TUI bridge: ${currentTui}`,
+      `🐚 Shell confirm: ${currentBash}`,
       BACK_LABEL,
     ]);
     if (!choice || choice === BACK_LABEL) return true; // back to main
@@ -291,8 +346,22 @@ async function configMenu(ui: MenuUi, configDeps: TgConfigDeps): Promise<boolean
       await configToolFlow(ui, configDeps);
     } else if (choice.startsWith("💭 Thinking:")) {
       await configThinkingFlow(ui, configDeps);
+    } else if (choice.startsWith("🧠 Thinking level:")) {
+      if (!session || thinkingLevels.length === 0) continue;
+      const labels = thinkingLevels.map((l) => (l === session.thinkingLevel ? "● " : "  ") + String(l));
+      const selected = await pick(ui, "Thinking level", labels);
+      if (!selected) continue;
+      const level = thinkingLevels[labels.indexOf(selected)];
+      if (level !== undefined) {
+        session.setThinkingLevel(level);
+        ui.notify(`Thinking level set: ${level}`, "info");
+      }
     } else if (choice.startsWith("🔄 Retry:")) {
       await configRetryFlow(ui, configDeps);
+    } else if (choice.startsWith("🖥 TUI bridge:")) {
+      await configTuiFlow(ui, configDeps);
+    } else if (choice.startsWith("🐚 Shell confirm:")) {
+      await configBashFlow(ui, configDeps);
     }
   }
 }

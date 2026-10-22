@@ -177,9 +177,10 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 35 files, 440 tests | `npm test` |
+| Unit / regression | 37 files, 481 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
+| TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selectors, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
 | OMP E2E acceptance | Real OMP `18.12.x` in `tmux` + the same mocks; asserts round trip, `/new` Telegram confirmation, post-`/new` capture, cursor rewind | `npm run test:e2e:omp` |
 
 The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates
@@ -191,6 +192,36 @@ asserts that the message is still delivered exactly once, that both cursors are 
 it, and that the rewind is logged — a step the mock's contract-conformant
 drop-out-of-range behaviour makes impossible to pass without the backlog probe. Assertion
 counts per version are recorded, not hardcoded here.
+
+The TUI bridge suite derives its pi versions from `docs/compat-results.json`; it does not
+silently fall back to the development dependency. Each version and OMP runs in its own
+`tmux` session with isolated agent/project state while sharing only the mock Telegram API
+and mock provider. `--pi /path/to/pi` is the explicit single-version escape hatch for a
+targeted local run.
+
+### TUI bridge failure record
+
+- `snapshot()` asked `isInteractiveFocus()`, which called `snapshot()` again. Selector
+  polling stalled before Telegram could render controls. Focus is now read only from the
+  host focus owner and structural overlay fields.
+- Telegram Type sent arbitrary text through the named-key API, and key injection could
+  write to terminal output instead of the host input pipeline. Text and named keys now use
+  separate adapter methods backed by pi's input handler or OMP's `injectDebugInput`.
+- A single cached submit handler survived editor/session replacement. Submit wrappers are
+  now keyed by editor instance, so reload/new-session capture cannot call an old closure.
+- Dynamic menu entries were represented by fallback names rather than the live host
+  catalog. pi now contributes its live autocomplete/session commands; OMP contributes its
+  built-in registry plus live session commands.
+- Bash confirmation awaited the Telegram callback inside the serial polling handler, so
+  the callback could never be fetched. Bash workflows now detach after accepting the
+  update; the poll loop remains free to receive the approval or rejection.
+- Menu single-flight and delayed refresh state was process-global. Keys now include bot
+  token, API base, and delay, preventing cross-bot suppression and preserving both the
+  300ms and 1000ms captures.
+- The old acceptance check read the mock response id of `editMessageText` instead of the
+  edited Telegram message id in the request body, and local OMP `/status` autocomplete
+  opened an unrelated overlay. The driver now uses the request id and a side-effect-free
+  local `!true` command.
 
 ### What is in the publish gate, and what is not
 
@@ -206,6 +237,7 @@ are run manually before a release and recorded:
 ```console
 $ npm run test:pi-versions -- --record   # both modes
 $ npm run test:e2e -- --record
+$ npm run test:e2e:tui-bridge
 $ npm run compat:gen                     # refresh the README table
 ```
 

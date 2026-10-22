@@ -399,35 +399,6 @@ export async function unbindProjectFlow(
   ui.notify(`Removed Telegram project binding:\n${escapeHtml(project.path)}\nProject now uses the default bot (if any).`, "info");
 }
 
-export async function showProjectBindingFlow(
-  ui: MenuUi,
-  cwd: string,
-): Promise<void> {
-  const registry = await readBotRegistry();
-  const workspacePath = resolve(cwd);
-  const project = await readProjectBinding(workspacePath);
-  const lines: string[] = [];
-
-  if (project) {
-    const bot = project.binding.botId ? findBotByIdOrName(registry, project.binding.botId) : undefined;
-    const effectiveBot = bot ?? (registry.defaultBotId ? findBotByIdOrName(registry, registry.defaultBotId) : undefined);
-    const enabled = project.binding.enabled !== false;
-    lines.push(`Project: ${escapeHtml(project.path)}`);
-    lines.push(`  bot: ${effectiveBot ? escapeHtml(effectiveBot.name) : "(unresolved)"}`);
-    lines.push(`  enabled: ${enabled}`);
-    if (project.binding.tool) lines.push(`  tool: ${project.binding.tool}`);
-    if (project.binding.thinking) lines.push(`  thinking: ${project.binding.thinking}`);
-  } else {
-    lines.push(`Project: ${escapeHtml(workspacePath)} — no .pi/telegram.json (using default bot)`);
-  }
-
-  const defaultBot = registry.defaultBotId ? findBotByIdOrName(registry, registry.defaultBotId) : undefined;
-  lines.push("");
-  lines.push(`Default bot: ${defaultBot ? escapeHtml(defaultBot.name) : "(none set)"}`);
-
-  ui.notify(lines.join("\n"), "info");
-}
-
 // ── Flat command handlers (thin wrappers that parse args then call flows) ──
 
 async function handleTgBotAdd(
@@ -542,14 +513,6 @@ async function handleTgUnbindCwd(
   await unbindProjectFlow(ctx.ui, deps, ctx.cwd || process.cwd(), true);
 }
 
-async function handleTgList(
-  _args: string,
-  ctx: any,
-  _deps: TelegramCommandDeps,
-): Promise<void> {
-  await showProjectBindingFlow(ctx.ui, ctx.cwd || process.cwd());
-}
-
 // ── Registration ──────────────────────────────────────────────────────────
 
 export function registerTelegramCommands(
@@ -601,10 +564,5 @@ export function registerTelegramCommands(
   registry.registerCommand("tg-unbind-cwd", {
     description: "Remove current project Telegram bot binding",
     handler: (args, ctx) => handleTgUnbindCwd(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-list", {
-    description: "Show current project binding and default bot",
-    handler: (args, ctx) => handleTgList(args, ctx, deps),
   });
 }

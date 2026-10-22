@@ -68,13 +68,17 @@ OpenAI-compatible provider, asserting the whole round trip — `getMe` authentic
 `getUpdates` polling loop, pickup of an injected message, a real pi turn reaching the
 provider, and the assistant reply delivered back — rather than just startup.
 
-Run them with `npm run test:pi-versions` and `npm run test:e2e`; add `--record` to either to
-write measured results into `docs/compat-results.json`, then `npm run compat:gen` to refresh
-the table above. OMP has its own isolated acceptance run — `npm run test:e2e:omp` — which
-drives a real OMP TUI in `tmux` against the same mocks and additionally asserts the `/new`
-confirmation reaches Telegram. E2E and the matrix are deliberately kept out of the publish
-gate: E2E installs pi and starts `tmux` per version, so making it mandatory would slow
-releases enough to encourage bypassing it.
+Run the clean-install and round-trip suites with `npm run test:pi-versions` and
+`npm run test:e2e`; add `--record` to either to write measured results into
+`docs/compat-results.json`, then run `npm run compat:gen` to refresh the table above.
+`npm run test:e2e:tui-bridge` reads every pi version currently marked E2E-passed in that
+file, installs each into its own temporary prefix, and drives the local-command mirror,
+Telegram `/settings` selector, every remote key/type callback, and `!`/`!!` bash paths.
+It also runs OMP once. `--pi /path/to/pi` selects one local pi CLI for a targeted run.
+OMP's separate `npm run test:e2e:omp` suite verifies the normal Telegram round trip and
+that `/new` confirmation and its callback stay on Telegram after the session switch.
+E2E and the matrix remain outside the publish gate because each run installs hosts and
+starts isolated `tmux` sessions.
 
 Versions marked † carry a caveat — see
 [docs/compatibility.md](docs/compatibility.md).
@@ -119,7 +123,7 @@ The terminal never shows subagent turns as part of the main conversation — wor
 - A single `🤖 Workflow running…` line appears per workflow window.
 - The main thread's own messages (before and after a workflow) render normally.
 
-Tool and thinking rendering stay configurable via `/tg-config tool` and `/tg-config thinking` (`hidden|brief|full`).
+Tool and thinking rendering stay configurable via `/tg` → Config (`hidden|brief|full`).
 
 ### 🖥️ Interactive Telegram UI
 Full interactive UI components built on inline keyboards:
@@ -178,8 +182,8 @@ are bridged to Telegram inline buttons so remote turns can interact with them:
 
 ### Command naming
 
-- Commands that mirror pi's native slash commands keep the same names (`/model`, `/session`, `/status`, `/stop`, `/tg-thinking`, etc.) so Telegram behaves like a remote pi control surface instead of a separate bot-specific CLI.
-- Commands that configure or manage the Telegram bridge itself use the `/tg-*` prefix (`/tg-bot-add`, `/tg-bind-cwd`, `/tg-config`, `/tg-list`, `/tg-switch`, etc.). The `/tg` command opens a multi-level inline-keyboard menu that consolidates all of these into one entry point; the flat commands remain available for direct use.
+- Commands that mirror pi's native slash commands keep the same names (`/model`, `/session`, `/status`, `/stop`, etc.) so Telegram behaves like a remote pi control surface instead of a separate bot-specific CLI.
+- Commands that configure or manage the Telegram bridge itself use the `/tg-*` prefix (`/tg-bot-add`, `/tg-bind-cwd`, `/tg-switch`, etc.). The `/tg` command opens a multi-level inline-keyboard menu that consolidates all of these into one entry point; the flat commands remain available for direct use.
 - `/pair <code>` is a Telegram-only bootstrap authorization message handled before normal command dispatch. It is intentionally short and not `/tg-pair` because the setup prompt is copied into Telegram during first-time pairing, before any user is authorized.
 - Telegram Bot API command menus do not allow hyphens. The bot menu shows `/tg` (the consolidated management menu) plus pi built-in commands; flat `/tg-*` commands are excluded from the bot menu but remain dispatchable when typed. The controller accepts both underscore and hyphen forms.
 
@@ -242,7 +246,7 @@ Quoted attachments are represented as metadata (`[telegram quoted attachment]`, 
 
 - `/model` — View available models / switch current model via interactive selection
 - `/scoped-models` — Toggle scoped model sets
-- `/tg-thinking` — Adjust thinking level (off/minimal/low/medium/high/xhigh)
+- Thinking level — on hosts with a native `/thinking`, use it directly; otherwise `/tg` → Config → **Thinking level** (off/minimal/low/medium/high/xhigh)
 - `/login` — OAuth or API key authentication with full interactive flow
 - `/logout` — Remove stored credentials
 
@@ -258,7 +262,7 @@ Opens an inline-keyboard menu with four submenus (each with a **⬅️ Back** op
 |------|--------|
 | **🤖 Bots** | **➕ Add bot** — prompt for name + token, create pairing code · **Bot list** — list registered bots (★ default marker, @username, pairing status); select a bot to open its action menu: **Set as default / Clear default** (global: sets or clears the default bot, never touching a project binding; clearing on an unbound project warns that this process loses Telegram, closes the menu and re-resolves routing immediately; making another bot the default moves an unbound project to that bot and closes the menu) / **Update** (token / name / allowedUserId / apiBase) / **Remove** (confirm; warns if default) |
 | **📁 Project** | **Bot: <current>** — shows the bound bot (or `(default)`); press to change binding (pick another bot or **Unbind**) · **Enabled: ● on / ○ off** — toggle the bot on/off for this project |
-| **⚙️ Config** | **Tool: <current>** — select hidden / brief / full · **Thinking: <current>** — select hidden / brief / full · **Retry: <current>** — input a number 0–10 |
+| **⚙️ Config** | **Tool: <current>** — select hidden / brief / full · **Thinking: <current>** — select hidden / brief / full · **Thinking level: <current>** — model reasoning effort (off/minimal/low/medium/high/xhigh; shown when the model supports it) · **Retry: <current>** — input a number 0–10 · **TUI bridge: <current>** — off / commands / full · **Shell confirm: <current>** — dangerous / always / never |
 | **🔄 Switch instance** | List live pi instances sharing this bot token; select one to switch (same logic as `/tg-switch`). Must be run on the currently active instance. |
 | **❌ Close** | Exit the menu. |
 
@@ -286,13 +290,11 @@ All flat commands remain registered and dispatchable (TUI + typing them in Teleg
 | `/tg-cwd-connect` | Enable the bot for the current project (creates a minimal binding with default bot if none) |
 | `/tg-cwd-disconnect` | Disable the bot for the current project |
 | `/tg-unbind-cwd` | Remove the project binding; falls back to the default bot |
-| `/tg-list` | Show the current project binding (which bot, enabled, prefs) and the default bot |
 
 **Config & instance switching:**
 
 | Command | Description |
 |---------|-------------|
-| `/tg-config [key] [value]` | Configure tool and thinking rendering levels and retry count. Direct-set: `/tg-config tool full`, `/tg-config retry 5`. No args opens an interactive selector. |
 | `/tg-switch [instance-id|current]` | Switch the active local pi instance that owns this bot token. No args opens an inline selector; an id/prefix targets one live instance; `current` re-replays the active owner. Must be run on the currently active instance. See **Multi-instance Coordination**. |
 
 **How it works:** Bots are registered once with `/tg-bot-add` or `/tg → Bots → Add bot` (token, username, pairing, etc. stored centrally). Projects reference a bot by id via `/tg-bind-cwd` or `/tg → Project → Bot: <current> → pick a bot` — no token re-paste or re-pairing needed. Unbound projects fall back to the **default bot** (`/tg-bot-default <id|name>` or `/tg → Bots → Bot list → <bot> → Set as default`; clear it with `/tg-bot-default clear` or the bot's **Clear default** action), which is the equivalent of the former "global" bot.
@@ -330,7 +332,7 @@ Common issues and diagnostic steps. The extension writes a structured JSON Lines
 
 ### The bot does not respond to my messages
 - Verify the bot token is correct: run `/tg-bot-add` to register a bot with the correct token from [@BotFather](https://t.me/BotFather). Use `/tg-bot-update <name>` to fix an existing bot's token.
-- Confirm the bot is connected: `/tg-list` should show the project binding as enabled. If not, run `/tg-cwd-connect`. A configured token is auto-enabled again on the next pi start.
+- Confirm the bot is connected: `/tg` → **Project** shows the current binding and its **Enabled** state. If it is off, run `/tg-cwd-connect`. A configured token is auto-enabled again on the next pi start.
 - Make sure you are the authorized user. After setup, pi prints a one-time pairing code locally; send `/pair <code>` to the bot from your Telegram account. To reset authorization, remove the bot with `/tg-bot-remove` and re-add it.
 - When several local pi processes share the token, check the local TUI footer: only `connected(current)` / `active(current)` owns polling and outbound traffic. From that owner, send `/tg-switch` (or `/tg` → 🔄 Switch instance) to inspect and select another live instance. Dead owners fail over automatically after their heartbeat expires.
 - The file-based polling lock remains a final safety guard. If the expected instance is already active but polling still reports a lock conflict, restart the conflicting older process or remove only the confirmed stale `tg-poll-*.lock` directory under `~/.pi/agent/`. Retired/candidate lock leftovers are cleaned automatically and should not need manual deletion.
@@ -339,7 +341,7 @@ Common issues and diagnostic steps. The extension writes a structured JSON Lines
 - Confirm pi has an active model and valid credentials: run `/model` and `/status` from Telegram.
 - Confirm this local process is the Telegram owner (`telegram+ connected(current)` / `active(current)` in the TUI). Standby instances deliberately suppress outbound assistant/tool/UI/`tg_attach` traffic.
 - If a `/tg-switch` just completed, wait until the history-replay banner finishes (`History replay complete`) before expecting new streamed output; outbound sends are gated until replay ends.
-- If `tool` / `thinking` rendering is set to `hidden`, output may look silent. Run `/tg-config tool brief` and `/tg-config thinking brief` to surface activity (these levels also control what history replay includes).
+- If `tool` / `thinking` rendering is set to `hidden`, output may look silent. Open `/tg` → Config and set Tool / Thinking back to `brief` to surface activity (these levels also control what history replay includes).
 - Long single messages may exceed Telegram's 4096-byte limit; the extension splits them automatically, but if delivery still fails, check your network and the pi log for upstream API errors.
 
 ### `/tg-switch` fails or history replay looks wrong
@@ -373,5 +375,5 @@ Common issues and diagnostic steps. The extension writes a structured JSON Lines
 
 ### Configuration changes are not picked up
 - The bot registry lives in `~/.pi/agent/tg.json` (version 3). Project bindings live in `<project>/.pi/telegram.json`. After editing by hand, run `/reload` (or restart pi) so the extension re-reads config.
-- If the wrong bot responds, run `/tg-list` to check the current project binding, and `/tg-unbind-cwd` to fall back to the default bot.
+- If the wrong bot responds, open `/tg` → **Project** to check the current binding, and `/tg-unbind-cwd` to fall back to the default bot.
 - The v2 → v3 migration runs automatically on first read: global config becomes the default bot, workspaces become per-project `.pi/telegram.json` files with token dedup.

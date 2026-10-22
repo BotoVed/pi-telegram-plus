@@ -26,7 +26,8 @@ import { registerAllCommands } from "./lib/commands/register.ts";
 import { registerTelegramCommands } from "./lib/commands/telegram-commands.ts";
 import { registerTgMenuCommand } from "./lib/commands/tg-menu.ts";
 import { formatInstanceChoice } from "./lib/commands/tg-menu.ts";
-import { syncTelegramCommands } from "./lib/menu-commands.ts";
+import { syncTelegramCommands, scheduleTelegramCommandRefresh, cancelTelegramCommandRefreshes } from "./lib/menu-commands.ts";
+import { installTuiBridge, tuiBridge, getTuiCommands } from "./lib/tui-bridge.ts";
 import type { ResolvedTelegramConfig, TelegramConfig, TelegramTurn } from "./lib/types.ts";
 
 const indexLog = log.child("index");
@@ -55,6 +56,9 @@ function getTelegramPlusRuntimeState(): TelegramPlusRuntimeState {
 export default function piTelegramPlus(pi: ExtensionAPI): void {
   installAgentSessionCapture();
   installTelegramStatusAlignment();
+  // Patch the TUI initializer before the host creates InteractiveMode. This is
+  // best-effort and never blocks startup; session_start awaits readiness.
+  void installTuiBridge();
   // Initialize file logging first, before any subsystem can emit. Log directory
   // lives under the pi agent cache dir alongside tg.json; level is overridable
   // via PI_TELEGRAM_PLUS_LOG_LEVEL (debug/info/warn/error). See lib/logger.ts.
@@ -209,14 +213,13 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   const TUI_VISIBLE_COMMANDS = new Set([
     // tg-* commands
     "tg-bot-add", "tg-bot-list", "tg-bot-update", "tg-bot-remove", "tg-bot-default",
-    "tg-config",
-    "tg-bind-cwd", "tg-unbind-cwd", "tg-cwd-connect", "tg-cwd-disconnect", "tg-list",
+    "tg-bind-cwd", "tg-unbind-cwd", "tg-cwd-connect", "tg-cwd-disconnect",
     "tg-switch",
     // /tg multi-level menu
     "tg",
     // other pi-telegram-plus custom commands (TUI-only command list excludes /import, which is now
     // a built-in pi command; keep Telegram handler registration only.
-    "cwd", "cd", "status", "thinking", "stop", "debug",
+    "cwd", "cd", "status", "stop", "debug",
   ]);
 
   registerAllCommands({
@@ -226,7 +229,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
         pi.registerCommand(name, { description: options.description, handler: options.handler });
       }
     },
-  }, sessionDeps, sessionNameDeps, tgConfigDeps, {
+  }, sessionDeps, sessionNameDeps, {
     getTransport: () => transport,
     getActiveChatId: () => config.activeChatId,
     getActiveTurn: getCurrentActiveTurn,
@@ -255,7 +258,8 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   });
 
   // /tg multi-level menu — consolidates the flat /tg-* commands into one
-  // inline-keyboard menu (Bots / Project / Config / Switch instance).
+  // inline-keyboard menu (Bots / Project / Commands / Config / Switch instance).
+  let runCommandFromMenu: ((name: string, args: string) => Promise<void>) | undefined;
   registerTgMenuCommand({
     registerCommand: (name: string, options: { description?: string; handler: TelegramCommandHandler }) => {
       telegramCommands.set(name, options.handler);
@@ -287,7 +291,25 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       const turn = getCurrentTelegramTurn();
       return turn ? { chatId: turn.chatId, messageThreadId: turn.messageThreadId, sourceMessageId: turn.sourceMessageId } : undefined;
     },
-  });
+  }, {
+    getCommands: async () => {
+      const seen = new Set<string>();
+      const commands: Array<{ name: string; description?: string }> = [];
+      const add = (name: string, description?: string) => {
+        const clean = name.replace(/^\//, "");
+        if (!clean || seen.has(clean)) return;
+        seen.add(clean);
+        commands.push({ name: clean, ...(description ? { description } : {}) });
+      };
+      for (const command of pi.getCommands()) add(command.name, command.description);
+      for (const command of await getTuiCommands().catch(() => [])) add(command.name, command.description);
+      return commands;
+    },
+    runCommand: async (name, args) => {
+      if (!runCommandFromMenu) return;
+      await runCommandFromMenu(name, args);
+    },
+  }, sessionDeps);
 
   registerTelegramAttachmentTool(pi, {
     getActiveTurn: getCurrentActiveTurn,
@@ -365,7 +387,17 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       refreshStatus();
     },
     getBotUsername: () => config.botUsername,
+    getConfig: () => config,
+    tuiBridge,
+    isTelegramActive: () => isTelegramEnabled() && isActiveInstance(),
   });
+
+  runCommandFromMenu = async (name, args) => {
+    const turn = getCurrentTelegramTurn();
+    const chatId = turn?.chatId ?? config.activeChatId;
+    if (chatId === undefined) return;
+    await controller.runCommand(name, args, chatId, turn?.messageThreadId, turn?.sourceMessageId);
+  };
 
   const maxConfiguredUpdateId = (token: string): number | undefined => {
     // In v3, the coordinator cursor is authoritative. The project binding's
@@ -805,8 +837,10 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     replayAbortController?.abort();
     replayAbortController = undefined;
     releaseReplayGate?.();
+    cancelTelegramCommandRefreshes();
     void polling.stop();
     heartbeat.dispose();
+    controller.dispose();
     activeTurns.clear();
     ui.dispose();
     clearStatus();
@@ -861,7 +895,13 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       }
     }
     requestCoordinatorReconcile();
+    // Let the TUI bridge capture InteractiveMode before building the dynamic
+    // command menu; `ready()` is bounded and never blocks startup indefinitely.
+    await tuiBridge.ready();
     try { await syncTelegramCommands(config.botToken, pi, config.apiBase); } catch (err) { indexLog.debug("syncTelegramCommands on startup failed (non-critical)", { err }); }
+    // Bridge may capture host TUI after initial sync; refresh menu with dynamic host commands.
+    scheduleTelegramCommandRefresh(config.botToken, pi, config.apiBase, 300);
+    scheduleTelegramCommandRefresh(config.botToken, pi, config.apiBase, 1000);
     lastStatusError = undefined;
     heartbeat.startStatusHeartbeat(refreshStatus);
     refreshStatus();

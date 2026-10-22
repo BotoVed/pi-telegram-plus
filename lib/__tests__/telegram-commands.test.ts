@@ -106,7 +106,6 @@ describe("Telegram commands (bot registry + project binding)", () => {
     expect([...commands.keys()]).toContain("tg-cwd-connect");
     expect([...commands.keys()]).toContain("tg-cwd-disconnect");
     expect([...commands.keys()]).toContain("tg-unbind-cwd");
-    expect([...commands.keys()]).toContain("tg-list");
   });
 
   it("does NOT register old global commands", () => {
@@ -325,26 +324,6 @@ describe("Telegram commands (bot registry + project binding)", () => {
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("no Telegram binding"),
-      "info",
-    );
-  });
-
-  it("/tg-list shows project binding and default bot", async () => {
-    const bot = makeBot({ name: "mybot", token: "tok-x", botUsername: "mybot" });
-    await addBot(bot);
-
-    const ctx = makeCtx();
-    await commands.get("tg-bind-cwd")!("mybot", ctx);
-    ctx.ui.notify.mockClear();
-
-    await commands.get("tg-list")!("", ctx);
-
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Project:"),
-      "info",
-    );
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Default bot: mybot"),
       "info",
     );
   });
