@@ -20,15 +20,16 @@ missing or mislabelled cannot be published.
 
 - **Remote selection of mirrored TUI dialogs.** With the TUI bridge in `full` mode,
   selection dialogs mirrored into Telegram (the provider login list, `/settings`, model
-  pickers) show one button per visible option instead of an emulated arrow keyboard:
-  `▸` marks where the host cursor actually is, and tapping another option sends only
-  the keystrokes needed to move there and confirm. The mirror is cropped to the dialog
-  region (title plus list), with an `Esc / Type / Refresh / Close` row underneath.
-  Stale taps are never guessed at: if the list changed underneath the keyboard, or the
-  current position cannot be read, Telegram says so and rebuilds the keyboard instead of
-  firing blind arrows. Cursor detection covers both the default `❯` marker and the
-  private-area chevron emitted under `symbolPreset: nerd`, verified end-to-end against
-  both presets.
+  pickers) render like the `/model` command's picker: a bold title (with `(1/2)` page
+  counters when needed), one button per option, ten options per page, and `◀ Prev` /
+  `Next ▶` rows to page through longer lists. `▸` marks where the host cursor actually
+  is, and tapping another option sends only the keystrokes needed to move there and
+  confirm; no emulated arrow keyboard and no TUI screen dump. `Esc / Type / Refresh /
+  Close` stay underneath. Stale taps are never guessed at: if the list changed
+  underneath the keyboard, or the current position cannot be read, Telegram says so and
+  rebuilds the keyboard instead of firing blind arrows. Cursor detection covers both the
+  default `❯` marker and the private-area chevron emitted under `symbolPreset: nerd`,
+  verified end-to-end against both presets.
 
 ### Fixed
 

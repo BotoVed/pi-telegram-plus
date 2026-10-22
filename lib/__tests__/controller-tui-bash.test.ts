@@ -625,7 +625,7 @@ describe("Selector option buttons and pick routing", () => {
     return (call?.rows as Array<Array<{ text: string; value: string }>>).flat();
   };
 
-  it("shows one button per option and crops the mirror to the dialog", async () => {
+  it("shows one button per option in a /model-style message", async () => {
     const { harness } = harnessWithLiveScreen(loginScreen);
     await openMirror(harness);
 
@@ -638,9 +638,11 @@ describe("Selector option buttons and pick routing", () => {
     expect(values).toContain("tgplus:tui:pick:1");
     expect(values).toContain("tgplus:tui:esc");
 
+    // Same shape as /model's select: title only, no TUI screen dump or hint.
     const mirrorText = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.text!;
-    expect(mirrorText).toContain("Select provider to login");
+    expect(mirrorText).toBe("<b>Select provider to login</b>");
     expect(mirrorText).not.toContain("Update Available");
+    expect(mirrorText).not.toContain("marks the current item");
   });
 
   it("tapping an option moves the host cursor by the marker distance and confirms", async () => {
@@ -728,5 +730,73 @@ describe("Selector option buttons and pick routing", () => {
     });
     expect(keys).toEqual([]);
     expect(harness.calls.some((call) => call.text?.includes("tap an item on the refreshed keyboard"))).toBe(true);
+  });
+
+  const manyOptionsScreen = (() => {
+    const names = [
+      "ChatGPT Plus/Pro (Codex Subscription)",
+      "Anthropic (Claude Pro/Max)",
+      "Z.AI (GLM Coding Plan)",
+      "Z.AI (GLM Coding Plan · Sign in)",
+      "Kimi Code",
+      "OpenRouter",
+      "GitHub Copilot",
+      "Cursor (Claude, GPT, etc.)",
+      "Devin",
+      "Google Antigravity (Gemini, Claude, GPT-OSS)",
+      "Mistral",
+      "Groq",
+    ];
+    return [
+      "╭─ Select provider to login ───────────────────────────────────────────╮",
+      ...names.map((name, index) => `│ ${index === 0 ? "❯" : " "} ${name.padEnd(60)} │`),
+      "│ Type to search                                                      │",
+      "╰─────────────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+  })();
+
+  const tapCallback = async (
+    harness: ReturnType<typeof harnessWithLiveScreen>["harness"],
+    id: string,
+    data: string,
+  ) => {
+    await harness.controller.handleCallbackQuery({
+      id,
+      data,
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+  };
+
+  it("paginates long selectors ten per page like /model's select", async () => {
+    const { harness } = harnessWithLiveScreen(manyOptionsScreen);
+    await openMirror(harness);
+
+    const buttons = lastKeyboard(harness);
+    const texts = buttons.map((button) => button.text);
+    expect(texts).toContain("Next ▶");
+    expect(texts).not.toContain("◀ Prev");
+    expect(texts.filter((text) => text.startsWith("▸ "))).toEqual(["▸ ChatGPT Plus/Pro (Codex Subscription)"]);
+    expect(buttons.map((button) => button.value)).toContain("tgplus:tui:pick:9");
+    expect(buttons.map((button) => button.value)).not.toContain("tgplus:tui:pick:10");
+
+    const mirrorText = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.text!;
+    expect(mirrorText).toBe("<b>Select provider to login (1/2)</b>");
+  });
+
+  it("paged picks keep absolute option indexes and press the right number of arrows", async () => {
+    const { harness, keys } = harnessWithLiveScreen(manyOptionsScreen);
+    await openMirror(harness);
+
+    await tapCallback(harness, "cb-page-2", "tgplus:tui:page:1");
+    const pageTwo = lastKeyboard(harness);
+    const labels = pageTwo.map((button) => button.text);
+    expect(labels).toContain("◀ Prev");
+    expect(labels).not.toContain("Next ▶");
+    expect(labels).toContain("Mistral");
+    expect(pageTwo.map((button) => button.value)).toContain("tgplus:tui:pick:11");
+
+    await tapCallback(harness, "cb-page-2-pick", "tgplus:tui:pick:11");
+    expect(keys).toEqual([...Array(11).fill("down"), "enter"]);
   });
 });

@@ -563,37 +563,64 @@ function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
   ];
 }
 
-const SELECTOR_MAX_OPTIONS = 18;
-const SELECTOR_BUTTONS_PER_ROW = 2;
+// Selector keyboards follow /model's select layout: one option per row, a
+// page of 10, and a Prev/Next navigation row when the list does not fit.
+// Tapping an option moves the host cursor and presses Enter (see
+// selectorNavigateKeys); ▸ marks where the cursor currently is.
+const SELECTOR_PAGE_SIZE = 10;
 const SELECTOR_LABEL_MAX = 45;
 
-// Keyboard for a parsed selector: one button per visible option plus the
-// function row. Tapping a button moves the host cursor and presses Enter
-// (see selectorNavigateKeys); ▸ marks where the cursor currently is.
-function buildSelectorKeyboard(selector: SelectorState): TelegramButton[][] | undefined {
+type SelectorKeyboard = {
+  rows: TelegramButton[][];
+  page: number;
+  pageCount: number;
+};
+
+function selectorPageCount(selector: SelectorState): number {
+  return Math.max(1, Math.ceil(selector.options.length / SELECTOR_PAGE_SIZE));
+}
+
+function selectorPageOf(selector: SelectorState): number {
   const selectedIndex = selector.options.findIndex((option) => option.selected);
-  if (selectedIndex === -1) return undefined;
-  const options = selector.options.slice(0, SELECTOR_MAX_OPTIONS);
-  const rows: TelegramButton[][] = [];
-  let row: TelegramButton[] = [];
-  for (const [index, option] of options.entries()) {
-    const label = option.label.length > SELECTOR_LABEL_MAX
-      ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
-      : option.label;
-    row.push({ text: `${option.selected ? "▸ " : ""}${label}`, value: encodeTuiCallback(`pick:${index}`) });
-    if (row.length === SELECTOR_BUTTONS_PER_ROW) {
-      rows.push(row);
-      row = [];
-    }
+  return selectedIndex < 0 ? 0 : Math.floor(selectedIndex / SELECTOR_PAGE_SIZE);
+}
+
+function buildSelectorKeyboard(selector: SelectorState, requestedPage = 0): SelectorKeyboard | undefined {
+  if (!selector.options.some((option) => option.selected)) return undefined;
+  const pageCount = selectorPageCount(selector);
+  const page = Math.min(Math.max(requestedPage, 0), pageCount - 1);
+  const start = page * SELECTOR_PAGE_SIZE;
+  const rows: TelegramButton[][] = selector.options
+    .slice(start, start + SELECTOR_PAGE_SIZE)
+    .map((option, offset) => {
+      const label = option.label.length > SELECTOR_LABEL_MAX
+        ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
+        : option.label;
+      return [{
+        text: `${option.selected ? "▸ " : ""}${label}`,
+        value: encodeTuiCallback(`pick:${start + offset}`),
+      }];
+    });
+  if (pageCount > 1) {
+    const nav: TelegramButton[] = [];
+    if (page > 0) nav.push({ text: "◀ Prev", value: encodeTuiCallback(`page:${page - 1}`) });
+    if (page < pageCount - 1) nav.push({ text: "Next ▶", value: encodeTuiCallback(`page:${page + 1}`) });
+    rows.push(nav);
   }
-  if (row.length > 0) rows.push(row);
   rows.push([
     { text: "Esc", value: encodeTuiCallback("esc") },
     { text: "Type", value: encodeTuiCallback("type") },
     { text: "Refresh", value: encodeTuiCallback("refresh") },
     { text: "Close", value: encodeTuiCallback("close") },
   ]);
-  return rows;
+  return { rows, page, pageCount };
+}
+
+// The selector message mirrors /model's select: title (with page counter) only;
+// the paginated buttons carry the options, so no TUI screen dump is needed.
+function formatSelectorMessage(selector: SelectorState, page: number, pageCount: number): string {
+  const title = selector.title ?? "TUI selector";
+  return `<b>${escapeHtml(pageCount > 1 ? `${title} (${page + 1}/${pageCount})` : title)}</b>`;
 }
 
 function keyboardSignature(rows: TelegramButton[][]): string {
@@ -609,6 +636,10 @@ type TuiMirror = {
   pendingText?: boolean;
   /** Selector parsed from the most recent mirror refresh, if any. */
   selector?: SelectorState;
+  /** Title of the parsed selector; a new dialog resets the page cursor. */
+  selectorTitle?: string;
+  /** Page the user paged to for the current selector. */
+  selectorPage?: number;
   /** Keyboard layout signature; lets the refresh skip unchanged edits. */
   lastKeyboard?: string;
 };
@@ -657,20 +688,29 @@ export function createTelegramController(deps: {
 
     const selector = snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
     mirror.selector = selector;
+    const selectorTitle = selector?.title ?? "";
+    if (selector && mirror.selectorTitle !== selectorTitle) {
+      mirror.selectorTitle = selectorTitle;
+      mirror.selectorPage = undefined;
+    }
     const canControl = snapshot.interactive && getTuiMode() === "full" && !mirror.pendingText;
+    const selectorKeyboard = canControl && selector
+      ? buildSelectorKeyboard(selector, mirror.selectorPage ?? selectorPageOf(selector))
+      : undefined;
+    if (selectorKeyboard) mirror.selectorPage = selectorKeyboard.page;
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
       : snapshot.interactive ? (selector?.title ?? "TUI selector") : "TUI";
     const hint = snapshot.interactive && getTuiMode() !== "full"
       ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
-      : snapshot.interactive && selector && canControl
-        ? "\n\n<i>▸ marks the current item. Tap an item to select it (sends Enter).</i>"
-        : "";
-    const text = `${formatTuiSnapshot(snapshot, title, selector)}${hint}`;
+      : "";
+    const text = selectorKeyboard && selector
+      ? formatSelectorMessage(selector, selectorKeyboard.page, selectorKeyboard.pageCount)
+      : `${formatTuiSnapshot(snapshot, title, selector)}${hint}`;
     const rows: TelegramButton[][] | undefined = mirror.pendingText
       ? [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]
       : canControl
-        ? (selector ? buildSelectorKeyboard(selector) : undefined) ?? tuiKeyRows()
+        ? (selectorKeyboard?.rows ?? tuiKeyRows())
         : undefined;
     const keyboardSig = rows ? keyboardSignature(rows) : "none";
     if (text === mirror.lastText && mirror.lastCanControl === canControl && keyboardSig === mirror.lastKeyboard && !mirror.pendingText) return;
@@ -892,6 +932,17 @@ export function createTelegramController(deps: {
       mirror.pendingText = false;
       mirror.lastText = undefined;
       await refreshTuiMirror(mirror);
+      return;
+    }
+    if (action.startsWith("page:")) {
+      const next = Number.parseInt(action.slice("page:".length), 10);
+      const pageCount = mirror.selector ? selectorPageCount(mirror.selector) : 0;
+      if (Number.isFinite(next) && next >= 0 && next < pageCount) {
+        mirror.selectorPage = next;
+        mirror.lastText = undefined;
+        mirror.lastKeyboard = undefined;
+        await refreshTuiMirror(mirror);
+      }
       return;
     }
     if (action.startsWith("pick:")) {
