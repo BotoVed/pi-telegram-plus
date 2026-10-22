@@ -691,7 +691,7 @@ export function createTelegramController(deps: {
       const hint = snapshot.interactive
         ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
         : "";
-      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, "TUI")}${hint}`)
+      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector" : "TUI")}${hint}`)
         .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
     }
   };
