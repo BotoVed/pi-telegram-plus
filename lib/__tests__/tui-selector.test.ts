@@ -131,6 +131,31 @@ describe("parseSelectorText", () => {
     expect(labels(piPrompt)).toEqual(["!alpha", "beta", "gamma"]);
   });
 
+  it("parses a radio group without turning the question into an option", () => {
+    // Real capture from OMP's ask tool: cursor beside a radio glyph, question
+    // text above the group, key legend below.
+    const askDialog = [
+      "╭─ Ask ──────────────────────────────────────────────╮",
+      "│ Pick a color for the acceptance run                │",
+      "├────────────────────────────────────────────────────┤",
+      "│   ○ red                                            │",
+      "│ ❯ ○ green (Recommended)                            │",
+      "│   ○ blue                                           │",
+      "│   ○ Other (type your own)                          │",
+      "├────────────────────────────────────────────────────┤",
+      "│ ⏎ select · n note · ↑/↓ move · ⎋ cancel · ⌥H hide  │",
+      "╰────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const state = parseSelectorText(askDialog);
+    expect(state?.title).toBe("Ask");
+    expect(labels(askDialog)).toEqual([
+      "red",
+      "!green (Recommended)",
+      "blue",
+      "Other (type your own)",
+    ]);
+  });
+
   it("parses pi's provider window and its scroll indicator", () => {
     // Real capture from pi 0.81.1: eight rows of a 39-provider list, with the
     // search input above and "(cursor/total)" underneath.

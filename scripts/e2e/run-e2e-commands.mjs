@@ -332,6 +332,42 @@ async function runHost(host, label, phase = "main") {
     return { results, ok: results.every((r) => r.ok), session, runDir };
   }
 
+  // ── Scripted `ask` tool round trip ─────────────────────────────────────
+  // The mock provider answers the marker message with a real tool_call for the
+  // host's `ask` tool, so the model→tool→UI→answer→model loop is exercised.
+  try {
+    const since = await cursor();
+    await injectMessage("please run the ask probe ASK_TOOL_PROBE");
+    const mirror = await waitFor("ask prompt mirrored", (state) =>
+      state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && hasTui(entry)), 25_000)
+      .catch(() => undefined);
+    if (!mirror) {
+      const providerLog = join(ROOT, "provider.jsonl");
+      const askedTool = existsSync(providerLog)
+        && readFileSync(providerLog, "utf8").split("\n").filter(Boolean)
+          .map((line) => { try { return JSON.parse(line); } catch { return {}; } })
+          .some((entry) => (entry.tools ?? []).includes("ask"));
+      record("ask tool prompt mirrored", !askedTool, askedTool ? "tool offered but no mirror" : "skipped: host offers no ask tool");
+    } else {
+      const labels = buttonsOf(mirror).map((b) => String(b.text ?? ""));
+      record("ask tool prompt mirrored", /red|green|blue/.test(labels.join(" ")),
+        String(mirror.body?.text ?? "").replace(/<[^>]+>/g, "") + " · " + labels.slice(0, 4).join(" / "));
+      const green = buttonsOf(mirror).find((b) => /green/.test(String(b.text ?? ""))) ?? buttonsOf(mirror)[0];
+      const mirrorId = mirror.body?.message_id ?? mirror.message_id;
+      if (green) {
+        const pickSince = await cursor();
+        await click(green, mirrorId);
+        const reply = await waitFor("ask answer reaches the model", (state) =>
+          state.calls.slice(pickSince).findLast((c) => c.method === "sendMessage" && /MOCK_OK/i.test(String(c.body?.text ?? ""))) ?? false,
+          30_000).catch(() => undefined);
+        record("ask answered through the mirror", Boolean(reply), reply ? "turn completed" : "no follow-up reply");
+      }
+    }
+    await settle();
+  } catch (error) {
+    record("ask tool round trip", false, String(error.message).slice(0, 220));
+  }
+
   // ── Every advertised command ──────────────────────────────────────────
   const terminating = new Set(["/quit", "/exit"]);
   for (const command of menuCommands) {

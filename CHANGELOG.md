@@ -55,10 +55,18 @@ missing or mislabelled cannot be published.
   `/tg` menu through levels 1-4 (Bots → list → per-bot actions, Project → bind, Config →
   every setting flow, Commands → entries, Switch instance), then `/model`,
   `/scoped-models`, `/login`, `/logout`, `/settings`, `/reload`, `/quit`, `/exit` and
-  `/tg-cwd-disconnect` in separate phases (the last two stop serving by design).
+  `/tg-cwd-disconnect` in separate phases (the last two stop serving by design). The mock
+  provider can now emit a scripted `tool_call`, so the acceptance drives the host's `ask`
+  tool end-to-end: model → tool → TUI dialog → mirrored option → answer → model reply.
 
 ### Fixed
 
+- **`ask` prompts bypassed the mirror.** Tool execute contexts are not always the second
+  argument (OMP's `ask` receives the UI fifth) and tool-context routing was only installed
+  on hosts without `setUIContext`, so the tool resolved the host UI directly. Every
+  argument carrying a `ui` is now routed, and the routing wrappers are installed on every
+  host. Radio groups (`○`/`●` rows) are parsed as options without folding the question
+  text into the list.
 - **The `/tg` Commands menu hid plugin commands on OMP.** The catalog was built from
   `pi.getCommands()` plus the host catalog; OMP does not surface extension commands
   through that API, so `/status`, `/tg` and friends were missing from the menu even

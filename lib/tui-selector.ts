@@ -79,6 +79,11 @@ const optionRowLabel = (line: string): string | undefined => {
  */
 const SELECTED_MARKER = /^[❯>▶▸➤✦•·*→\uE000-\uF8FF]\s+/;
 
+// Radio/check groups (OMP's ask dialog: "○ red", "● green") render the cursor
+// beside the glyph. The glyph itself carries the checked state; the question
+// text above the group has no glyph and must not become an option.
+const CHOICE_MARKER = /^([○●◉◯◌])\s*/;
+
 /**
  * Non-option chrome inside a selector box: search hints and key legends.
  * These render like option rows but pressing Enter on them must never
@@ -250,7 +255,7 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
   const contentLines = blockLines.filter((line) => BOX_LINE.test(line));
   if (contentLines.length < 2) return undefined;
 
-  const options: SelectorOption[] = [];
+  const parsedRows: Array<SelectorOption & { choice: string | undefined }> = [];
   for (const line of contentLines) {
     let rest = stripBorderResidue(line);
     if (!rest) continue;
@@ -260,14 +265,25 @@ export function parseSelectorText(screenText: string): SelectorState | undefined
       selected = true;
       rest = rest.slice(marker[0].length);
     }
+    const choiceMatch = CHOICE_MARKER.exec(rest);
+    const choice = choiceMatch?.[1];
+    if (choiceMatch) rest = rest.slice(choiceMatch[0].length);
     // Collapse internal runs so a label stays stable across renders whose
     // column padding differs; stale pick lookups compare labels verbatim.
     const label = rest.replace(/\s+/g, " ").trim();
     if (!label || label.length < 2 || isFooterLine(label)) continue;
     // Lines that are only separator dashes or vertical noise.
     if (/^[─━\s│┃|·•·—-]+$/.test(label)) continue;
-    options.push({ label, selected });
+    parsedRows.push({ label, selected, choice });
   }
+
+  const choiceRows = parsedRows.filter((row) => row.choice !== undefined);
+  const options: SelectorOption[] = choiceRows.length > 0
+    ? choiceRows.map((row) => ({
+        label: row.label,
+        selected: row.selected || row.choice === "●" || row.choice === "◉",
+      }))
+    : parsedRows.map(({ label, selected }) => ({ label, selected }));
 
   if (options.length < 2) return undefined;
   const hasMarker = options.some((option) => option.selected);

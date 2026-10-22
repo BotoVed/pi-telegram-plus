@@ -76,12 +76,35 @@ const server = createServer(async (req, res) => {
     .filter((m) => m.role === "user")
     .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")))
     .join("\n");
+  const toolNames = (parsed.tools ?? [])
+    .map((tool) => tool?.function?.name ?? tool?.name ?? "")
+    .filter(Boolean);
   record({
     ts: Date.now(),
     direction: "in",
     model: parsed.model,
     prompt: promptText.slice(0, 4000),
     userText: userText.slice(0, 4000),
+    tools: toolNames,
+  });
+
+  // Scripted tool call: a driver message containing ASK_TOOL_PROBE makes the
+  // model invoke the host's `ask` tool (when advertised), so the interactive
+  // prompt path — render in the TUI, answer through the mirror — is exercised
+  // exactly as a real model would. The follow-up request carries a tool result
+  // and falls through to the normal text reply.
+  const hasToolResult = (parsed.messages ?? []).some((message) =>
+    message?.role === "tool" || message?.role === "toolResult");
+  const askTool = toolNames.find((name) => name === "ask");
+  const triggerAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE");
+  const askArguments = JSON.stringify({
+    questions: [{
+      id: "e2e-color",
+      question: "Pick a color for the acceptance run",
+      header: "E2E Ask",
+      options: [{ label: "red" }, { label: "green" }, { label: "blue" }],
+      recommended: 1,
+    }],
   });
 
   const wantsStream = parsed.stream === true;
@@ -96,6 +119,26 @@ const server = createServer(async (req, res) => {
       connection: "keep-alive",
     });
     res.write(chunk({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] }));
+    if (triggerAsk) {
+      res.write(chunk({
+        ...base,
+        choices: [{
+          index: 0,
+          delta: {
+            tool_calls: [{
+              index: 0,
+              id: "call_e2e_ask",
+              type: "function",
+              function: { name: askTool, arguments: askArguments },
+            }],
+          },
+          finish_reason: null,
+        }],
+      }));
+      res.write(chunk({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }));
+      res.write("data: [DONE]\n\n");
+      return res.end();
+    }
     for (const word of REPLY.split(" ")) {
       res.write(chunk({ ...base, choices: [{ index: 0, delta: { content: `${word} ` }, finish_reason: null }] }));
     }
@@ -111,7 +154,21 @@ const server = createServer(async (req, res) => {
       object: "chat.completion",
       created,
       model: parsed.model ?? "mock-model",
-      choices: [{ index: 0, message: { role: "assistant", content: REPLY }, finish_reason: "stop" }],
+      choices: [triggerAsk
+        ? {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: null,
+              tool_calls: [{
+                id: "call_e2e_ask",
+                type: "function",
+                function: { name: askTool, arguments: askArguments },
+              }],
+            },
+            finish_reason: "tool_calls",
+          }
+        : { index: 0, message: { role: "assistant", content: REPLY }, finish_reason: "stop" }],
       usage: { prompt_tokens: 8, completion_tokens: 4, total_tokens: 12 },
     }),
   );

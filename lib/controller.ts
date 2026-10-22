@@ -341,12 +341,21 @@ function installToolUiRouting(session: CapturedAgentSession): void {
           configurable: true,
           writable: true,
           value: (...args: unknown[]) => {
-            const context = args[1];
             const turn = getCurrentTelegramTurn();
             const routed = turn ? routedUiByTurn.get(turn) : undefined;
-            if (!routed || !context || typeof context !== "object") return originalExecute(...args);
-            const [input, , ...rest] = args;
-            return originalExecute(input, withUiContext(context, routed), ...rest);
+            if (!routed) return originalExecute(...args);
+            // Hosts disagree on where the tool context sits in the execute
+            // signature (pi: second argument; OMP's ask: fifth), so route every
+            // argument that carries a UI context.
+            const routedArgs = args.map((arg) => {
+              if (!arg || typeof arg !== "object" || !("ui" in (arg as object))) return arg;
+              try {
+                return withUiContext(arg as Record<string, unknown>, routed);
+              } catch {
+                return arg;
+              }
+            });
+            return originalExecute(...routedArgs);
           },
         });
         toolExecutePatched.add(raw);
@@ -385,7 +394,11 @@ function installToolUiRouting(session: CapturedAgentSession): void {
  * Telegram and the terminal on one implementation.
  */
 function createPromptObserverUi(baseUi: unknown, telegramUi: ExtensionUIContext, onPrompt: () => void): ExtensionUIContext {
-  const promptMethods = new Set(["select", "confirm", "input", "inputSecret", "editor", "custom"]);
+  // Host-specific prompt entry points count too: OMP's `ask` tool goes through
+  // ui.askDialog(), and approvals through ui.approve().
+  const promptMethods = new Set([
+    "select", "confirm", "input", "inputSecret", "editor", "custom", "askDialog", "approve",
+  ]);
   return new Proxy({}, {
     get(_target, prop, receiver) {
       if (prop === "__piTelegramPlusRoutedUi") return true;
@@ -491,7 +504,11 @@ async function runWithTelegramUi<T>(deps: {
    */
   observePrompts?: () => void;
 }): Promise<T> {
-  if (typeof deps.session.extensionRunner.setUIContext !== "function") installToolUiRouting(deps.session);
+  // Tool contexts (ask / eval preludes) resolve `ui` from a private store that
+  // does not follow the runner's setUIContext on every host, so install the
+  // routing wrappers regardless; they pass straight through when no Telegram
+  // turn is active.
+  installToolUiRouting(deps.session);
   const observe = deps.observePrompts;
   const restore = pushTelegramUiContext(
     deps.session.extensionRunner,
