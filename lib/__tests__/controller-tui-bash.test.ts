@@ -849,4 +849,19 @@ describe("Selector option buttons and pick routing", () => {
     expect(keys).toEqual(["pageDown"]);
     expect(lastKeyboard(harness).map((button) => button.text)).not.toContain("Next ▶");
   });
+
+  it("offers Next on short windows that render the host scrollbar", async () => {
+    // A terminal too short for ten rows still overflows: the scrollbar thumb
+    // (U+2588) is the only "more rows follow" signal left.
+    const shortWindow = [
+      "╭─ Select provider to login ─────────────────────────────╮",
+      ...PROVIDERS.slice(0, 5).map((name, index) =>
+        `│ ${index === 0 ? "❯" : " "} ${name.padEnd(50)} ${index === 0 ? "█" : "│"} │`),
+      "│ Type to search                                        │",
+      "╰───────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const { harness } = harnessWithWindows([shortWindow]);
+    await openMirror(harness);
+    expect(lastKeyboard(harness).map((button) => button.text)).toContain("Next ▶");
+  });
 });

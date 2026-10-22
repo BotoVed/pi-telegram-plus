@@ -583,6 +583,13 @@ type SelectorKeyboard = {
   rows: TelegramButton[][];
 };
 
+// OMP renders a scrollbar (thumb U+2588) only when the list overflows the
+// window, so it is a second "rows follow" signal for short terminals where
+// the window is smaller than SELECTOR_PAGE_SIZE.
+function selectorOverflows(selector: SelectorState): boolean {
+  return selector.block.split("\n").some((line) => /\u2588\s*[│|]?\s*$/.test(line));
+}
+
 function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging): SelectorKeyboard | undefined {
   if (!selector.options.some((option) => option.selected)) return undefined;
   const window = selector.options.slice(0, SELECTOR_PAGE_SIZE);
@@ -597,7 +604,8 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
   });
   const hasPrev = paging.page > 0 && window.length > 0;
   // A full window cannot tell whether rows follow; the first Next tap does.
-  const hasNext = paging.hasNext && window.length >= SELECTOR_PAGE_SIZE;
+  // The scrollbar covers short terminals whose window is below the page size.
+  const hasNext = paging.hasNext && (window.length >= SELECTOR_PAGE_SIZE || selectorOverflows(selector));
   if (hasPrev || hasNext) {
     const nav: TelegramButton[] = [];
     if (hasPrev) nav.push({ text: "◀ Prev", value: encodeTuiCallback("page:prev") });
