@@ -77,6 +77,10 @@ Telegram `/settings` selector, every remote key/type callback, and `!`/`!!` bash
 It also runs OMP once. `--pi /path/to/pi` selects one local pi CLI for a targeted run.
 OMP's separate `npm run test:e2e:omp` suite verifies the normal Telegram round trip and
 that `/new` confirmation and its callback stay on Telegram after the session switch.
+`npm run test:e2e:commands` is the full command acceptance: both hosts in isolated
+`tmux` sessions, every command the bot advertises plus the hidden `/tg-*` commands, and
+the `/tg` menu walked through its nested levels (Bots → list → actions, Project → bind,
+Config → each setting, Commands → entries, Switch instance).
 E2E and the matrix remain outside the publish gate because each run installs hosts and
 starts isolated `tmux` sessions.
 

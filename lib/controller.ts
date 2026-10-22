@@ -1453,7 +1453,8 @@ export function createTelegramController(deps: {
       session,
       ui: telegramUi,
       turn: commandTurn,
-      observePrompts: promptMirrorHook(commandTurn),
+      // Command handlers are plugin flows: they own the Telegram UI (menus,
+      // confirmations). Only agent/tool prompts are mirrored from the host.
       run: async () => {
         await handler(args, commandCtx);
         if (!wasIdle || !idleFn || !waitFn) return;

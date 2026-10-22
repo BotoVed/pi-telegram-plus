@@ -301,6 +301,9 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       };
       for (const command of pi.getCommands()) add(command.name, command.description);
       for (const command of await getTuiCommands().catch(() => [])) add(command.name, command.description);
+      // Hosts that do not surface extension commands through getCommands()
+      // (OMP) would otherwise hide /status, /tg, and friends from this menu.
+      for (const name of telegramCommands.keys()) add(name);
       return commands;
     },
     runCommand: async (name, args) => {

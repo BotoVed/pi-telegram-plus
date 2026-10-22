@@ -49,9 +49,20 @@ missing or mislabelled cannot be published.
   Telegram-native prompts remain for `off`/`commands` mode, where no controllable mirror
   exists. Prompts are modal: one owns the terminal at a time, and a mirror message is
   created per prompt.
+- **Command acceptance harness.** `npm run test:e2e:commands` boots real pi and OMP in
+  isolated `tmux` sessions against the mock Bot API and mock provider, dispatches every
+  command the bot advertises plus the hidden `/tg-*` management commands, and walks the
+  `/tg` menu through levels 1-4 (Bots → list → per-bot actions, Project → bind, Config →
+  every setting flow, Commands → entries, Switch instance), then `/model`,
+  `/scoped-models`, `/login`, `/logout`, `/settings`, `/reload`, `/quit`, `/exit` and
+  `/tg-cwd-disconnect` in separate phases (the last two stop serving by design).
 
 ### Fixed
 
+- **The `/tg` Commands menu hid plugin commands on OMP.** The catalog was built from
+  `pi.getCommands()` plus the host catalog; OMP does not surface extension commands
+  through that API, so `/status`, `/tg` and friends were missing from the menu even
+  though the bot menu listed them. The plugin's own dispatch map is now merged in.
 - **Every option past the first screen of a mirrored selector was unreachable.** OMP
   renders ten rows of its scrolling selector window over a catalog that holds 100+
   providers; the mirror treated the rendered rows as the whole list, so it always showed
