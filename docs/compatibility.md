@@ -189,10 +189,10 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 37 files, 494 tests | `npm test` |
+| Unit / regression | 38 files, 513 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
-| TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selectors, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
+| TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selector mirrors incl. per-option buttons, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
 | OMP E2E acceptance | Real OMP `18.12.x` in `tmux` + the same mocks; asserts round trip, `/new` Telegram confirmation, post-`/new` capture, cursor rewind | `npm run test:e2e:omp` |
 
 The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates

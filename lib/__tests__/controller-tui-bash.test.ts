@@ -569,3 +569,164 @@ describe("Host capability routing", () => {
     await vi.waitFor(() => expect(fork).toHaveBeenCalled());
   });
 });
+
+describe("Selector option buttons and pick routing", () => {
+  const loginScreen = [
+    " π > ⬢ Mock Model > 🗑 proj ▶────23%╎──────33K─",
+    "────────────────────────────────────────────────",
+    " Update Available",
+    " New version 18.12.6 is available. Run: omp update",
+    "────────────────────────────────────────────────",
+    "",
+    "╭─ Select provider to login ───────────────────────────────────────────────────────────────────────╮",
+    "│ ❯ ChatGPT Plus/Pro (Codex Subscription)                                                        █ │",
+    "│   Anthropic (Claude Pro/Max)                                                                   │ │",
+    "│   Z.AI (GLM Coding Plan)                                                                       │ │",
+    "│   Kimi Code                                                                                    │ │",
+    "│ Type to search                                                                                   │",
+    "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    "telegram+ connected(current)",
+  ].join("\n");
+  const filteredScreen = [
+    "╭─ Select provider to login ───────────────────────────────────────────────────────────────────────╮",
+    "│   Cursor (Claude, GPT, etc.)                                                                   │ │",
+    "│ ❯ Devin                                                                                        │ │",
+    "│   Google Antigravity (Gemini, Claude, GPT-OSS)                                                 │ │",
+    "│ Type to search                                                                                   │",
+    "╰──────────────────────────────────────────────────────────────────────────────────────────────────╯",
+  ].join("\n");
+
+  function harnessWithLiveScreen(initial: string) {
+    const state = { screen: initial };
+    const keys: string[] = [];
+    const bridge = createBridge({
+      snapshot: vi.fn(() => ({ text: state.screen, interactive: true, host: "omp" as const, width: 100 })),
+      key: vi.fn((name: string) => { keys.push(name); return true; }),
+    });
+    const harness = createHarness({
+      bridge,
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+    });
+    return { harness, state, keys };
+  }
+
+  const openMirror = async (harness: ReturnType<typeof harnessWithLiveScreen>["harness"]) => {
+    await harness.controller.handleMessage({
+      message_id: 60,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "/settings",
+    });
+    await vi.waitFor(() => expect(harness.calls.some((call) => call.method === "buttons")).toBe(true));
+  };
+
+  const lastKeyboard = (harness: ReturnType<typeof harnessWithLiveScreen>["harness"]) => {
+    const call = [...harness.calls].reverse().find((entry) => entry.method === "buttons");
+    return (call?.rows as Array<Array<{ text: string; value: string }>>).flat();
+  };
+
+  it("shows one button per option and crops the mirror to the dialog", async () => {
+    const { harness } = harnessWithLiveScreen(loginScreen);
+    await openMirror(harness);
+
+    const buttons = lastKeyboard(harness).map((button) => button.text);
+    expect(buttons).toContain("▸ ChatGPT Plus/Pro (Codex Subscription)");
+    expect(buttons).toContain("Anthropic (Claude Pro/Max)");
+    expect(buttons).toContain("Kimi Code");
+    expect(buttons.some((text) => /search|Update|connected/i.test(text))).toBe(false);
+    const values = lastKeyboard(harness).map((button) => button.value);
+    expect(values).toContain("tgplus:tui:pick:1");
+    expect(values).toContain("tgplus:tui:esc");
+
+    const mirrorText = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.text!;
+    expect(mirrorText).toContain("Select provider to login");
+    expect(mirrorText).not.toContain("Update Available");
+  });
+
+  it("tapping an option moves the host cursor by the marker distance and confirms", async () => {
+    const { harness, keys } = harnessWithLiveScreen(loginScreen);
+    await openMirror(harness);
+
+    await harness.controller.handleCallbackQuery({
+      id: "cb-pick-1",
+      data: "tgplus:tui:pick:1",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(keys).toEqual(["down", "enter"]);
+  });
+
+  it("tapping the already-selected option only presses Enter", async () => {
+    const { harness, keys } = harnessWithLiveScreen(loginScreen);
+    await openMirror(harness);
+
+    await harness.controller.handleCallbackQuery({
+      id: "cb-pick-0",
+      data: "tgplus:tui:pick:0",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(keys).toEqual(["enter"]);
+  });
+
+  it("taps on a filtered (stale) list notify instead of injecting blind keys", async () => {
+    const { harness, state, keys } = harnessWithLiveScreen(loginScreen);
+    await openMirror(harness);
+
+    // The list filtered down while the keyboard still shows the old options;
+    // the tapped label no longer exists, so no keystrokes may be guessed.
+    state.screen = filteredScreen;
+    await harness.controller.handleCallbackQuery({
+      id: "cb-pick-zai",
+      data: "tgplus:tui:pick:3",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(keys).toEqual([]);
+    expect(harness.calls.some((call) => call.text?.includes("no longer in this list"))).toBe(true);
+  });
+
+  it("tapping a still-present option uses the live marker position", async () => {
+    const scrolledWithTarget = [
+      "╭─ Pick ─────────────────────╮",
+      "│   Kimi Code              │",
+      "│ ❯ OpenRouter             │",
+      "│   GitHub Copilot         │",
+      "╰──────────────────────────╯",
+    ].join("\n");
+    const { harness, state, keys } = harnessWithLiveScreen(loginScreen);
+    await openMirror(harness);
+    // "Kimi Code" sat at index 3 with the marker at 0; after scrolling it is
+    // one step ABOVE the live marker, so the keyboard press must be "up".
+    state.screen = scrolledWithTarget;
+    await harness.controller.handleCallbackQuery({
+      id: "cb-pick-kimi",
+      data: "tgplus:tui:pick:3",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(keys).toEqual(["up", "enter"]);
+  });
+
+  it("refuses blind injection when the current item cannot be located", async () => {
+    const noMarkerScreen = [
+      "╭─ Pick ─────────────────────╮",
+      "│   Kimi Code              │",
+      "│   OpenRouter             │",
+      "│   GitHub Copilot         │",
+      "╰──────────────────────────╯",
+    ].join("\n");
+    const { harness, state, keys } = harnessWithLiveScreen(loginScreen);
+    await openMirror(harness);
+
+    state.screen = noMarkerScreen;
+    await harness.controller.handleCallbackQuery({
+      id: "cb-pick-nomarker",
+      data: "tgplus:tui:pick:2",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(keys).toEqual([]);
+    expect(harness.calls.some((call) => call.text?.includes("tap an item on the refreshed keyboard"))).toBe(true);
+  });
+});

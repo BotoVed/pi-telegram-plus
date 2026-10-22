@@ -16,6 +16,8 @@ import type {
 import type { TelegramUiRuntime } from "./telegram-ui.ts";
 import type { TuiBridgeAdapter, TuiSnapshot } from "./tui-bridge.ts";
 import { tuiBridge as defaultTuiBridge } from "./tui-bridge.ts";
+import type { SelectorState } from "./tui-selector.ts";
+import { parseSelectorText, selectorNavigateKeys } from "./tui-selector.ts";
 import { escapeHtml } from "./html.ts";
 import { stripAnsi } from "./custom-dialogs.ts";
 import { recordCommandUsage } from "./command-usage.ts";
@@ -544,8 +546,10 @@ function tailScreen(text: string, maxBytes: number): string {
   return `…\n${lines.slice(start).join("\n")}`;
 }
 
-function formatTuiSnapshot(snapshot: TuiSnapshot, title: string): string {
-  return `<b>${escapeHtml(title)}</b>\n${preformatted(tailScreen(snapshot.text || "(empty screen)", TUI_SNAPSHOT_MAX_BYTES))}`;
+function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: SelectorState): string {
+  const shownTitle = selector?.title ?? title;
+  const body = selector ? selector.block : snapshot.text || "(empty screen)";
+  return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(tailScreen(body, TUI_SNAPSHOT_MAX_BYTES))}`;
 }
 
 function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
@@ -559,6 +563,43 @@ function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
   ];
 }
 
+const SELECTOR_MAX_OPTIONS = 18;
+const SELECTOR_BUTTONS_PER_ROW = 2;
+const SELECTOR_LABEL_MAX = 45;
+
+// Keyboard for a parsed selector: one button per visible option plus the
+// function row. Tapping a button moves the host cursor and presses Enter
+// (see selectorNavigateKeys); ▸ marks where the cursor currently is.
+function buildSelectorKeyboard(selector: SelectorState): TelegramButton[][] | undefined {
+  const selectedIndex = selector.options.findIndex((option) => option.selected);
+  if (selectedIndex === -1) return undefined;
+  const options = selector.options.slice(0, SELECTOR_MAX_OPTIONS);
+  const rows: TelegramButton[][] = [];
+  let row: TelegramButton[] = [];
+  for (const [index, option] of options.entries()) {
+    const label = option.label.length > SELECTOR_LABEL_MAX
+      ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
+      : option.label;
+    row.push({ text: `${option.selected ? "▸ " : ""}${label}`, value: encodeTuiCallback(`pick:${index}`) });
+    if (row.length === SELECTOR_BUTTONS_PER_ROW) {
+      rows.push(row);
+      row = [];
+    }
+  }
+  if (row.length > 0) rows.push(row);
+  rows.push([
+    { text: "Esc", value: encodeTuiCallback("esc") },
+    { text: "Type", value: encodeTuiCallback("type") },
+    { text: "Refresh", value: encodeTuiCallback("refresh") },
+    { text: "Close", value: encodeTuiCallback("close") },
+  ]);
+  return rows;
+}
+
+function keyboardSignature(rows: TelegramButton[][]): string {
+  return rows.map((row) => row.map((button) => `${button.text}\u0000${button.value}`).join(",")).join("\n");
+}
+
 type TuiMirror = {
   chatId: number;
   messageThreadId?: number;
@@ -566,6 +607,10 @@ type TuiMirror = {
   lastText?: string;
   lastCanControl?: boolean;
   pendingText?: boolean;
+  /** Selector parsed from the most recent mirror refresh, if any. */
+  selector?: SelectorState;
+  /** Keyboard layout signature; lets the refresh skip unchanged edits. */
+  lastKeyboard?: string;
 };
 
 export function createTelegramController(deps: {
@@ -610,22 +655,31 @@ export function createTelegramController(deps: {
       return;
     }
 
+    const selector = snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
+    mirror.selector = selector;
     const canControl = snapshot.interactive && getTuiMode() === "full" && !mirror.pendingText;
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
-      : snapshot.interactive ? "TUI selector" : "TUI";
+      : snapshot.interactive ? (selector?.title ?? "TUI selector") : "TUI";
     const hint = snapshot.interactive && getTuiMode() !== "full"
       ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
-      : "";
-    const text = `${formatTuiSnapshot(snapshot, title)}${hint}`;
-    if (text === mirror.lastText && mirror.lastCanControl === canControl && !mirror.pendingText) return;
+      : snapshot.interactive && selector && canControl
+        ? "\n\n<i>▸ marks the current item. Tap an item to select it (sends Enter).</i>"
+        : "";
+    const text = `${formatTuiSnapshot(snapshot, title, selector)}${hint}`;
+    const rows: TelegramButton[][] | undefined = mirror.pendingText
+      ? [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]
+      : canControl
+        ? (selector ? buildSelectorKeyboard(selector) : undefined) ?? tuiKeyRows()
+        : undefined;
+    const keyboardSig = rows ? keyboardSignature(rows) : "none";
+    if (text === mirror.lastText && mirror.lastCanControl === canControl && keyboardSig === mirror.lastKeyboard && !mirror.pendingText) return;
     mirror.lastText = text;
     mirror.lastCanControl = canControl;
+    mirror.lastKeyboard = keyboardSig;
 
-    if (canControl) {
-      await deps.transport.editButtons(mirror.chatId, mirror.messageId, text, tuiKeyRows()).catch(ctrlLog.swallow("debug", "editButtons failed", { chatId: mirror.chatId }));
-    } else if (mirror.pendingText) {
-      await deps.transport.editButtons(mirror.chatId, mirror.messageId, text, [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]).catch(ctrlLog.swallow("debug", "editButtons cancel failed", { chatId: mirror.chatId }));
+    if (rows) {
+      await deps.transport.editButtons(mirror.chatId, mirror.messageId, text, rows).catch(ctrlLog.swallow("debug", "editButtons failed", { chatId: mirror.chatId }));
     } else {
       await deps.transport.editText(mirror.chatId, mirror.messageId, text).catch(ctrlLog.swallow("debug", "editText failed", { chatId: mirror.chatId }));
       await deps.transport.removeInlineKeyboard(mirror.chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI mirror failed", { chatId: mirror.chatId }));
@@ -688,10 +742,11 @@ export function createTelegramController(deps: {
       tuiMirrors.set(targetKey(chatId, messageThreadId), mirror);
       await refreshTuiMirror(mirror);
     } else {
+      const selector = snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
       const hint = snapshot.interactive
         ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
         : "";
-      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector" : "TUI")}${hint}`)
+      await deps.transport.editText(chatId, messageId, `${formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector" : "TUI", selector)}${hint}`)
         .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
     }
   };
@@ -839,6 +894,46 @@ export function createTelegramController(deps: {
       await refreshTuiMirror(mirror);
       return;
     }
+    if (action.startsWith("pick:")) {
+      mirror.pendingText = false;
+      const index = Number.parseInt(action.slice("pick:".length), 10);
+      const target = mirror.selector?.options[index];
+      let liveSnapshot: TuiSnapshot | undefined;
+      try { liveSnapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { liveSnapshot = undefined; }
+      const live = liveSnapshot?.interactive ? parseSelectorText(liveSnapshot.text ?? "") : undefined;
+      if (!target || !live) {
+        mirror.lastText = undefined;
+        await deps.transport.sendText(chatId, "That selector changed; tap an item on the refreshed keyboard.", messageThreadId);
+        await refreshTuiMirror(mirror);
+        return;
+      }
+      const liveIndex = live.options.findIndex((option) => option.label === target.label);
+      if (liveIndex === -1) {
+        mirror.lastText = undefined;
+        await deps.transport.sendText(chatId, `"${target.label}" is no longer in this list; tap an item on the refreshed keyboard.`, messageThreadId);
+        await refreshTuiMirror(mirror);
+        return;
+      }
+      const keys = selectorNavigateKeys(live, liveIndex);
+      if (!keys) {
+        mirror.lastText = undefined;
+        await deps.transport.sendText(chatId, "Cannot locate the current item in this dialog; use the arrow keys instead.", messageThreadId);
+        await refreshTuiMirror(mirror);
+        return;
+      }
+      for (const press of keys) {
+        if (!bridge.key(press)) {
+          await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId);
+          tuiMirrors.delete(key);
+          return;
+        }
+      }
+      await sleep(TUI_POLL_INTERVAL_MS * 2);
+      mirror.lastText = undefined;
+      mirror.lastKeyboard = undefined;
+      await refreshTuiMirror(mirror);
+      return;
+    }
     if (action !== "refresh") {
       if (!bridge.key(action)) {
         await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId);
@@ -864,7 +959,7 @@ export function createTelegramController(deps: {
       await sleep(450);
       const snapshot = bridge.snapshot(TUI_SCREEN_WIDTH);
       if (!snapshot) return;
-      await deps.transport.sendText(chatId, formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector (local)" : "TUI result"))
+      await deps.transport.sendText(chatId, formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector (local)" : "TUI result", snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined))
         .catch(ctrlLog.swallow("warn", "sendText local TUI snapshot failed", { chatId }));
     })();
   });

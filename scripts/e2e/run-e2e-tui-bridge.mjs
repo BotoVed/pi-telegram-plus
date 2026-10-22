@@ -555,21 +555,28 @@ async function runHost(host, piCli, label) {
       if (!hit) throw new Error(`host pane shows no login UI: ${paneText.slice(-200)}`);
       const loginMirror = await waitFor("login mirror keyboard", (state) =>
         messages({ calls: state.calls.slice(callOffset) }).find((call) =>
-          String(call.body?.text ?? "").includes("TUI selector")
-          && Array.isArray(call.body?.reply_markup?.inline_keyboard)
+          Array.isArray(call.body?.reply_markup?.inline_keyboard)
           && call.body.reply_markup.inline_keyboard.flat()
             .some((button) => String(button.callback_data ?? "").startsWith("tgplus:tui:"))) ?? false);
       const loginMirrorMessageId = loginMirror.body?.message_id ?? loginMirror.message_id;
       const loginRows = loginMirror.body.reply_markup.inline_keyboard;
-      const callbackId = await injectCallback("tgplus:tui:down", loginMirrorMessageId);
-      await waitFor("down callback answered on login mirror", (state) =>
+      const loginButtons = loginRows.flat();
+      // Selector keyboards carry per-item pick buttons; prefer clicking a
+      // non-selected item (proves the pick path), else fall back to arrows.
+      const probeButton = loginButtons.find((button) =>
+        String(button.callback_data ?? "").startsWith("tgplus:tui:pick:")
+        && !String(button.text ?? "").startsWith("▸"));
+      const probeData = probeButton ? String(probeButton.callback_data) : "tgplus:tui:down";
+      const callbackId = await injectCallback(probeData, loginMirrorMessageId);
+      await waitFor("probe callback answered on login mirror", (state) =>
         state.calls.some((call) =>
           call.method === "answerCallbackQuery" && call.body?.callback_query_id === callbackId));
       const paneAfter = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
-      if (!/login|oauth|auth|provider|credential/i.test(paneAfter)) {
-        throw new Error("login dialog closed after injected key");
+      if (paneAfter === paneText) {
+        throw new Error(`login dialog did not react to ${probeData}`);
       }
-      record(loginStep, true, `${loginRows.flat().length} buttons + down callback routed`);
+      record(loginStep, true,
+        `${loginButtons.length} buttons + ${probeButton ? "pick" : "down"} callback routed`);
     } else {
       await waitFor("native Telegram auth menu", (state) => {
         const call = state.calls.slice(callOffset).find((entry) => {

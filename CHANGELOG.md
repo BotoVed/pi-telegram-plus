@@ -16,6 +16,18 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
+### Added
+
+- **Remote selection of mirrored TUI dialogs.** With the TUI bridge in `full` mode,
+  selection dialogs mirrored into Telegram (the provider login list, `/settings`, model
+  pickers) show one button per visible option instead of an emulated arrow keyboard:
+  `▸` marks where the host cursor actually is, and tapping another option sends only
+  the keystrokes needed to move there and confirm. The mirror is cropped to the dialog
+  region (title plus list), with an `Esc / Type / Refresh / Close` row underneath.
+  Stale taps are never guessed at: if the list changed underneath the keyboard, or the
+  current position cannot be read, Telegram says so and rebuilds the keyboard instead of
+  firing blind arrows.
+
 ### Fixed
 
 - **`/status` crashed on hosts whose session omits fields.** OMP sessions can report
@@ -68,9 +80,10 @@ missing or mislabelled cannot be published.
   Telegram `/settings` waits for the real selector, all key/type/refresh/close callbacks
   use the host input pipeline, and local command mirroring no longer times out. Menu refresh
   work is isolated per bot/API endpoint, both delayed refreshes run, and recent commands
-  receive their intended priority. The isolated TUI E2E suite now exercises the recorded pi
-  E2E version matrix plus OMP, including streamed bash output, exit codes, confirmation, and
-  `!!` context exclusion.
+  receive their intended priority. Keyboard de-duplication tracks the button layout, not
+  just the text, so a rebuilt selector always reaches Telegram. The isolated TUI E2E
+  suite now exercises the recorded pi E2E version matrix plus OMP, including streamed
+  bash output, exit codes, confirmation, and `!!` context exclusion.
 - **The global default bot could not be unset cleanly.** `/tg → Bots → Bot list →
   <bot>` exposed it as a project-aware toggle (`Default: ● on / ○ off`): on an unbound
   project it demanded a confirmation, and after clearing it never re-resolved the running

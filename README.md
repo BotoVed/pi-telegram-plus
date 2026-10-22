@@ -260,6 +260,13 @@ of reach of Telegram (OMP stores credentials in its own layer), they are routed 
 host's own TUI login dialog through the TUI bridge — the dialog is mirrored back to
 Telegram; with the bridge off you get a notice to run them in the terminal.
 
+Mirrored dialogs arrive as one Telegram message. In `full` bridge mode the plugin parses
+the mirrored region and turns selectable lines into one button each: `▸` marks the host's
+current selection, and tapping another item emits only the keystrokes needed to move the
+host cursor there and confirm. `Type` still forwards raw text into the dialog, and
+`Refresh`/`Close` control the mirror itself. In `commands` mode the dialog is mirrored
+read-only.
+
 ### Telegram Connection Commands
 
 The primary way to manage the Telegram integration is the **`/tg` menu** — a multi-level inline-keyboard menu that consolidates all bot registry, project binding, config, and instance-switching actions into one entry point. The flat `/tg-*` commands remain available as direct slash commands for power users.
