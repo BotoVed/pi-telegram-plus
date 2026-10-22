@@ -377,7 +377,71 @@ function installToolUiRouting(session: CapturedAgentSession): void {
   }
 }
 
-function pushTelegramUiContext(runner: CapturedAgentSession["extensionRunner"], ui: ExtensionUIContext, turn: TelegramTurn): () => void {
+/**
+ * Host-rendered prompt observer. Instead of answering prompts itself, it
+ * delegates every call to the host UI (so the terminal draws the dialog) and
+ * only reports the prompt methods, which lets the mirror attach to the overlay
+ * the host is about to render. Answers travel back as injected keys, keeping
+ * Telegram and the terminal on one implementation.
+ */
+function createPromptObserverUi(baseUi: unknown, telegramUi: ExtensionUIContext, onPrompt: () => void): ExtensionUIContext {
+  const promptMethods = new Set(["select", "confirm", "input", "inputSecret", "editor", "custom"]);
+  return new Proxy({}, {
+    get(_target, prop, receiver) {
+      if (prop === "__piTelegramPlusRoutedUi") return true;
+      const target = baseUi ?? {};
+      const value = Reflect.get(target as object, prop, receiver);
+      if (typeof value !== "function") return value;
+      const name = String(prop);
+      if (name === "notify") {
+        // Notifications are not prompts: the terminal still prints them, and
+        // the chat keeps receiving what it used to.
+        return (...args: unknown[]) => {
+          let result: unknown;
+          try {
+            result = (value as (...notifyArgs: unknown[]) => unknown).apply(target, args);
+          } catch {
+            // Host notification failures must not block the chat copy.
+          }
+          try {
+            const chatNotify = (telegramUi as unknown as Record<string, unknown>).notify;
+            if (typeof chatNotify === "function") (chatNotify as (...a: unknown[]) => unknown).apply(telegramUi, args);
+          } catch {
+            // Chat notification is best-effort.
+          }
+          return result;
+        };
+      }
+      if (!promptMethods.has(name)) return value.bind(target);
+      return (...args: unknown[]) => {
+        try {
+          onPrompt();
+        } catch {
+          // Observation must never break the host prompt.
+        }
+        return (value as (...promptArgs: unknown[]) => unknown).apply(target, args);
+      };
+    },
+    has(_target, prop) {
+      const target = baseUi ?? {};
+      return prop === "__piTelegramPlusRoutedUi" || prop in (target as object);
+    },
+    ownKeys() {
+      return Reflect.ownKeys((baseUi ?? {}) as object);
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const desc = Reflect.getOwnPropertyDescriptor((baseUi ?? {}) as object, prop);
+      return desc ? { ...desc, configurable: true } : undefined;
+    },
+  }) as ExtensionUIContext;
+}
+
+function pushTelegramUiContext(
+  runner: CapturedAgentSession["extensionRunner"],
+  ui: ExtensionUIContext,
+  turn: TelegramTurn,
+  makeRouted: (baseUi: unknown, telegramUi: ExtensionUIContext, turn: TelegramTurn) => ExtensionUIContext = createRoutedTelegramUi,
+): () => void {
   if (typeof runner.setUIContext !== "function") installRoutedRunnerUi(runner);
   let state = telegramUiStacks.get(runner as object);
   if (!state) {
@@ -388,7 +452,7 @@ function pushTelegramUiContext(runner: CapturedAgentSession["extensionRunner"], 
   const entry: TelegramUiStackEntry = {
     turn,
     ui,
-    routedUi: createRoutedTelegramUi(previousUi, ui, turn),
+    routedUi: makeRouted(previousUi, ui, turn),
   };
   state.entries.push(entry);
   routedUiByTurn.set(turn, entry.routedUi);
@@ -420,9 +484,21 @@ async function runWithTelegramUi<T>(deps: {
   ui: ExtensionUIContext;
   turn: TelegramTurn;
   run: () => Promise<T>;
+  /**
+   * Set when the TUI bridge can drive the host UI: prompts then render in the
+   * terminal and this callback attaches the mirror instead of answering from
+   * Telegram.
+   */
+  observePrompts?: () => void;
 }): Promise<T> {
   if (typeof deps.session.extensionRunner.setUIContext !== "function") installToolUiRouting(deps.session);
-  const restore = pushTelegramUiContext(deps.session.extensionRunner, deps.ui, deps.turn);
+  const observe = deps.observePrompts;
+  const restore = pushTelegramUiContext(
+    deps.session.extensionRunner,
+    deps.ui,
+    deps.turn,
+    observe ? (baseUi) => createPromptObserverUi(baseUi, deps.ui, observe) : undefined,
+  );
   try {
     return await deps.run();
   } finally {
@@ -435,6 +511,10 @@ const BASH_STREAM_DEBOUNCE_MS = 700;
 const TUI_SCREEN_WIDTH = 100;
 const TUI_POLL_INTERVAL_MS = 80;
 const TUI_POLL_ATTEMPTS = 40;
+// Host-rendered prompts: poll the overlay until the host takes it back.
+const TUI_PROMPT_POLL_MS = 150;
+const TUI_PROMPT_EDIT_MS = 1500;
+const TUI_PROMPT_MAX_POLLS = 2400;
 const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
 
 // Mirror-first: these open host dialogs, and the Telegram-native
@@ -746,6 +826,70 @@ export function createTelegramController(deps: {
       await deps.transport.removeInlineKeyboard(mirror.chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI mirror failed", { chatId: mirror.chatId }));
       if (!snapshot.interactive) tuiMirrors.delete(targetKey(mirror.chatId, mirror.messageThreadId));
     }
+  };
+
+  /**
+   * Attach a mirror to a prompt the host is about to render. Prompts are modal
+   * (one owns the terminal at a time) and belong to the turn that raised them,
+   * so the requesting chat gets the mirror and answers with injected keys —
+   * exactly what someone at the terminal would do.
+   */
+  const startPromptMirror = (turn: TelegramTurn): void => {
+    if (getTuiMode() !== "full") return;
+    const chatId = turn.chatId;
+    const messageThreadId = turn.messageThreadId;
+    const key = targetKey(chatId, messageThreadId);
+    const existing = tuiMirrors.get(key);
+    if (existing) {
+      void refreshTuiMirror(existing);
+      return;
+    }
+    void (async () => {
+      // The observer fires before the host renders; wait for the overlay.
+      let snapshot: TuiSnapshot | undefined;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await sleep(30);
+        try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { snapshot = undefined; }
+        if (snapshot?.interactive) break;
+      }
+      if (!snapshot?.interactive) return;
+      if (tuiMirrors.has(key)) return;
+      const sent = await deps.transport
+        .sendText(chatId, "<b>TUI prompt</b>", messageThreadId, turn.sourceMessageId)
+        .catch(ctrlLog.swallow("warn", "sendText prompt mirror failed", { chatId }));
+      const messageId = sent?.[0]?.message_id;
+      if (messageId === undefined) return;
+      const mirror: TuiMirror = { chatId, messageThreadId, messageId };
+      tuiMirrors.set(key, mirror);
+      await refreshTuiMirror(mirror);
+      let lastEditAt = Date.now();
+      for (let poll = 0; poll < TUI_PROMPT_MAX_POLLS; poll += 1) {
+        await sleep(TUI_PROMPT_POLL_MS);
+        if (tuiMirrors.get(key) !== mirror) return;
+        if (!deps.getActiveTurn(chatId, messageThreadId)) return;
+        let live: TuiSnapshot | undefined;
+        try { live = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { live = undefined; }
+        if (!live) return;
+        // Selector prompts render as a title plus buttons (stable text); other
+        // overlays carry spinners, so their whole-screen mirror is throttled to
+        // stay clear of Telegram's per-chat edit rate.
+        const parsed = live.interactive ? parseSelectorText(live.text ?? "") : undefined;
+        const now = Date.now();
+        if (!parsed && now - lastEditAt < TUI_PROMPT_EDIT_MS) {
+          if (!live.interactive) return;
+          continue;
+        }
+        await refreshTuiMirror(mirror);
+        lastEditAt = now;
+        if (!live.interactive) return;
+      }
+      tuiMirrors.delete(key);
+    })();
+  };
+
+  const promptMirrorHook = (turn: TelegramTurn): (() => void) | undefined => {
+    if (getTuiMode() !== "full" || !bridge.isAvailable()) return undefined;
+    return () => startPromptMirror(turn);
   };
 
   const runTuiCommand = async (
@@ -1178,6 +1322,7 @@ export function createTelegramController(deps: {
         session,
         ui: telegramUi,
         turn,
+        observePrompts: promptMirrorHook(turn),
         run: () => deliverToMainThread(text, chatId, messageThreadId, sourceMessageId),
       }));
     } finally {
@@ -1235,6 +1380,7 @@ export function createTelegramController(deps: {
             session,
             ui: telegramUi,
             turn,
+            observePrompts: promptMirrorHook(turn),
             run: async () => {
               // Goal auto-continuations can be streaming without owning an
               // active TelegramTurn. Keep the delivery behavior tied to the
@@ -1252,6 +1398,7 @@ export function createTelegramController(deps: {
         session,
         ui: telegramUi,
         turn: existingTurn,
+        observePrompts: promptMirrorHook(existingTurn),
         run: () => session.prompt(text, { source: "interactive", streamingBehavior: "steer" as const }),
       }));
       return;
@@ -1306,6 +1453,7 @@ export function createTelegramController(deps: {
       session,
       ui: telegramUi,
       turn: commandTurn,
+      observePrompts: promptMirrorHook(commandTurn),
       run: async () => {
         await handler(args, commandCtx);
         if (!wasIdle || !idleFn || !waitFn) return;

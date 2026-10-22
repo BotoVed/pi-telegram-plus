@@ -111,6 +111,26 @@ describe("parseSelectorText", () => {
     ]);
   });
 
+  it("keeps a prompt title verbatim when the host does not add a colon", () => {
+    // pi passes the title through unchanged; a mid-turn tool prompt reads
+    // "Probe: pick one" with no trailing colon.
+    const piPrompt = [
+      " ⠇ Working...",
+      "",
+      " Probe: pick one",
+      "",
+      " → alpha",
+      "   beta",
+      "   gamma",
+      "",
+      " ↑↓ navigate  enter select  escape/ctrl+c cancel",
+      "",
+    ].join("\n");
+    const state = parseSelectorText(piPrompt);
+    expect(state?.title).toBe("Probe: pick one");
+    expect(labels(piPrompt)).toEqual(["!alpha", "beta", "gamma"]);
+  });
+
   it("parses pi's provider window and its scroll indicator", () => {
     // Real capture from pi 0.81.1: eight rows of a 39-provider list, with the
     // search input above and "(cursor/total)" underneath.

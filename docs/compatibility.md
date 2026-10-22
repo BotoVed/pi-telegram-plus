@@ -189,7 +189,7 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 38 files, 525 tests | `npm test` |
+| Unit / regression | 38 files, 527 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
 | TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selector mirrors incl. per-option buttons and Prev/Next paging, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
@@ -245,6 +245,13 @@ behavior exactly; it is a host catalog quirk, not a routing bug.
   PageUp/PageDown). pi parks the hardware cursor with an APC string inside its search
   field, which the old SGR-only stripper left in the text and broke title detection;
   control strings (APC/OSC/CSI) are now stripped, not just colors.
+- Prompts were answered by a Telegram UI that replaced the host's UI context, so the
+  terminal never drew them and the two surfaces could diverge. With the bridge in `full`
+  mode the host UI keeps ownership (a proxy only observes prompt methods) and the mirror
+  attaches to the overlay the host renders; answers are injected keystrokes. A probe
+  extension raising `ui.select` on `turn_start` verified on pi 0.81.1 and OMP that the
+  host draws mid-turn prompts, that injected keys complete them, and that the turn then
+  finishes with the Telegram reply.
 - Bash confirmation awaited the Telegram callback inside the serial polling handler, so
   the callback could never be fetched. Bash workflows now detach after accepting the
   update; the poll loop remains free to receive the approval or rejection.

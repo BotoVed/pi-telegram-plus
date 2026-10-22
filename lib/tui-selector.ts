@@ -199,6 +199,8 @@ function parseBorderlessSelector(lines: string[]): SelectorState | undefined {
     if (!anchored) continue;
 
     // Title: nearest non-empty line above the run that is not the search field.
+    // pi passes the title through verbatim ("Probe: pick one" has no trailing
+    // colon), so any plain line above the anchored run qualifies.
     let titleIndex = start - 1;
     while (titleIndex >= 0) {
       const text = lines[titleIndex].trim();
@@ -207,7 +209,8 @@ function parseBorderlessSelector(lines: string[]): SelectorState | undefined {
     }
     if (titleIndex < 0) continue;
     const titleLine = lines[titleIndex].trim();
-    if (!titleLine.endsWith(":") || RULE_ROW.test(titleLine)) continue;
+    if (!titleLine || RULE_ROW.test(titleLine)) continue;
+    if (CURSOR_ROW.test(lines[titleIndex]) || PLAIN_ROW.test(lines[titleIndex])) continue;
     const title = titleLine.replace(/:\s*$/, "").trim();
     if (!title) continue;
 

@@ -41,6 +41,14 @@ missing or mislabelled cannot be published.
   the parser now recognizes; windowed pi lists page by walking arrow steps because pi
   ignores PageUp/PageDown. Mirrored lines strip APC/OSC/CSI control strings, not just
   SGR colors.
+- **Prompts render in the terminal and are mirrored.** In `full` mode the host UI keeps
+  ownership of every interactive prompt — extension `select/confirm/input/custom` and
+  tools such as `ask` — so the question appears in the TUI exactly as it would without
+  the plugin, and the requesting chat receives a mirror of it. Answers travel back as
+  keystrokes (pick/keys/typed text), so both surfaces stay on one implementation. The
+  Telegram-native prompts remain for `off`/`commands` mode, where no controllable mirror
+  exists. Prompts are modal: one owns the terminal at a time, and a mirror message is
+  created per prompt.
 
 ### Fixed
 

@@ -621,6 +621,53 @@ describe("Host capability routing", () => {
 
     await vi.waitFor(() => expect(fork).toHaveBeenCalled());
   });
+
+  it("lets the host render prompts and mirrors them in full mode", async () => {
+    const selectorScreen = [
+      "╭─ Pick one ──────────────────────╮",
+      "│ ❯ alpha                        │",
+      "│   beta                         │",
+      "╰────────────────────────────────╯",
+    ].join("\n");
+    const hostSelect = vi.fn(async () => "alpha");
+    const hostUi = { select: hostSelect, notify: vi.fn(), confirm: vi.fn(), input: vi.fn() };
+    let routedUi: { select: (title: string, options: string[]) => Promise<string | undefined> } | undefined;
+    const session = createSession({
+      extensionRunner: {
+        getUIContext: () => hostUi,
+        setUIContext: (ui: unknown) => { routedUi = ui as typeof routedUi; },
+        getCommand: () => undefined,
+        createCommandContext: () => ({ ui: hostUi }),
+      },
+      prompt: vi.fn(async () => {
+        // A prompt raised by the agent/tool while the Telegram turn runs.
+        await routedUi!.select("Pick one", ["alpha", "beta"]);
+      }),
+    });
+    const harness = createHarness({
+      session,
+      bridge: createBridge({
+        snapshot: vi.fn(() => ({ text: selectorScreen, interactive: true, host: "pi" as const, width: 100 })),
+      }),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+    });
+
+    await harness.controller.handleMessage({
+      message_id: 50,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "hello",
+    });
+
+    await vi.waitFor(() => expect(hostSelect).toHaveBeenCalledWith("Pick one", ["alpha", "beta"]));
+    await vi.waitFor(() => {
+      const call = harness.calls.find((entry) => entry.method === "buttons");
+      expect(call).toBeDefined();
+      expect(call!.text).toContain("Pick one");
+    });
+    const keyboard = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.rows as Array<Array<{ text: string; value: string }>>;
+    expect(keyboard.flat().map((button) => button.text)).toContain("▸ alpha");
+  });
 });
 
 describe("Selector option buttons and pick routing", () => {
