@@ -28,6 +28,12 @@ missing or mislabelled cannot be published.
   no handler and the text went to the provider as a prompt. The menu now omits the entry
   whenever the host catalog lacks native `thinking`; the thinking level is set from
   `/tg` → Config → **Thinking level**.
+- **The Bot menu offered host commands OMP does not serve.** The curated static list is
+  pi-based, so on OMP `/clone`, `/import`, `/name`, and `/reload` reached no handler and
+  fell through to the model as prompt text. Once the TUI bridge has captured the live host
+  catalog, static entries missing from it are omitted; plugin-served commands (`/tg`,
+  `/cwd`, `/status`, `/scoped-models`, …) stay, and with no captured catalog the curated
+  list is kept unchanged.
 - **TUI bridge mirroring and remote controls could stall or target stale state.** Snapshot
   focus detection no longer recurses or guesses from rendered words, submit wrapping is
   isolated per editor/session, and pi/OMP command menus now come from live host registries.

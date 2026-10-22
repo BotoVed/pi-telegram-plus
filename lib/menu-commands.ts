@@ -73,6 +73,13 @@ const CORE_COMMAND_PRIORITY = [
   "clear", "cost", "context", "diff", "undo", "redo",
 ];
 
+// Commands the plugin itself dispatches from Telegram (handlers in
+// telegramCommands, or the /tg hub), valid on every host regardless of the
+// captured catalog. `scoped-models` additionally has no TUI on OMP.
+const TELEGRAM_SERVED_COMMANDS = new Set([
+  "tg", "scoped_models", "cwd", "cd", "status", "stop", "debug",
+]);
+
 const toTelegramCommandName = (name: string): string | undefined => {
   // Telegram bot menu commands allow only [A-Za-z0-9_] and max 32 chars.
   const telegramName = name.replace(/-/g, "_").toLowerCase();
@@ -99,15 +106,26 @@ export function buildTelegramMenuCommands(
     commands.set(telegramName, (description?.trim() || `Run /${telegramName}`).slice(0, 256));
   };
 
-  // pi 1.x ships a built-in /thinking slash command; OMP's thinking control is a
-  // hotkey with no slash command, so a `thinking` menu entry there would reach no
-  // handler and fall through to the model as prompt text. Omit the entry when the
-  // host catalog has no native `thinking`; Telegram users set the level via
-  // /tg → Config → Thinking level.
-  const hostHasThinking = (options.tuiCommands ?? []).some((c) => c.name === "thinking")
-    || pi.getCommands().some((c) => c.name === "thinking");
+  // When the TUI bridge has captured the host catalog, a static entry the host
+  // does not actually serve would reach no handler and fall through to the
+  // model as prompt text (e.g. `clone` on OMP, or `thinking` where the host has
+  // no native command). Filter static entries against the live catalog; keep
+  // plugin-served commands. With no captured catalog, keep the curated list.
+  const catalogNames = new Set<string>();
+  for (const command of options.tuiCommands ?? []) {
+    const n = toTelegramCommandName(command.name);
+    if (n) catalogNames.add(n);
+  }
+  for (const command of pi.getCommands()) {
+    const n = toTelegramCommandName(command.name);
+    if (n) catalogNames.add(n);
+  }
+  const catalogAvailable = (options.tuiCommands?.length ?? 0) > 0;
   for (const command of TELEGRAM_MENU_COMMANDS) {
-    if (command.command === "thinking" && !hostHasThinking) continue;
+    if (catalogAvailable) {
+      const n = toTelegramCommandName(command.command);
+      if (n && !catalogNames.has(n) && !TELEGRAM_SERVED_COMMANDS.has(n)) continue;
+    }
     addCommand(command.command, command.description);
   }
 

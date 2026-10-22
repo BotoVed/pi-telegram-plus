@@ -142,6 +142,45 @@ describe("dynamic TUI catalog in BotMenu", () => {
     expect(commands.some((c) => c.command === "thinking")).toBe(true);
     expect(commands.some((c) => c.command === "tg_thinking")).toBe(false);
   });
+
+  it("drops static entries the captured host catalog does not serve", () => {
+    const ompCommand = (name: string) => ({ name, description: `omp ${name}`, source: "builtin" as const });
+    const commands = buildTelegramMenuCommands(
+      { getCommands: () => [] },
+      {
+        tuiCommands: [
+          ompCommand("settings"), ompCommand("model"), ompCommand("session"),
+          ompCommand("fork"), ompCommand("compact"), ompCommand("export"),
+        ],
+      },
+    );
+    const names = new Set(commands.map((c) => c.command));
+    expect(names.has("clone")).toBe(false);
+    expect(names.has("import")).toBe(false);
+    expect(names.has("name")).toBe(false);
+    expect(names.has("reload")).toBe(false);
+    expect(names.has("settings")).toBe(true);
+    expect(names.has("model")).toBe(true);
+  });
+
+  it("keeps plugin-served commands even when the host catalog lacks them", () => {
+    const commands = buildTelegramMenuCommands(
+      { getCommands: () => [] },
+      { tuiCommands: [{ name: "settings", description: "Open settings", source: "builtin" }] },
+    );
+    const names = new Set(commands.map((c) => c.command));
+    expect(names.has("tg")).toBe(true);
+    expect(names.has("scoped_models")).toBe(true);
+    expect(names.has("cwd")).toBe(true);
+    expect(names.has("status")).toBe(true);
+  });
+
+  it("keeps the curated static list when no host catalog was captured", () => {
+    const commands = buildTelegramMenuCommands({ getCommands: () => [] }, {});
+    const names = new Set(commands.map((c) => c.command));
+    expect(names.has("clone")).toBe(true);
+    expect(names.has("reload")).toBe(true);
+  });
 });
 
 describe("dynamic command ordering", () => {
