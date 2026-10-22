@@ -61,6 +61,12 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **Input dialogs had no visible way to type.** The OAuth code prompt (and every other
+  host input overlay) mirrored as arrow keys, so nothing told the user how to answer.
+  Such screens now carry an explicit hint — tap `⌨️ Type`, send the text as the next
+  message, then `⏎ Enter` — and the Type button is labelled accordingly. After the text
+  lands, the host's own submit row is mirrored as a selectable option, so the value can
+  be submitted with one tap.
 - **Non-selector overlays looked like a raw screen dump.** OAuth wait screens and other
   informational dialogs carry no options, so they fall back to a screen mirror — but it
   was titled "TUI selector", hid the authorization URL inside a `<pre>` block (Telegram

@@ -1005,6 +1005,24 @@ describe("Selector option buttons and pick routing", () => {
     expect(message).toBe("<b>Select authentication method</b>");
   });
 
+  it("advertises the Type → send → Enter path for input overlays", async () => {
+    const inputScreen = [
+      "╭─ Login to OpenRouter ──────────────────────────────────────╮",
+      "│ Paste the authorization code, then press ⏎:                  │",
+      "│ >                                                            │",
+      "╰──────────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const { harness } = harnessWithLiveScreen(inputScreen);
+    await openMirror(harness);
+
+    const call = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!;
+    expect(call.text).toContain("typed input");
+    expect(call.text).toContain("⌨️ Type");
+    const labels = (call.rows as Array<Array<{ text: string }>>).flat().map((button) => button.text);
+    expect(labels).toContain("⌨️ Type");
+    expect(labels).toContain("Enter");
+  });
+
   it("titles non-selector overlays after the dialog and links their URLs", async () => {
     // OAuth wait screens have no options, so the mirror falls back to the
     // screen — but it must carry the dialog title and a tappable link.

@@ -659,6 +659,16 @@ function snapshotLinks(body: string): string {
   return urls.length > 0 ? `\n\n${urls.map((url) => `🔗 ${escapeHtml(url)}`).join("\n")}` : "";
 }
 
+// Overlays that wait for typed input render a bare prompt row (">" / "> ▌").
+// The mirror cannot host a native field, so it advertises the Type → send →
+// Enter path instead of leaving the user with arrow keys only.
+function hasInputPrompt(body: string): boolean {
+  return body.split("\n").some((line) => {
+    const stripped = line.replace(/^[\s│┃|]*/, "").replace(/[\s│┃|]+$/, "");
+    return /^>[\s\u2580-\u259F]*$/.test(stripped);
+  });
+}
+
 function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: SelectorState): string {
   const shownTitle = selector?.title ?? title;
   const body = selector ? selector.block : snapshot.text || "(empty screen)";
@@ -672,7 +682,7 @@ function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
     [button("←", "left"), button("→", "right")],
     [button("Enter", "enter"), button("Esc", "esc")],
     [button("Space", "space"), button("Tab", "tab")],
-    [button("Type", "type"), button("Refresh", "refresh"), button("Close", "close")],
+    [button("⌨️ Type", "type"), button("Refresh", "refresh"), button("Close", "close")],
   ];
 }
 
@@ -737,7 +747,7 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
   }
   rows.push([
     { text: "Esc", value: encodeTuiCallback("esc") },
-    { text: "Type", value: encodeTuiCallback("type") },
+    { text: "⌨️ Type", value: encodeTuiCallback("type") },
     { text: "Refresh", value: encodeTuiCallback("refresh") },
     { text: "Close", value: encodeTuiCallback("close") },
   ]);
@@ -829,9 +839,13 @@ export function createTelegramController(deps: {
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
       : snapshot.interactive ? (selector?.title ?? dialogTitle ?? "TUI selector") : "TUI";
+    const inputHint = snapshot.interactive && !selector && getTuiMode() === "full"
+      && hasInputPrompt(snapshot.text ?? "")
+      ? "\n\n<i>⌨️ This dialog expects typed input: tap ⌨️ Type, send the text as the next message, then tap ⏎ Enter.</i>"
+      : "";
     const hint = snapshot.interactive && getTuiMode() !== "full"
       ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
-      : "";
+      : inputHint;
     const text = selectorKeyboard && selector
       ? formatSelectorMessage(selector)
       : `${formatTuiSnapshot(snapshot, title, selector)}${hint}`;
