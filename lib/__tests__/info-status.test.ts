@@ -66,6 +66,26 @@ describe("buildStatusSnapshot", () => {
     expect(html).not.toContain("<script>");
   });
 
+  it("tolerates hosts missing thinkingLevel, tokens, and cost fields", () => {
+    const session = {
+      ...makeSession(),
+      thinkingLevel: undefined,
+      getSessionStats: () => ({
+        sessionFile: undefined,
+        sessionId: undefined,
+        userMessages: undefined,
+        assistantMessages: undefined,
+        toolCalls: undefined,
+        tokens: undefined,
+        cost: undefined,
+      }),
+    } as unknown as CapturedAgentSession;
+    const html = buildStatusSnapshot(session);
+    expect(html).toContain("<b>thinking</b>  off");
+    expect(html).toContain("<b>in</b>  0");
+    expect(html).toContain("$0.0000");
+  });
+
   it("uses 'active' badge when streaming and 'idle' otherwise", () => {
     const idle = buildStatusSnapshot(makeSession({ isStreaming: false, pendingMessageCount: 0 }));
     const active = buildStatusSnapshot(makeSession({ isStreaming: true }));

@@ -189,7 +189,7 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 37 files, 484 tests | `npm test` |
+| Unit / regression | 37 files, 494 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
 | TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selectors, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
@@ -210,6 +210,11 @@ silently fall back to the development dependency. Each version and OMP runs in i
 `tmux` session with isolated agent/project state while sharing only the mock Telegram API
 and mock provider. `--pi /path/to/pi` is the explicit single-version escape hatch for a
 targeted local run.
+
+Routing parity note: OMP's advertised command catalog over-reports — entries such as
+`/theme`, `/undo`, `/help`, `/cost` are not dispatched by its input handler, so typing
+them falls through to the model as prompt text. The bridge mirrors that terminal
+behavior exactly; it is a host catalog quirk, not a routing bug.
 
 ### TUI bridge failure record
 
@@ -234,6 +239,11 @@ targeted local run.
   edited Telegram message id in the request body, and local OMP `/status` autocomplete
   opened an unrelated overlay. The driver now uses the request id and a side-effect-free
   local `!true` command.
+- Full-screen mirrors over Telegram's chunk limit rendered as a bare title: the edit
+  transport delivers only the first split chunk. Snapshots are now tail-truncated to
+  one message, keeping the bottom of the screen.
+- `/status` threw on hosts whose session omits `thinkingLevel` or stats fields;
+  missing values now render as `off`/`-`/`0`.
 
 ### What is in the publish gate, and what is not
 

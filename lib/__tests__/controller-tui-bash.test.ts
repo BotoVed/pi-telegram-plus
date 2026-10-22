@@ -238,6 +238,31 @@ describe("TUI command bridge routing", () => {
     expect(harness.calls.some((call) => call.text?.includes("TUI command"))).toBe(true);
   });
 
+  it("truncates an oversized screen snapshot to its bottom so the mirror stays one message", async () => {
+    const bigScreen = Array.from({ length: 80 }, (_, i) => `row ${i} ${"█".repeat(90)}`).join("\n");
+    const harness = createHarness({
+      bridge: createBridge({
+        snapshot: vi.fn(() => ({ text: bigScreen, interactive: false, host: "pi" as const, width: 100 })),
+      }),
+    });
+    await harness.controller.handleMessage({
+      message_id: 22,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "/settings",
+    });
+
+    await vi.waitFor(() => {
+      const edit = harness.calls.find((call) => call.messageId !== undefined && call.text?.includes("<pre>"));
+      expect(edit).toBeDefined();
+    }, { timeout: 6000 });
+    const edit = harness.calls.find((call) => call.messageId !== undefined && call.text?.includes("<pre>"))!;
+    expect(Buffer.byteLength(edit.text!, "utf8")).toBeLessThanOrEqual(3600);
+    expect(edit.text).toContain("…");
+    expect(edit.text).toContain("row 79");
+    expect(edit.text).not.toContain("row 0 ");
+  });
+
   it("renders an interactive selector and routes callback keys in full mode", async () => {
     const key = vi.fn(() => true);
     const bridge = createBridge({

@@ -310,6 +310,7 @@ async function buildCommandCatalog(): Promise<TuiCommand[]> {
   for (const source of [session?.slashCommands, session?.customCommands, session?.promptTemplates]) {
     for (const command of commandList(source, "host")) add(command);
   }
+  bridgeLog.debug("command catalog built", { host: state.host, builtin: state.hostCommands.length, total: commands.length });
   return commands;
 }
 

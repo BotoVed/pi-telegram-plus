@@ -18,6 +18,15 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **`/status` crashed on hosts whose session omits fields.** OMP sessions can report
+  no `thinkingLevel` (and hosts may omit token/cost stats entirely), and the status
+  snapshot fed those straight into string operations — `undefined is not an object`.
+  Missing values now render as `off`/`-`/`0` instead of throwing.
+- **The TUI mirror collapsed to a bare title on tall terminals.** A full-screen
+  snapshot over Telegram's chunk limit was split, and the mirror edit delivered only
+  the first chunk — the message showed `TUI` with no screen. The snapshot is now
+  tail-truncated to fit one message, keeping the bottom of the screen where dialogs
+  and the latest output render.
 - **A re-delivered update could replay its side effects forever.** The startup backlog
   probe re-serves the last processed update; the poller mistook it for a foreign cursor,
   rewound below it, and re-handled it on every cycle — for `/reload` that meant a reload

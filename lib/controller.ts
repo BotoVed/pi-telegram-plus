@@ -525,8 +525,27 @@ function tailText(text: string, maxChars = 3200): string {
   return text.length <= maxChars ? text : `…${text.slice(-(maxChars - 1))}`;
 }
 
+// editText/editButtons only deliver the first split chunk, so a full-screen
+// snapshot must fit in one chunk (3600 bytes). Keep the bottom of the screen:
+// dialogs, prompts, and the latest output render there.
+const TUI_SNAPSHOT_MAX_BYTES = 3000;
+
+function tailScreen(text: string, maxBytes: number): string {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
+  const lines = text.split("\n");
+  let bytes = 4; // "…\n"
+  let start = lines.length;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const lineBytes = Buffer.byteLength(lines[i], "utf8") + 1;
+    if (bytes + lineBytes > maxBytes) break;
+    bytes += lineBytes;
+    start = i;
+  }
+  return `…\n${lines.slice(start).join("\n")}`;
+}
+
 function formatTuiSnapshot(snapshot: TuiSnapshot, title: string): string {
-  return `<b>${escapeHtml(title)}</b>\n${preformatted(snapshot.text || "(empty screen)")}`;
+  return `<b>${escapeHtml(title)}</b>\n${preformatted(tailScreen(snapshot.text || "(empty screen)", TUI_SNAPSHOT_MAX_BYTES))}`;
 }
 
 function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
@@ -1431,7 +1450,6 @@ export function createTelegramController(deps: {
       }
       if (hasPromptInput) {
         const mediaBlock = (() => {
-
           if (!hasMediaInput) return "";
           const lines = [mediaSummary];
           const statusLines = [...downloadedMediaLines, ...failedMediaLines];

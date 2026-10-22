@@ -46,8 +46,8 @@ export function buildStatusSnapshot(session: CapturedAgentSession): string {
     : `${contextPercent.toFixed(1)}%/${contextWindow}`;
 
   // Labels are hard-coded, so escaping is unnecessary; only the value is dynamic.
-  const line = (label: string, value: string): string =>
-    `  <b>${label}</b>  ${escapeHtml(value)}`;
+  const line = (label: string, value: string | number | undefined | null): string =>
+    `  <b>${label}</b>  ${escapeHtml(value === undefined || value === null ? "—" : String(value))}`;
 
   return [
     "<b>🛰 TUI Status</b>",
@@ -59,18 +59,18 @@ export function buildStatusSnapshot(session: CapturedAgentSession): string {
     "",
     "<b>🤖 Model</b>",
     line("model", model ? `${model.provider}/${model.id}` : "(none)"),
-    line("thinking", session.thinkingLevel),
+    line("thinking", session.thinkingLevel ?? "off"),
     line("state", stateBadge),
     line("queued", String(session.pendingMessageCount)),
     "",
     "<b>📊 Context &amp; Tokens</b>",
     line("context", contextDisplay),
-    line("in", formatFooterLikeTokenCount(stats.tokens.input)),
-    line("out", formatFooterLikeTokenCount(stats.tokens.output)),
-    line("cache R", formatFooterLikeTokenCount(stats.tokens.cacheRead)),
-    line("cache W", formatFooterLikeTokenCount(stats.tokens.cacheWrite)),
-    line("total", formatFooterLikeTokenCount(stats.tokens.total)),
-    line("cost", `$${stats.cost.toFixed(4)}`),
+    line("in", formatFooterLikeTokenCount(stats.tokens?.input ?? 0)),
+    line("out", formatFooterLikeTokenCount(stats.tokens?.output ?? 0)),
+    line("cache R", formatFooterLikeTokenCount(stats.tokens?.cacheRead ?? 0)),
+    line("cache W", formatFooterLikeTokenCount(stats.tokens?.cacheWrite ?? 0)),
+    line("total", formatFooterLikeTokenCount(stats.tokens?.total ?? 0)),
+    line("cost", `$${(stats.cost ?? 0).toFixed(4)}`),
     "",
     "<b>💬 Messages</b>",
     line("user", String(stats.userMessages)),
@@ -255,7 +255,7 @@ export function registerInfoCommands(
       const lines = [
         `Debug`,
         `model: ${model ? `${model.provider}/${model.id}` : "(none)"}`,
-        `thinking: ${session.thinkingLevel}`,
+        `thinking: ${session.thinkingLevel ?? "off"}`,
         `streaming: ${session.isStreaming}`,
         `compacting: ${session.isCompacting}`,
         `entries: ${entries.length}`,
