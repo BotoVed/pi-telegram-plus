@@ -20,16 +20,18 @@ missing or mislabelled cannot be published.
 
 - **Remote selection of mirrored TUI dialogs.** With the TUI bridge in `full` mode,
   selection dialogs mirrored into Telegram (the provider login list, `/settings`, model
-  pickers) render like the `/model` command's picker: a bold title (with `(1/2)` page
-  counters when needed), one button per option, ten options per page, and `◀ Prev` /
-  `Next ▶` rows to page through longer lists. `▸` marks where the host cursor actually
-  is, and tapping another option sends only the keystrokes needed to move there and
-  confirm; no emulated arrow keyboard and no TUI screen dump. `Esc / Type / Refresh /
-  Close` stay underneath. Stale taps are never guessed at: if the list changed
-  underneath the keyboard, or the current position cannot be read, Telegram says so and
-  rebuilds the keyboard instead of firing blind arrows. Cursor detection covers both the
-  default `❯` marker and the private-area chevron emitted under `symbolPreset: nerd`,
-  verified end-to-end against both presets.
+  pickers) render like the `/model` command's picker: a bold title, one button per
+  option, and `◀ Prev` / `Next ▶` rows. The host only renders a window of a long list
+  (OMP: ten rows) and scrolls it with the cursor, so paging drives the host itself with
+  PageUp/PageDown and re-renders from the new window instead of slicing the parsed rows
+  — the login catalog alone holds 100+ providers, all reachable. `▸` marks where the
+  host cursor actually is, and tapping another option sends only the keystrokes needed
+  to move there and confirm; no emulated arrow keyboard and no TUI screen dump. `Esc /
+  Type / Refresh / Close` stay underneath. Stale taps are never guessed at: if the list
+  changed underneath the keyboard, or the current position cannot be read, Telegram says
+  so and rebuilds the keyboard instead of firing blind arrows. Cursor detection covers
+  both the default `❯` marker and the private-area chevron emitted under
+  `symbolPreset: nerd`, verified end-to-end against both presets.
 
 ### Fixed
 

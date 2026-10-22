@@ -732,28 +732,33 @@ describe("Selector option buttons and pick routing", () => {
     expect(harness.calls.some((call) => call.text?.includes("tap an item on the refreshed keyboard"))).toBe(true);
   });
 
-  const manyOptionsScreen = (() => {
-    const names = [
-      "ChatGPT Plus/Pro (Codex Subscription)",
-      "Anthropic (Claude Pro/Max)",
-      "Z.AI (GLM Coding Plan)",
-      "Z.AI (GLM Coding Plan · Sign in)",
-      "Kimi Code",
-      "OpenRouter",
-      "GitHub Copilot",
-      "Cursor (Claude, GPT, etc.)",
-      "Devin",
-      "Google Antigravity (Gemini, Claude, GPT-OSS)",
-      "Mistral",
-      "Groq",
-    ];
-    return [
-      "╭─ Select provider to login ───────────────────────────────────────────╮",
-      ...names.map((name, index) => `│ ${index === 0 ? "❯" : " "} ${name.padEnd(60)} │`),
-      "│ Type to search                                                      │",
-      "╰─────────────────────────────────────────────────────────────────────╯",
-    ].join("\n");
-  })();
+  const PROVIDERS = [
+    "ChatGPT Plus/Pro (Codex Subscription)",
+    "Anthropic (Claude Pro/Max)",
+    "Z.AI (GLM Coding Plan)",
+    "Z.AI (GLM Coding Plan · Sign in)",
+    "Kimi Code",
+    "OpenRouter",
+    "GitHub Copilot",
+    "Cursor (Claude, GPT, etc.)",
+    "Devin",
+    "Google Antigravity (Gemini, Claude, GPT-OSS)",
+    "Google Cloud Code Assist (Gemini CLI)",
+    "ChatGPT Plus/Pro (Codex, headless/device)",
+    "xAI API",
+    "xAI Grok OAuth (SuperGrok or X Premium+)",
+    "GitLab Duo Non-Agentic",
+  ];
+
+  // One host window: OMP scrolls the list with the cursor and renders at most
+  // ten rows, so a window is a slice of the catalog plus the search footer.
+  const windowScreen = (start: number, selected: number, size = 10) => [
+    "╭─ Select provider to login ───────────────────────────────────────────╮",
+    ...PROVIDERS.slice(start, start + size).map((name, offset) =>
+      `│ ${start + offset === selected ? "❯" : " "} ${name.padEnd(60)} │`),
+    "│ Type to search                                                      │",
+    "╰─────────────────────────────────────────────────────────────────────╯",
+  ].join("\n");
 
   const tapCallback = async (
     harness: ReturnType<typeof harnessWithLiveScreen>["harness"],
@@ -768,35 +773,80 @@ describe("Selector option buttons and pick routing", () => {
     });
   };
 
-  it("paginates long selectors ten per page like /model's select", async () => {
-    const { harness } = harnessWithLiveScreen(manyOptionsScreen);
+  const harnessWithWindows = (windows: string[]) => {
+    const cursor = { index: 0 };
+    const keys: string[] = [];
+    const bridge = createBridge({
+      snapshot: vi.fn(() => ({
+        text: windows[cursor.index] ?? windows[windows.length - 1],
+        interactive: true,
+        host: "omp" as const,
+        width: 100,
+      })),
+      key: vi.fn((name: string) => {
+        keys.push(name);
+        if (name === "pageDown" && cursor.index < windows.length - 1) cursor.index += 1;
+        if (name === "pageUp" && cursor.index > 0) cursor.index -= 1;
+        return true;
+      }),
+    });
+    const harness = createHarness({
+      bridge,
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+    });
+    return { harness, keys, cursor };
+  };
+
+  it("pages the host window instead of slicing the parsed rows", async () => {
+    const { harness, keys, cursor } = harnessWithWindows([
+      windowScreen(0, 0),
+      windowScreen(5, 10),
+    ]);
     await openMirror(harness);
 
-    const buttons = lastKeyboard(harness);
-    const texts = buttons.map((button) => button.text);
+    let texts = lastKeyboard(harness).map((button) => button.text);
     expect(texts).toContain("Next ▶");
     expect(texts).not.toContain("◀ Prev");
     expect(texts.filter((text) => text.startsWith("▸ "))).toEqual(["▸ ChatGPT Plus/Pro (Codex Subscription)"]);
-    expect(buttons.map((button) => button.value)).toContain("tgplus:tui:pick:9");
-    expect(buttons.map((button) => button.value)).not.toContain("tgplus:tui:pick:10");
-
     const mirrorText = [...harness.calls].reverse().find((entry) => entry.method === "buttons")!.text!;
-    expect(mirrorText).toBe("<b>Select provider to login (1/2)</b>");
+    expect(mirrorText).toBe("<b>Select provider to login</b>");
+
+    await tapCallback(harness, "cb-next", "tgplus:tui:page:next");
+    expect(keys).toEqual(["pageDown"]);
+    expect(cursor.index).toBe(1);
+
+    texts = lastKeyboard(harness).map((button) => button.text);
+    expect(texts).toContain("◀ Prev");
+    expect(texts).toContain("GitLab Duo Non-Agentic");
+    expect(texts.some((text) => text.startsWith("▸ "))).toBe(true);
+
+    await tapCallback(harness, "cb-prev", "tgplus:tui:page:prev");
+    expect(keys).toEqual(["pageDown", "pageUp"]);
+    expect(cursor.index).toBe(0);
+    expect(lastKeyboard(harness).map((button) => button.text)).not.toContain("◀ Prev");
   });
 
-  it("paged picks keep absolute option indexes and press the right number of arrows", async () => {
-    const { harness, keys } = harnessWithLiveScreen(manyOptionsScreen);
+  it("picks on a paged window use the live cursor distance", async () => {
+    const { harness, keys } = harnessWithWindows([
+      windowScreen(0, 0),
+      windowScreen(5, 10),
+    ]);
     await openMirror(harness);
+    await tapCallback(harness, "cb-next", "tgplus:tui:page:next");
 
-    await tapCallback(harness, "cb-page-2", "tgplus:tui:page:1");
-    const pageTwo = lastKeyboard(harness);
-    const labels = pageTwo.map((button) => button.text);
-    expect(labels).toContain("◀ Prev");
-    expect(labels).not.toContain("Next ▶");
-    expect(labels).toContain("Mistral");
-    expect(pageTwo.map((button) => button.value)).toContain("tgplus:tui:pick:11");
+    // Window two starts at index 5 with the cursor on index 10; tapping the
+    // last visible option must press Down four times, then Enter.
+    await tapCallback(harness, "cb-pick-last", "tgplus:tui:pick:9");
+    expect(keys).toEqual(["pageDown", "down", "down", "down", "down", "enter"]);
+  });
 
-    await tapCallback(harness, "cb-page-2-pick", "tgplus:tui:pick:11");
-    expect(keys).toEqual([...Array(11).fill("down"), "enter"]);
+  it("hides Next once a forward page stops moving", async () => {
+    const { harness, keys } = harnessWithWindows([windowScreen(0, 0)]);
+    await openMirror(harness);
+    expect(lastKeyboard(harness).map((button) => button.text)).toContain("Next ▶");
+
+    await tapCallback(harness, "cb-next-end", "tgplus:tui:page:next");
+    expect(keys).toEqual(["pageDown"]);
+    expect(lastKeyboard(harness).map((button) => button.text)).not.toContain("Next ▶");
   });
 });

@@ -563,48 +563,45 @@ function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
   ];
 }
 
-// Selector keyboards follow /model's select layout: one option per row, a
-// page of 10, and a Prev/Next navigation row when the list does not fit.
-// Tapping an option moves the host cursor and presses Enter (see
-// selectorNavigateKeys); ▸ marks where the cursor currently is.
+// Selector keyboards follow /model's select layout: one option per row and a
+// Prev/Next row. The host renders only a window of its list (OMP: up to 10
+// rows) and scrolls that window as the cursor moves, so paging drives the
+// host itself with PageDown/PageUp and rebuilds from the new window instead
+// of slicing the parsed rows. Tapping an option moves the host cursor and
+// presses Enter (see selectorNavigateKeys); ▸ marks the live cursor.
 const SELECTOR_PAGE_SIZE = 10;
 const SELECTOR_LABEL_MAX = 45;
 
-type SelectorKeyboard = {
-  rows: TelegramButton[][];
+type SelectorPaging = {
+  /** Net host pages moved away from the window the dialog opened on. */
   page: number;
-  pageCount: number;
+  /** False once a forward page produced no movement (end of the list). */
+  hasNext: boolean;
 };
 
-function selectorPageCount(selector: SelectorState): number {
-  return Math.max(1, Math.ceil(selector.options.length / SELECTOR_PAGE_SIZE));
-}
+type SelectorKeyboard = {
+  rows: TelegramButton[][];
+};
 
-function selectorPageOf(selector: SelectorState): number {
-  const selectedIndex = selector.options.findIndex((option) => option.selected);
-  return selectedIndex < 0 ? 0 : Math.floor(selectedIndex / SELECTOR_PAGE_SIZE);
-}
-
-function buildSelectorKeyboard(selector: SelectorState, requestedPage = 0): SelectorKeyboard | undefined {
+function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging): SelectorKeyboard | undefined {
   if (!selector.options.some((option) => option.selected)) return undefined;
-  const pageCount = selectorPageCount(selector);
-  const page = Math.min(Math.max(requestedPage, 0), pageCount - 1);
-  const start = page * SELECTOR_PAGE_SIZE;
-  const rows: TelegramButton[][] = selector.options
-    .slice(start, start + SELECTOR_PAGE_SIZE)
-    .map((option, offset) => {
-      const label = option.label.length > SELECTOR_LABEL_MAX
-        ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
-        : option.label;
-      return [{
-        text: `${option.selected ? "▸ " : ""}${label}`,
-        value: encodeTuiCallback(`pick:${start + offset}`),
-      }];
-    });
-  if (pageCount > 1) {
+  const window = selector.options.slice(0, SELECTOR_PAGE_SIZE);
+  const rows: TelegramButton[][] = window.map((option, index) => {
+    const label = option.label.length > SELECTOR_LABEL_MAX
+      ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
+      : option.label;
+    return [{
+      text: `${option.selected ? "▸ " : ""}${label}`,
+      value: encodeTuiCallback(`pick:${index}`),
+    }];
+  });
+  const hasPrev = paging.page > 0 && window.length > 0;
+  // A full window cannot tell whether rows follow; the first Next tap does.
+  const hasNext = paging.hasNext && window.length >= SELECTOR_PAGE_SIZE;
+  if (hasPrev || hasNext) {
     const nav: TelegramButton[] = [];
-    if (page > 0) nav.push({ text: "◀ Prev", value: encodeTuiCallback(`page:${page - 1}`) });
-    if (page < pageCount - 1) nav.push({ text: "Next ▶", value: encodeTuiCallback(`page:${page + 1}`) });
+    if (hasPrev) nav.push({ text: "◀ Prev", value: encodeTuiCallback("page:prev") });
+    if (hasNext) nav.push({ text: "Next ▶", value: encodeTuiCallback("page:next") });
     rows.push(nav);
   }
   rows.push([
@@ -613,14 +610,14 @@ function buildSelectorKeyboard(selector: SelectorState, requestedPage = 0): Sele
     { text: "Refresh", value: encodeTuiCallback("refresh") },
     { text: "Close", value: encodeTuiCallback("close") },
   ]);
-  return { rows, page, pageCount };
+  return { rows };
 }
 
-// The selector message mirrors /model's select: title (with page counter) only;
-// the paginated buttons carry the options, so no TUI screen dump is needed.
-function formatSelectorMessage(selector: SelectorState, page: number, pageCount: number): string {
-  const title = selector.title ?? "TUI selector";
-  return `<b>${escapeHtml(pageCount > 1 ? `${title} (${page + 1}/${pageCount})` : title)}</b>`;
+// The selector message mirrors /model's select: title only. The host owns the
+// window (and never reports its total), so no page counter is invented; the
+// buttons carry the options.
+function formatSelectorMessage(selector: SelectorState): string {
+  return `<b>${escapeHtml(selector.title ?? "TUI selector")}</b>`;
 }
 
 function keyboardSignature(rows: TelegramButton[][]): string {
@@ -636,10 +633,10 @@ type TuiMirror = {
   pendingText?: boolean;
   /** Selector parsed from the most recent mirror refresh, if any. */
   selector?: SelectorState;
-  /** Title of the parsed selector; a new dialog resets the page cursor. */
+  /** Title of the parsed selector; a new dialog resets paging. */
   selectorTitle?: string;
-  /** Page the user paged to for the current selector. */
-  selectorPage?: number;
+  /** Paging state for the current selector; the host owns the underlying window. */
+  selectorPaging?: SelectorPaging;
   /** Keyboard layout signature; lets the refresh skip unchanged edits. */
   lastKeyboard?: string;
 };
@@ -691,13 +688,12 @@ export function createTelegramController(deps: {
     const selectorTitle = selector?.title ?? "";
     if (selector && mirror.selectorTitle !== selectorTitle) {
       mirror.selectorTitle = selectorTitle;
-      mirror.selectorPage = undefined;
+      mirror.selectorPaging = { page: 0, hasNext: true };
     }
     const canControl = snapshot.interactive && getTuiMode() === "full" && !mirror.pendingText;
     const selectorKeyboard = canControl && selector
-      ? buildSelectorKeyboard(selector, mirror.selectorPage ?? selectorPageOf(selector))
+      ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true })
       : undefined;
-    if (selectorKeyboard) mirror.selectorPage = selectorKeyboard.page;
     const title = mirror.pendingText
       ? "TUI · send the next Telegram message as input"
       : snapshot.interactive ? (selector?.title ?? "TUI selector") : "TUI";
@@ -705,7 +701,7 @@ export function createTelegramController(deps: {
       ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
       : "";
     const text = selectorKeyboard && selector
-      ? formatSelectorMessage(selector, selectorKeyboard.page, selectorKeyboard.pageCount)
+      ? formatSelectorMessage(selector)
       : `${formatTuiSnapshot(snapshot, title, selector)}${hint}`;
     const rows: TelegramButton[][] | undefined = mirror.pendingText
       ? [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]
@@ -934,15 +930,32 @@ export function createTelegramController(deps: {
       await refreshTuiMirror(mirror);
       return;
     }
-    if (action.startsWith("page:")) {
-      const next = Number.parseInt(action.slice("page:".length), 10);
-      const pageCount = mirror.selector ? selectorPageCount(mirror.selector) : 0;
-      if (Number.isFinite(next) && next >= 0 && next < pageCount) {
-        mirror.selectorPage = next;
+    if (action === "page:next" || action === "page:prev") {
+      const forward = action === "page:next";
+      const before = mirror.selector?.options.map((option) => option.label).join("\u0000") ?? "";
+      if (!bridge.key(forward ? "pageDown" : "pageUp")) {
         mirror.lastText = undefined;
-        mirror.lastKeyboard = undefined;
         await refreshTuiMirror(mirror);
+        return;
       }
+      // The host renders on its own frame; poll until the window moves (or the
+      // list ends, which is the only way to learn there is nothing more).
+      let moved = false;
+      for (let attempt = 0; attempt < 12 && !moved; attempt += 1) {
+        await sleep(40);
+        let snapshot: TuiSnapshot | undefined;
+        try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { snapshot = undefined; }
+        const parsed = snapshot?.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
+        const after = parsed?.options.map((option) => option.label).join("\u0000") ?? "";
+        moved = after.length > 0 && after !== before;
+      }
+      const paging = mirror.selectorPaging ?? { page: 0, hasNext: true };
+      mirror.selectorPaging = forward
+        ? { page: paging.page + (moved ? 1 : 0), hasNext: moved }
+        : { page: Math.max(0, paging.page - (moved ? 1 : 0)), hasNext: paging.hasNext || moved };
+      mirror.lastText = undefined;
+      mirror.lastKeyboard = undefined;
+      await refreshTuiMirror(mirror);
       return;
     }
     if (action.startsWith("pick:")) {
