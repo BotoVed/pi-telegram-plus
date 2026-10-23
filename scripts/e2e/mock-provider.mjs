@@ -143,6 +143,82 @@ const server = createServer(async (req, res) => {
   const askArgs = triggerCheckAsk ? checkAskArguments : (triggerMultiAsk ? multiAskArguments : askArguments);
   const triggerAnyAsk = triggerAsk || triggerMultiAsk || triggerCheckAsk;
 
+  // Stage 0 host probe: scripted calls for arbitrary advertised tools. The
+  // prompt names the tool (PROBE_TOOL:<name>) or a pi-goal shape
+  // (PROBE_GOAL_CONFIRM / _QUESTION / _QUESTIONNAIRE); approval probing picks
+  // the first mutating tool the host advertises. Arguments are derived from the
+  // tool schema, with semantic overrides for the shapes we drive.
+  const probeMatch = /PROBE_TOOL:([A-Za-z0-9_]+)/.exec(userText);
+  const goalMatch = /PROBE_GOAL_(QUESTIONNAIRE|CONFIRM|QUESTION)/.exec(userText);
+  const approvalProbe = userText.includes("PROBE_APPROVAL");
+  const goalToolName = goalMatch
+    ? (goalMatch[1] === "CONFIRM"
+      ? "propose_goal_draft"
+      : (goalMatch[1] === "QUESTION" ? "goal_question" : "goal_questionnaire"))
+    : undefined;
+  const approvalToolName = approvalProbe
+    ? ["write", "edit", "bash"].find((name) => toolNames.includes(name))
+    : undefined;
+  const requestedProbeTool = probeMatch?.[1] ?? goalToolName ?? approvalToolName;
+  const probeToolDef = requestedProbeTool
+    ? (parsed.tools ?? []).find((tool) => (tool?.function?.name ?? tool?.name) === requestedProbeTool)
+    : undefined;
+  const probeTool = probeToolDef
+    ? (probeToolDef.function?.name ?? probeToolDef.name)
+    : undefined;
+  const triggerProbe = Boolean(probeTool) && !hasToolResult
+    && Boolean(probeMatch || goalMatch || approvalProbe);
+
+  const fill = (schema) => {
+    if (!schema || typeof schema !== "object") return "probe";
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+    if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) return fill(schema.oneOf[0]);
+    if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) return fill(schema.anyOf[0]);
+    switch (schema.type) {
+      case "string": return schema.format === "path" ? "/tmp/pitg-probe-approval.txt" : "probe";
+      case "number":
+      case "integer": return 0;
+      case "boolean": return false;
+      case "array": return [fill(schema.items)];
+      case "object": {
+        const result = {};
+        for (const key of schema.required ?? []) result[key] = fill(schema.properties?.[key]);
+        return result;
+      }
+      default: return "probe";
+    }
+  };
+  const probeArguments = (() => {
+    if (!probeTool) return "{}";
+    if (probeTool === "propose_goal_draft") {
+      return JSON.stringify({ objective: "PROBE GOAL OBJECTIVE", autoContinue: true, sisyphus: false });
+    }
+    if (probeTool === "goal_question") {
+      return JSON.stringify({ question: "PROBE QUESTION", context: "stage 0 probe", options: ["alpha", "beta", "gamma"], recommended: 0 });
+    }
+    if (probeTool === "goal_questionnaire") {
+      return JSON.stringify({ questions: [
+        { id: "scope", question: "PROBE QUESTION ONE", options: ["alpha", "beta"] },
+        { id: "success", question: "PROBE QUESTION TWO", options: ["gamma", "delta"] },
+      ] });
+    }
+    if (probeTool === "write") {
+      return JSON.stringify({ path: "/tmp/pitg-probe-approval.txt", content: "probe" });
+    }
+    if (probeTool === "edit") {
+      return JSON.stringify({ path: "/tmp/pitg-probe-approval.txt", old_string: "probe", new_string: "probe" });
+    }
+    if (probeTool === "bash") return JSON.stringify({ command: "true" });
+    const parameters = probeToolDef?.function?.parameters ?? probeToolDef?.parameters ?? {};
+    const required = parameters.required ?? Object.keys(parameters.properties ?? {});
+    const args = {};
+    for (const key of required) args[key] = fill(parameters.properties?.[key]);
+    return JSON.stringify(args);
+  })();
+  const scriptedCall = triggerProbe
+    ? { name: probeTool, arguments: probeArguments }
+    : (triggerAnyAsk ? { name: askTool, arguments: askArgs } : undefined);
+
   const wantsStream = parsed.stream === true;
   const id = "chatcmpl-e2e";
   const created = Math.floor(Date.now() / 1000);
@@ -155,7 +231,7 @@ const server = createServer(async (req, res) => {
       connection: "keep-alive",
     });
     res.write(chunk({ ...base, choices: [{ index: 0, delta: { role: "assistant", content: "" }, finish_reason: null }] }));
-    if (triggerAnyAsk) {
+    if (scriptedCall) {
       res.write(chunk({
         ...base,
         choices: [{
@@ -163,9 +239,9 @@ const server = createServer(async (req, res) => {
           delta: {
             tool_calls: [{
               index: 0,
-              id: "call_e2e_ask",
+              id: "call_e2e_probe",
               type: "function",
-              function: { name: askTool, arguments: askArgs },
+              function: { name: scriptedCall.name, arguments: scriptedCall.arguments },
             }],
           },
           finish_reason: null,
@@ -190,16 +266,16 @@ const server = createServer(async (req, res) => {
       object: "chat.completion",
       created,
       model: parsed.model ?? "mock-model",
-      choices: [triggerAnyAsk
+      choices: [scriptedCall
         ? {
             index: 0,
             message: {
               role: "assistant",
               content: null,
               tool_calls: [{
-                id: "call_e2e_ask",
+                id: "call_e2e_probe",
                 type: "function",
-                function: { name: askTool, arguments: askArgs },
+                function: { name: scriptedCall.name, arguments: scriptedCall.arguments },
               }],
             },
             finish_reason: "tool_calls",

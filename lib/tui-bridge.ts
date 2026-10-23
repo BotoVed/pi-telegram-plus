@@ -1,5 +1,6 @@
 import { stripAnsi } from "./custom-dialogs.ts";
 import { log } from "./logger.ts";
+import { probeCapture } from "./tui/probe.ts";
 
 const bridgeLog = log.child("tui-bridge");
 
@@ -141,6 +142,7 @@ function captureMode(mode: unknown, host: TuiHost): void {
   state.ui = ui;
   state.editor = editor;
   ensureWrappedEditor();
+  probeCapture(modeObject, host);
   bridgeLog.debug("captured TUI mode", { host, hasEditor: !!state.editor, hasUi: !!state.ui });
 }
 
