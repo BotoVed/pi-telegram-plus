@@ -9,6 +9,7 @@
 import { escapeHtml } from "../html.ts";
 import { log } from "../logger.ts";
 import type { TelegramTransport } from "../types.ts";
+import { checkpointCurrentUpdateCursor } from "../polling.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 import type { Origin, OriginTracker } from "./origin.ts";
 import type { OutputCapture } from "./output.ts";
@@ -198,6 +199,10 @@ export class CommandGateway {
     if (messageId === undefined) return true;
     const draft = (this.deps.readDraft ?? readEditorText)();
     try {
+      // /new replaces the session in-process; the replacement runtime re-reads
+      // the cursor, so commit this update before the destructive call or the
+      // unconfirmed /new is re-served and run a second time.
+      await checkpointCurrentUpdateCursor();
       const result = await this.deps.newSession!(request.origin);
       if (result && "cancelled" in result && result.cancelled) {
         await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n<i>已取消</i>`).catch(() => undefined);

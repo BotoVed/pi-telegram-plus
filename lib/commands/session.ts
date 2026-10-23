@@ -6,6 +6,7 @@ import type { SessionNameDeps, CommandRegistry } from "./register.ts";
 import { escapeHtml } from "../html.ts";
 import type { CapturedAgentSession } from "../types.ts";
 import { log } from "../logger.ts";
+import { checkpointCurrentUpdateCursor } from "../polling.ts";
 
 const sessionLog = log.child("session");
 
@@ -88,6 +89,9 @@ export function registerSessionCommands(
       const ui = ctx.ui;
       const confirmed = await ui.confirm("New session", "Start a new session? Current session will be saved.");
       if (!confirmed) return;
+      // Commit this update's cursor before the in-process session replacement so
+      // the replacement runtime cannot re-fetch and re-run the unconfirmed /new.
+      await checkpointCurrentUpdateCursor();
       const result = await ctx.newSession(
         typeof deps.getSession()?.extensionRunner?.setUIContext === "function"
           // pi keeps its pre-existing withSession post-replacement hook.
@@ -115,6 +119,7 @@ export function registerSessionCommands(
       }
 
       if (args) {
+        await checkpointCurrentUpdateCursor();
         await ctx.fork(args, { position: "before" });
         ui.notify("✅ Forked session.", "info");
         return;
@@ -133,6 +138,7 @@ export function registerSessionCommands(
       if (!choice) return;
       const index = labels.indexOf(choice);
       if (index < 0) return;
+      await checkpointCurrentUpdateCursor();
       await ctx.fork(shown[index].id, { position: "before" });
       ui.notify("✅ Forked session.", "info");
     },
@@ -154,6 +160,7 @@ export function registerSessionCommands(
       }
 
       if (args) {
+        await checkpointCurrentUpdateCursor();
         await ctx.fork(args, { position: "at" });
         ui.notify("✅ Cloned session.", "info");
         return;
@@ -172,6 +179,7 @@ export function registerSessionCommands(
       if (!choice) return;
       const index = labels.indexOf(choice);
       if (index < 0) return;
+      await checkpointCurrentUpdateCursor();
       await ctx.fork(shown[index].id, { position: "at" });
       ui.notify("✅ Cloned session.", "info");
     },

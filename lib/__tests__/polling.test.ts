@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { processTelegramUpdatesBatch } from "../polling.ts";
+import { checkpointCurrentUpdateCursor, processTelegramUpdatesBatch } from "../polling.ts";
 import type { TelegramConfig, TelegramUpdate } from "../types.ts";
 
 const update = (id: number): TelegramUpdate => ({
@@ -98,5 +98,72 @@ describe("processTelegramUpdatesBatch", () => {
     expect(handled).toEqual([11]);
     expect(persisted).toEqual([11]);
     expect(config.lastUpdateId).toBe(11);
+  });
+});
+
+describe("checkpointCurrentUpdateCursor", () => {
+  it("commits the cursor before a destructive handler when it checkpoints", async () => {
+    let config: TelegramConfig = { botToken: "token", lastUpdateId: 9 };
+    const persisted: number[] = [];
+    let cursorAtDestructiveCall: number | undefined;
+
+    const processed = await processTelegramUpdatesBatch([update(10)], {
+      getConfig: () => config,
+      setConfig: (next) => { config = next; },
+      persistConfig: vi.fn(async (next) => { persisted.push(next.lastUpdateId!); }),
+      handleUpdate: vi.fn(async () => {
+        // A session-replacement handler checkpoints the cursor, then reads it
+        // the way the replacement runtime would after re-activation.
+        await checkpointCurrentUpdateCursor();
+        cursorAtDestructiveCall = config.lastUpdateId;
+      }),
+      onError: () => {},
+    });
+
+    expect(processed).toBe(true);
+    // The checkpoint advanced the cursor to this update before the destructive
+    // call, so a replacement runtime re-reading the cursor will not re-fetch it.
+    expect(cursorAtDestructiveCall).toBe(10);
+    // The normal post-handler persist is idempotent (same id).
+    expect(persisted).toEqual([10, 10]);
+  });
+
+  it("routes the checkpoint through persistUpdate so the coordinator cursor stays consistent", async () => {
+    let config: TelegramConfig = { botToken: "token", lastUpdateId: 9 };
+    const persistedVia: string[] = [];
+
+    await processTelegramUpdatesBatch([update(10)], {
+      getConfig: () => config,
+      setConfig: (next) => { config = next; },
+      persistUpdate: vi.fn(async (_next, item) => { persistedVia.push(`update:${item.update_id}`); }),
+      persistConfig: vi.fn(async () => { persistedVia.push("config"); }),
+      handleUpdate: vi.fn(async () => { await checkpointCurrentUpdateCursor(); }),
+      onError: () => {},
+    });
+
+    // The replacement runtime reads the coordinator cursor, so the checkpoint
+    // must use persistUpdate (not the project-only persistConfig).
+    expect(persistedVia).toEqual(["update:10", "update:10"]);
+  });
+
+  it("leaves the cursor behind the update when a handler does not checkpoint", async () => {
+    let config: TelegramConfig = { botToken: "token", lastUpdateId: 9 };
+    let cursorDuringHandler: number | undefined;
+
+    await processTelegramUpdatesBatch([update(10)], {
+      getConfig: () => config,
+      setConfig: (next) => { config = next; },
+      persistConfig: vi.fn(async () => {}),
+      handleUpdate: vi.fn(async () => { cursorDuringHandler = config.lastUpdateId; }),
+      onError: () => {},
+    });
+
+    // Without a checkpoint the cursor is still the previous one while the
+    // handler runs — a replacement runtime would re-fetch this update.
+    expect(cursorDuringHandler).toBe(9);
+  });
+
+  it("is a no-op outside an update context", async () => {
+    expect(await checkpointCurrentUpdateCursor()).toBe(false);
   });
 });

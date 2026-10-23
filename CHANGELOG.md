@@ -51,6 +51,13 @@ missing or mislabelled cannot be published.
   `PgUp`/`PgDn`); the last lines of the dialog are parsed and those keys become
   buttons, so /extensions, /agents and /mcp no longer dead-end on a shortcut.
 - **Pasted newlines no longer submit a dialog field early.**
+- **A Telegram `/new` creates exactly one session.** `/new`, `/reload`, `/fork`
+  and `/clone` replace the session or reload the runtime in-process; the
+  replacement runtime re-reads the saved cursor, and because the triggering
+  update was not yet confirmed Telegram re-served it and the command ran a
+  second time — a second new session, a second reload. The cursor for an update
+  is now committed before any of those host calls, so the replacement runtime
+  never re-fetches it.
 
 ### Testing
 

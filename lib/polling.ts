@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { getAgentDir } from "./config.ts";
 import { getPendingTelegramUpdates, getTelegramUpdates } from "./telegram-api.ts";
 import type { TelegramConfig, TelegramUpdate } from "./types.ts";
@@ -90,12 +91,14 @@ async function inspectPollingLock(lockPath: string): Promise<PollingLockSnapshot
   const sameProcess = owner?.pid === process.pid;
   return {
     exists: true,
-    // A lock held by this very process belongs to a superseded runtime: an
-    // extension reload / session replacement re-activates the plugin in-process.
-    // The newest runtime always wins the token. A live runtime never re-acquires
-    // a lock it already owns (ensurePollLock checks owns() first), so any
-    // same-pid lock we reach here is a dead runtime's. Breaking it avoids the
-    // 45s stale window and the 30s poll backoff that would otherwise stall the
+    // A lock held by this very process belongs to a runtime that is being
+    // superseded: an extension reload / session replacement re-activates the
+    // plugin in-process, and the newest runtime always wins the token. The old
+    // loop is not necessarily dead yet — it keeps polling until session_shutdown
+    // aborts it — but breaking its lock is safe: that loop's release() only
+    // retires the live path while it still owns it (see acquirePollingLock), so
+    // it can never delete this successor's lock. Breaking it now avoids the 45s
+    // stale window and the 30s poll backoff that would otherwise stall the
     // replacement session's first command.
     stale: owner ? sameProcess || age > POLL_LOCK_STALE_MS || !isPidAlive(owner.pid) : age > POLL_LOCK_STALE_MS,
     staleId: (owner?.id ?? `unknown-${Math.trunc(modifiedAt)}`).replace(/[^a-zA-Z0-9_-]/g, "_"),
@@ -254,6 +257,39 @@ export type TelegramUpdateBatchDeps = {
   onError: (error: unknown, context?: "polling" | "processing") => void;
 };
 
+type UpdateCursorContext = { update: TelegramUpdate; deps: TelegramUpdateBatchDeps };
+const updateCursorContext = new AsyncLocalStorage<UpdateCursorContext>();
+
+/**
+ * Commit the cursor for the update currently being processed, before its
+ * handler performs an irreversible side effect — a session replacement or
+ * runtime reload. Those commands re-activate the plugin in-process; the
+ * replacement runtime re-reads the on-disk cursor, and if this update is still
+ * unconfirmed Telegram re-serves it and the command runs a second time (a
+ * second new session, a second reload). Handlers that replace the session call
+ * this immediately before the host's replacement method. No-op outside an
+ * update context. Best-effort: a persist failure leaves the cursor where it
+ * was, and the normal post-handler persist still runs.
+ *
+ * @internal Exported for the session/reload handlers; not public API.
+ */
+export async function checkpointCurrentUpdateCursor(): Promise<boolean> {
+  const ctx = updateCursorContext.getStore();
+  if (!ctx) return false;
+  const { update, deps } = ctx;
+  const cursor = deps.getConfig().lastUpdateId;
+  if (typeof cursor === "number" && update.update_id <= cursor) return true;
+  const nextConfig = { ...deps.getConfig(), lastUpdateId: update.update_id };
+  try {
+    if (deps.persistUpdate) await deps.persistUpdate(nextConfig, update);
+    else await deps.persistConfig(nextConfig);
+    deps.setConfig(nextConfig);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Process one getUpdates batch in strict order. If handling or persisting an
  * update fails, stop immediately: later updates must not advance lastUpdateId
@@ -276,7 +312,7 @@ export async function processTelegramUpdatesBatch(
     const cursor = deps.getConfig().lastUpdateId;
     if (typeof cursor === "number" && update.update_id <= cursor) continue;
     try {
-      await deps.handleUpdate(update);
+      await updateCursorContext.run({ update, deps }, () => deps.handleUpdate(update));
     } catch (error) {
       deps.onError(error, "processing");
       return false;

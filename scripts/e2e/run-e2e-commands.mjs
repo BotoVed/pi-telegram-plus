@@ -13,7 +13,7 @@
  * Exit code is non-zero when any step fails.
  */
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { validateTelegramCalls } from "./telegram-contract.mjs";
 
@@ -334,8 +334,19 @@ async function runHost(host, label, phase = "main") {
   }
 
   if (phase === "window") {
-    // Compare the /new -> /name hand-off window across hosts/versions. The
-    // next command is sent immediately after /new's confirmation/ack.
+    // Compare the /new -> /name hand-off window across hosts/versions, and
+    // prove a single Telegram /new yields exactly one new session. The next
+    // command is sent immediately after /new's confirmation/ack.
+    const sessionsDir = join(runDir, "agent", "sessions");
+    const countSessionFiles = () => {
+      try {
+        return readdirSync(sessionsDir, { recursive: true, encoding: "utf8" })
+          .filter((name) => String(name).endsWith(".jsonl")).length;
+      } catch {
+        return 0;
+      }
+    };
+    const sessionsBefore = countSessionFiles();
     const startedAt = Date.now();
     let prompt;
     try {
@@ -355,6 +366,22 @@ async function runHost(host, label, phase = "main") {
     const text = String(reply?.body?.text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 120);
     record("window /new -> /name hand-off", Boolean(reply),
       `${Date.now() - clickAt}ms after /new, ${Date.now() - startedAt}ms total · ${text}`);
+
+    // A single Telegram /new must create exactly one new session and emit one
+    // ack. A turn flushes the new session's .jsonl, so the file count shows how
+    // many sessions /new created; the ack count shows how many times it ran. A
+    // second file or ack means the unconfirmed /new update was re-delivered to
+    // the replacement runtime and run again, because the cursor was not
+    // committed before the in-process session replacement.
+    await dispatch("after new flush", { timeoutMs: 60_000 }).catch(() => undefined);
+    await sleep(1000);
+    const sessionsAfter = countSessionFiles();
+    const newAcks = (await controlGet()).calls
+      .filter((c) => c.method === "sendMessage" && /▶️\s*\/new/.test(String(c.body?.text ?? ""))).length;
+    record("window /new creates exactly one session",
+      sessionsAfter - sessionsBefore === 1 && newAcks === 1,
+      `sessions +${sessionsAfter - sessionsBefore}, /new acks=${newAcks}`);
+
     const paneTail = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
     record("host pane free of crashes", !/Uncaught|TypeError:|ReferenceError:/.test(paneTail));
     if (!KEEP) { killSession(session); try { await controlPost("/_control/reset"); } catch { /* ignore */ } }
