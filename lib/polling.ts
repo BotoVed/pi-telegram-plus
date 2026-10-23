@@ -87,9 +87,17 @@ async function inspectPollingLock(lockPath: string): Promise<PollingLockSnapshot
   const heartbeatPath = owner ? join(lockPath, `heartbeat-${owner.id}`) : ownerPath;
   const modifiedAt = await stat(heartbeatPath).then((value) => value.mtimeMs).catch(() => lockStat.mtimeMs);
   const age = Date.now() - modifiedAt;
+  const sameProcess = owner?.pid === process.pid;
   return {
     exists: true,
-    stale: owner ? age > POLL_LOCK_STALE_MS || !isPidAlive(owner.pid) : age > POLL_LOCK_STALE_MS,
+    // A lock held by this very process belongs to a superseded runtime: an
+    // extension reload / session replacement re-activates the plugin in-process.
+    // The newest runtime always wins the token. A live runtime never re-acquires
+    // a lock it already owns (ensurePollLock checks owns() first), so any
+    // same-pid lock we reach here is a dead runtime's. Breaking it avoids the
+    // 45s stale window and the 30s poll backoff that would otherwise stall the
+    // replacement session's first command.
+    stale: owner ? sameProcess || age > POLL_LOCK_STALE_MS || !isPidAlive(owner.pid) : age > POLL_LOCK_STALE_MS,
     staleId: (owner?.id ?? `unknown-${Math.trunc(modifiedAt)}`).replace(/[^a-zA-Z0-9_-]/g, "_"),
   };
 }
@@ -202,10 +210,16 @@ async function acquirePollingLock(token: string): Promise<{ owns: () => Promise<
       .catch(pollLog.swallow("warn", "polling lock heartbeat write failed", { heartbeatPath }));
   }, POLL_LOCK_TOUCH_MS);
 
+  const owns = async () => (await readPollingLockOwner(ownerPath))?.id === owner.id;
   return {
-    owns: async () => (await readPollingLockOwner(ownerPath))?.id === owner.id,
+    owns,
     release: async () => {
       clearInterval(touch);
+      // A newer runtime in this process may already have broken and replaced
+      // this lock (same-pid takeover on reload). Only retire the live path when
+      // we still own it, so a superseded loop never deletes its successor's
+      // lock out from under it.
+      if (!await owns()) return;
       const retiredPath = `${lockPath}.retired-${owner.id}`;
       try {
         await rename(lockPath, retiredPath);

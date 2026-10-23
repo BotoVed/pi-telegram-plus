@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -284,6 +284,44 @@ describe("TelegramPollingRuntime", () => {
 
         const namesAfterStop = await readdir(agentDir);
         expect(namesAfterStop.some((name) => name.startsWith(`tg-poll-${hash}`))).toBe(false);
+    });
+
+    it("breaks a poll lock held by a superseded runtime in the same process", async () => {
+        const token = `same-pid-token-${Date.now()}`;
+        const hash = createHash("sha256").update(token).digest("hex").slice(0, 24);
+        const lockPath = join(agentDir, `tg-poll-${hash}.lock`);
+        const ownerPath = join(lockPath, "owner.json");
+        // A live lock owned by THIS process with a fresh heartbeat. The old rule
+        // (pid alive + age < stale window) refused to break it, so a session
+        // replacement that re-activates the plugin in-process could not take the
+        // token back and stalled ~30s on the poll backoff. The newest runtime
+        // must seize the lock immediately.
+        await mkdir(lockPath, { recursive: true });
+        await writeFile(ownerPath, JSON.stringify({
+            id: "superseded-runtime",
+            pid: process.pid,
+            at: new Date().toISOString(),
+            touchedAt: new Date().toISOString(),
+        }));
+        const errors: string[] = [];
+        mocks.getTelegramUpdates.mockResolvedValue([]);
+
+        const runtime = createTelegramPollingRuntime({
+            getConfig: () => ({ botToken: token }),
+            setConfig: () => undefined,
+            persistConfig: async () => undefined,
+            handleUpdate: async () => undefined,
+            onError: (error) => { errors.push(String((error as Error)?.message ?? error)); },
+            shouldPoll: () => true,
+        });
+        runtime.start();
+        await vi.waitFor(() => expect(mocks.getTelegramUpdates).toHaveBeenCalled());
+
+        expect(errors.some((message) => /already polling/i.test(message))).toBe(false);
+        const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+        expect(owner.id).not.toBe("superseded-runtime");
+
+        await runtime.stop();
     });
 
     it("does not start a polling loop while the instance is not selected", () => {
