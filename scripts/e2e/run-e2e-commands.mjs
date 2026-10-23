@@ -333,6 +333,34 @@ async function runHost(host, label, phase = "main") {
     return { results, ok: results.every((r) => r.ok), session, runDir };
   }
 
+  if (phase === "window") {
+    // Compare the /new -> /name hand-off window across hosts/versions. The
+    // next command is sent immediately after /new's confirmation/ack.
+    const startedAt = Date.now();
+    let prompt;
+    try {
+      prompt = await dispatch("/new");
+    } catch (error) {
+      record("window /new response", false, String(error.message).slice(0, 160));
+    }
+    const yes = prompt ? findButton(prompt, /^(Yes|Confirm|OK|✅.*)$/i) : undefined;
+    if (yes) await click(yes, prompt.body?.message_id ?? prompt.message_id, { timeoutMs: 20_000 }).catch(() => undefined);
+    const clickAt = Date.now();
+    let reply;
+    try {
+      reply = await dispatch("/name window-probe", { timeoutMs: 60_000 });
+    } catch {
+      reply = undefined;
+    }
+    const text = String(reply?.body?.text ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 120);
+    record("window /new -> /name hand-off", Boolean(reply),
+      `${Date.now() - clickAt}ms after /new, ${Date.now() - startedAt}ms total · ${text}`);
+    const paneTail = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+    record("host pane free of crashes", !/Uncaught|TypeError:|ReferenceError:/.test(paneTail));
+    if (!KEEP) { killSession(session); try { await controlPost("/_control/reset"); } catch { /* ignore */ } }
+    return { results, ok: results.every((r) => r.ok), session, runDir };
+  }
+
   // ── Scripted `ask` tool round trip ─────────────────────────────────────
   // The mock provider answers the marker message with a real tool_call for the
   // host's `ask` tool, so the model→tool→UI→answer→model loop is exercised.
@@ -367,6 +395,79 @@ async function runHost(host, label, phase = "main") {
     await settle();
   } catch (error) {
     record("ask tool round trip", false, String(error.message).slice(0, 220));
+  }
+
+  // ── Stage 1: output-only commands must return real body text ──────────
+  // These assertions run before /reload and /new so the gateway has a stable
+  // host. A response that is only the command ack does not pass.
+  if (host === "pi") {
+    const bodyText = (entry) => String(entry?.body?.text ?? "");
+    const waitBody = (label, since, pattern, timeoutMs = 25_000) =>
+      waitFor(label, (state) =>
+        state.calls.slice(since).find((entry) =>
+          (entry.method === "sendMessage" || entry.method === "editMessageText")
+          && pattern.test(bodyText(entry))) ?? false, timeoutMs).catch(() => undefined);
+
+    try {
+      let since = await cursor();
+      await dispatch("/session");
+      const sessionBody = await waitBody("session body", since, /Session Info|Messages:/i);
+      record("stage1 /session body has session details", Boolean(sessionBody),
+        bodyText(sessionBody).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
+    } catch (error) {
+      record("stage1 /session body has session details", false, String(error.message).slice(0, 200));
+    }
+
+    try {
+      let since = await cursor();
+      await dispatch("/name stage-one");
+      await sleep(800);
+      since = await cursor();
+      await dispatch("/session");
+      const namedBody = await waitBody("named session body", since, /Name:\s*stage-one/i);
+      record("stage1 /name x is reflected by /session", Boolean(namedBody),
+        bodyText(namedBody).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
+    } catch (error) {
+      record("stage1 /name x is reflected by /session", false, String(error.message).slice(0, 200));
+    }
+
+    try {
+      const since = await cursor();
+      await dispatch("/changelog");
+      const changelogBody = await waitBody("changelog body", since, /\b\d+\.\d+\.\d+\b/);
+      record("stage1 /changelog body has a version", Boolean(changelogBody),
+        bodyText(changelogBody).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
+    } catch (error) {
+      record("stage1 /changelog body has a version", false, String(error.message).slice(0, 200));
+    }
+
+    try {
+      const since = await cursor();
+      await dispatch("/export");
+      const exportBody = await waitBody("export body", since, /Session exported to:/i);
+      const text = bodyText(exportBody);
+      const path = text.match(/Session exported to:\s*([^<\s]+)/)?.[1];
+      const resolved = path
+        ? (existsSync(path) ? path : join(projectDir, path))
+        : undefined;
+      const doc = await waitFor("export document upload", (state) =>
+        state.calls.slice(since).find((entry) => entry.method === "sendDocument" && Number(entry.body?._bytes ?? 0) > 0) ?? false,
+        20_000).catch(() => undefined);
+      record("stage1 /export returns an existing file", Boolean(resolved && existsSync(resolved) && doc),
+        `${resolved ?? path ?? "(no path)"} · uploaded=${Boolean(doc)}`);
+    } catch (error) {
+      record("stage1 /export returns an existing file", false, String(error.message).slice(0, 200));
+    }
+
+    try {
+      const since = await cursor();
+      await dispatch("/compact");
+      const compactBody = await waitBody("compact completion", since, /\/compact[\s\S]*(?:Compaction|compacted|Nothing to compact|✓ 完成)/i, 30_000);
+      record("stage1 /compact returns completion output", Boolean(compactBody),
+        bodyText(compactBody).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
+    } catch (error) {
+      record("stage1 /compact returns completion output", false, String(error.message).slice(0, 200));
+    }
   }
 
   // ── Every advertised command ──────────────────────────────────────────
