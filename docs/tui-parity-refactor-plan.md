@@ -1018,6 +1018,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 21 | `/reload`、`/fork`、`/clone`、`/import` 是否提交给宿主编辑器 | **不提交，保留原生处理器。** 提交给编辑器会走 `runtimeHost` 的会话替换路径，绕过 pi 的 `withSession` 顺序；扩展运行时会被重新加载，而旧轮询实例尚未释放，单例协调器会拒绝新实例（"another local pi instance is already polling this bot token"）。原生处理器已经在宿主控制 API 内完成同样的状态变更。 |
 | 22 | `/new` 如何执行 | **调用宿主 `ctx.newSession()`，不提交编辑器。** 编辑器路径走 `handleClearCommand()` → `runtimeHost.newSession()`，同样会绕过 `withSession` 并触发轮询实例交接；命令上下文里的 `ctx.newSession()` 是宿主支持的替换入口。命令 scope 仍需保存/恢复草稿。 |
 | 23 | OMP 何时接入 Gateway | **推迟到阶段 3。** 阶段 0 证明 OMP 的 `/status`、`/usage`、`/stats`、`/context`、`/skills` 等走 `showCommandReport` 全屏面板，面板内容不在 `chatContainer` 的 `addChild` 流里；阶段 1 没有 `InfoPanelAdapter`，接入只会回一条 ack 而没有正文。阶段 3 先做面板截获，再把 OMP 的只有输出命令加入白名单。 |
+| 24 | `session.prompt` 完成信号放在哪一步实现 | 决定 10 和 15 不变，但随 Gateway 接线（§4.2.3、§4.3）一起实现：只对非内置命令登记，内置命令立即置 `promptDone = true`，另有 500ms 安静窗口和 60 秒上限。此前 `origin.ts` 里的半成品对所有命令都等 prompt，而且没有安装 hook，会让每个只输出命令空等到 60 秒上限，因此删除，不留半个机制。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 

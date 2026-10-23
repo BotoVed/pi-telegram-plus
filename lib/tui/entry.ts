@@ -1,0 +1,218 @@
+/**
+ * Dialog entry hooks (§4.1.2).
+ *
+ * Hooking component classes tells us *what is on screen*; hooking the entry
+ * points tells us *what the dialog means*. Both hosts route interactive
+ * prompts through named entry methods, so we wrap those and record an
+ * `EntryInfo` before the original runs.
+ *
+ * Two places get patched, because the same dialog can be opened two ways:
+ * the extension/tool UI context (pi's `createExtensionUIContext()` result,
+ * OMP's tool UI context) and the host's own `show*` methods that that context
+ * delegates to. A nested entry with the same semantic kind merges into the
+ * pending one (see `FocusTracker.pushEntry`), so double layers stay one entry.
+ */
+import type { EntryInfo } from "./model.ts";
+
+/** What the hooks report; implemented by FocusTracker. */
+export type EntrySink = {
+  /** Push before the original runs; returns false when merged into the top. */
+  push(info: EntryInfo): boolean;
+  /** Pop the entry this hook pushed (called even when the host throws). */
+  pop(pushed: boolean): void;
+  /** Bind an entry straight to a component (async `custom` factories). */
+  bind(component: object, info: EntryInfo): void;
+};
+
+type EntryKindLiteral = "select" | "confirm" | "input" | "editor" | "custom" | "ask" | "approval";
+
+export type EntrySpec = { method: string; kind: EntryKindLiteral; factory?: boolean; extract: Extract };
+
+type Extract = (args: unknown[]) => EntryInfo | undefined;
+
+const strings = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const items = value.filter((item): item is string => typeof item === "string");
+  return items.length > 0 ? items : undefined;
+};
+
+const firstString = (args: unknown[]): string | undefined =>
+  args.find((arg): arg is string => typeof arg === "string" && arg.length > 0);
+
+const optionsArg = (args: unknown[]): string[] | undefined =>
+  args.map((arg) => strings(arg)).find((value): value is string[] => value !== undefined);
+
+/** `select(title, options, opts)` and `showCollabAwareSelector(input, opts, done)`. */
+const selectFrom: Extract = (args) => {
+  const options = optionsArg(args);
+  if (!options) return undefined;
+  return { kind: "select", title: firstString(args), options, source: "pi" };
+};
+
+const confirmFrom: Extract = (args) => ({
+  kind: "confirm",
+  title: typeof args[0] === "string" ? args[0] : undefined,
+  message: typeof args[1] === "string" ? args[1] : undefined,
+  source: "pi",
+});
+
+const inputFrom = (secret: boolean): Extract => (args) => {
+  const options = (args.find((arg) => arg && typeof arg === "object" && !Array.isArray(arg)) ?? {}) as Record<string, unknown>;
+  return {
+    kind: "input",
+    title: typeof args[0] === "string" ? args[0] : undefined,
+    placeholder: typeof args[1] === "string" ? args[1] : undefined,
+    secret: secret || options.secret === true || options.sensitive === true,
+    source: "pi",
+  };
+};
+
+const editorFrom: Extract = (args) => ({
+  kind: "editor",
+  title: typeof args[0] === "string" ? args[0] : undefined,
+  prefill: typeof args[1] === "string" ? args[1] : undefined,
+  source: "pi",
+});
+
+const customFrom: Extract = (args) => {
+  const options = (args.find((arg) => arg && typeof arg === "object" && !Array.isArray(arg)) ?? {}) as Record<string, unknown>;
+  return { kind: "custom", title: typeof options.title === "string" ? options.title : firstString(args.slice(1)), source: "pi" };
+};
+
+const askFrom: Extract = (args) => {
+  const questions = Array.isArray(args[0])
+    ? (args[0] as Array<Record<string, unknown>>).map((question, index) => ({
+        id: typeof question.id === "string" ? question.id : `q${index}`,
+        question:
+          typeof question.question === "string" ? question.question
+          : typeof question.prompt === "string" ? question.prompt
+          : `Question ${index + 1}`,
+        header: typeof question.header === "string" ? question.header : undefined,
+        options: Array.isArray(question.options)
+          ? (question.options as Array<Record<string, unknown>>).map((option) => ({
+              label: typeof option.label === "string" ? option.label : String(option.label ?? ""),
+              description: typeof option.description === "string" ? option.description : undefined,
+            }))
+          : [],
+        multi: question.multi === true,
+        recommended: typeof question.recommended === "number" ? question.recommended : undefined,
+        allowCustom: question.allowCustom !== false,
+      }))
+    : undefined;
+  if (!questions || questions.length === 0) return undefined;
+  return { kind: "ask", questions, source: "omp" };
+};
+
+const approvalFrom: Extract = (args) => {
+  const info = (args.find((arg) => arg && typeof arg === "object" && !Array.isArray(arg)) ?? {}) as Record<string, unknown>;
+  const pick = (name: string) => (typeof info[name] === "string" ? (info[name] as string) : undefined);
+  const full = pick("full");
+  const compact = pick("compact");
+  const session = pick("session");
+  if (!full && !compact && !session) return undefined;
+  return { kind: "approval", title: "Tool approval", approval: { full, compact, session }, source: "omp" };
+};
+
+/** pi 0.81.1 `InteractiveMode` entry methods. */
+export const PI_ENTRY_SPECS: EntrySpec[] = [
+  { method: "showExtensionSelector", kind: "select", extract: selectFrom },
+  { method: "showExtensionConfirm", kind: "confirm", extract: confirmFrom },
+  { method: "showExtensionInput", kind: "input", extract: inputFrom(false) },
+  { method: "showExtensionEditor", kind: "editor", extract: editorFrom },
+  { method: "showExtensionCustom", kind: "custom", factory: true, extract: customFrom },
+];
+
+/** Extension/tool UI context methods (both hosts expose the same names). */
+export const UI_CONTEXT_SPECS: EntrySpec[] = [
+  { method: "select", kind: "select", extract: selectFrom },
+  { method: "confirm", kind: "confirm", extract: confirmFrom },
+  { method: "input", kind: "input", extract: inputFrom(false) },
+  { method: "inputSecret", kind: "input", extract: inputFrom(true) },
+  { method: "editor", kind: "editor", extract: editorFrom },
+  { method: "custom", kind: "custom", factory: true, extract: customFrom },
+  { method: "askDialog", kind: "ask", extract: askFrom },
+  { method: "approve", kind: "approval", extract: approvalFrom },
+];
+
+/** OMP 18.12.5 mode-level delegates that the tool context forwards to. */
+export const OMP_ENTRY_SPECS: EntrySpec[] = [
+  { method: "showCollabAwareSelector", kind: "select", extract: selectFrom },
+  { method: "showHookConfirm", kind: "confirm", extract: confirmFrom },
+  { method: "showHookInput", kind: "input", extract: inputFrom(false) },
+  { method: "showCollabAwareEditor", kind: "editor", extract: editorFrom },
+  { method: "showHookCustom", kind: "custom", factory: true, extract: customFrom },
+  { method: "showAskDialog", kind: "ask", extract: askFrom },
+  { method: "showCollabAwareApproval", kind: "approval", extract: approvalFrom },
+];
+
+/** Maps one entry-method call to its semantic entry (exported for tests). */
+export function entryFromCall(spec: EntrySpec, args: unknown[], source: "pi" | "omp"): EntryInfo | undefined {
+  if (spec.factory && typeof args[0] !== "function") return undefined;
+  const info = spec.extract(args);
+  if (!info) return undefined;
+  return { ...info, source, method: spec.method };
+}
+
+/**
+ * Wrap every listed entry method of one object. `tagged` prevents wrapping the
+ * same function twice, which matters because both hosts expose the same dialog
+ * through a tool context *and* a mode method.
+ */
+export function hookEntryMethods(
+  target: Record<string, unknown> | undefined,
+  specs: EntrySpec[],
+  sink: EntrySink,
+  source: "pi" | "omp",
+  tagged: WeakSet<object>,
+): string[] {
+  if (!target) return [];
+  const hooked: string[] = [];
+  for (const spec of specs) {
+    const original = target[spec.method];
+    if (typeof original !== "function") continue;
+    if (tagged.has(original as object)) continue;
+    const call = original as (...args: unknown[]) => unknown;
+    const wrapped = spec.factory
+      ? function patchedCustom(this: unknown, ...args: unknown[]): unknown {
+          const info = entryFromCall(spec, args, source);
+          if (!info) return call.apply(this, args);
+          const factory = args[0];
+          args[0] = (...factoryArgs: unknown[]) => {
+            const bind = (component: unknown): unknown => {
+              if (component && typeof component === "object") sink.bind(component as object, info);
+              return component;
+            };
+            const produced = (factory as (...a: unknown[]) => unknown)(...factoryArgs);
+            if (produced && typeof (produced as { then?: unknown }).then === "function") {
+              return (produced as Promise<unknown>).then(bind);
+            }
+            return bind(produced);
+          };
+          return call.apply(this, args);
+        }
+      : function patchedEntry(this: unknown, ...args: unknown[]): unknown {
+          let pushed = false;
+          try {
+            const info = entryFromCall(spec, args, source);
+            if (info) pushed = sink.push(info);
+          } catch {
+            pushed = false;
+          }
+          try {
+            return call.apply(this, args);
+          } finally {
+            sink.pop(pushed);
+          }
+        };
+    Object.defineProperty(wrapped, "name", { value: `ptp:${spec.method}` });
+    tagged.add(original as object);
+    tagged.add(wrapped);
+    try {
+      target[spec.method] = wrapped;
+      hooked.push(spec.method);
+    } catch {
+      // Frozen host object: the SnapshotAdapter still covers this dialog.
+    }
+  }
+  return hooked;
+}

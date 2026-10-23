@@ -1,0 +1,244 @@
+/**
+ * Adapters #1-#3: the three shapes the host's own dialog entry methods produce
+ * (§4.6.4). They all end in the same place — the focused component's own input
+ * handler — so Telegram never reimplements a decision the host already made.
+ *
+ * pi 0.81.1 renders all three through `Extension{Selector,Input,Editor}
+ * Component`, thin wrappers: the selector keeps its options in a plain
+ * `string[]`, the input delegates to a pi-tui `Input`, the editor to a pi-tui
+ * `Editor`. OMP's equivalents keep their data in closures, so each adapter
+ * falls back to the entry info captured at the entry point and to typing
+ * through `handleInput` (§4.1.3).
+ */
+import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
+import { findShape, isEditorShape, isInputShape, isSelectList } from "../find-shape.ts";
+import { setInputValue } from "../keys.ts";
+import { descriptionOf, labelOf, plain, renderText, resolveRowKey, rowKey, selectRow } from "./utils.ts";
+
+type HostRecord = Record<string, unknown>;
+type Rows = { labels: string[]; descriptions: (string | undefined)[]; cursor: number };
+
+const readNumber = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+
+/**
+ * The live rows plus the terminal cursor. `options: string[]` is the pi
+ * extension selector; a `SelectList` (possibly wrapped, e.g. by
+ * `ThemeSelector`) is the pi-tui control.
+ */
+function selectListRows(component: object): Rows | undefined {
+  const record = component as HostRecord;
+  const cursor = readNumber(record.selectedIndex);
+  if (Array.isArray(record.options) && record.options.every((item) => typeof item === "string")) {
+    const labels = record.options as string[];
+    return { labels, descriptions: labels.map(() => undefined), cursor };
+  }
+  const list = isSelectList(component) ? component : findShape(component, isSelectList, 2);
+  if (!list) return undefined;
+  const filtered = Array.isArray(list.filteredItems) ? (list.filteredItems as unknown[]) : [];
+  const items = filtered.length > 0 ? filtered : (Array.isArray(list.items) ? (list.items as unknown[]) : []);
+  if (items.length === 0) return undefined;
+  return { labels: items.map(labelOf), descriptions: items.map(descriptionOf), cursor: readNumber(list.selectedIndex) };
+}
+
+/** Rows a hand-drawn component keeps in a `filtered*` array (§4.1.4). */
+function filteredRows(component: object): Rows | undefined {
+  const record = component as HostRecord;
+  const key = Object.keys(record).find((name) => /^filtered[A-Z]/.test(name) && Array.isArray(record[name]));
+  if (!key) return undefined;
+  const items = record[key] as unknown[];
+  if (items.length === 0) return undefined;
+  return { labels: items.map(labelOf), descriptions: items.map(descriptionOf), cursor: record["selectedIndex"] !== undefined ? readNumber(record["selectedIndex"]) : 0 };
+}
+
+const rowsOf = (component: object): Rows | undefined => selectListRows(component) ?? filteredRows(component);
+
+function buildItems(rows: Rows): DialogItem[] {
+  return rows.labels.map((label, index) => ({
+    key: rowKey(index, label),
+    label,
+    description: rows.descriptions[index],
+    focused: index === rows.cursor,
+  }));
+}
+
+/** `showExtensionConfirm` keeps title and message apart; the selector joins them. */
+function splitTitle(title: string): { title: string; message?: string } {
+  const newline = title.indexOf("\n");
+  if (newline < 0) return { title };
+  return { title: title.slice(0, newline).trim(), message: title.slice(newline + 1).trim() };
+}
+
+/** The message the terminal shows under a confirmation title, when it has one. */
+function messageFromRender(component: object): string | undefined {
+  const render = renderText(component);
+  if (render.length === 0) return undefined;
+  const lines = render.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
+  // Borders, the title, the option rows and the navigation legend are not the
+  // message; everything between the title and the first option row is.
+  const body = lines.filter((line) =>
+    !/^[─—\-\s]+$/.test(line)
+    && !/^[>▶►•·*\s]*\d+[.)]/.test(line)
+    && !/(navigate|select|cancel|esc)/i.test(line));
+  return body.length > 0 ? body.join("\n") : undefined;
+}
+
+const YES_NO = new Set(["yes", "no"]);
+
+/**
+ * Adapter #1 — anything shaped like a list of choices: the extension selector,
+ * the extension confirm (which *is* a selector over Yes/No on pi), and a bare
+ * pi-tui `SelectList`.
+ */
+export const extensionSelectAdapter: DialogAdapter = {
+  id: "ext-select",
+
+  detect(component, ctx) {
+    const kind = ctx.entry?.kind;
+    if (kind === "select" || kind === "confirm") return true;
+    return rowsOf(component) !== undefined;
+  },
+
+  read(component, ctx): DialogModel {
+    const entry = ctx.entry;
+    const rows = rowsOf(component);
+    const labels = rows ? rows.labels : (entry?.options ?? []);
+    const rawTitle = (component as HostRecord).baseTitle;
+    const title = typeof rawTitle === "string" && rawTitle.length > 0 ? plain(rawTitle) : (entry?.title ?? "Choose");
+
+    // A two-option Yes/No list is a confirmation, whichever way it arrived:
+    // pi's `showExtensionConfirm` draws it through the selector, and its title
+    // carries the message after a newline.
+    const looksConfirmed = entry?.kind === "confirm"
+      || (labels.length === 2 && labels.every((label) => YES_NO.has(label.toLowerCase())) && title.includes("\n"));
+    if (looksConfirmed) {
+      const parts = splitTitle(title);
+      return { kind: "confirm", title: parts.title, message: entry?.message ?? messageFromRender(component) ?? parts.message };
+    }
+
+    if (labels.length === 0) {
+      // Nothing readable: fall back to the screen so the chat still shows the
+      // dialog and keeps its escape hatch (§4.6.4 #13).
+      return { kind: "snapshot", title, text: renderText(component) };
+    }
+
+    const items = rows
+      ? buildItems(rows)
+      : labels.map((label, index) => ({ key: rowKey(index, label), label }));
+    return { kind: "select", title, items, total: labels.length };
+  },
+
+  act(component, action, ctx) {
+    if (action.type === "cancel") return ctx.sendKey("esc");
+    if (action.type !== "choose" && action.type !== "toggle" && action.type !== "confirm") return false;
+
+    const rows = rowsOf(component);
+    if (!rows) return false;
+
+    let target: number | undefined;
+    if (action.type === "confirm") {
+      // Confirm maps to the Yes/No rows the host actually rendered; a dialog
+      // whose labels changed underneath us resolves to nothing.
+      const labels = rows.labels.map((label) => label.toLowerCase());
+      target = labels.includes("yes") || labels.includes("no")
+        ? (action.yes ? labels.indexOf("yes") : labels.indexOf("no"))
+        : (action.yes ? 0 : 1);
+      if (target !== undefined && target < 0) return false;
+    } else {
+      target = resolveRowKey(rows.labels, action.key);
+    }
+    if (target === undefined) return false;
+
+    // Move with arrow keys instead of writing `selectedIndex`: that is the
+    // only path that makes the component redraw its own cursor (§4.1.3).
+    return selectRow(ctx.sendKey, rows.cursor, target);
+  },
+};
+
+/**
+ * Adapter #2 — one-line text input (`ui.input`, `ui.inputSecret`,
+ * `showExtensionInput`, OMP's `showHookInput`).
+ */
+export const extensionInputAdapter: DialogAdapter = {
+  id: "ext-input",
+
+  detect(component, ctx) {
+    if (ctx.entry?.kind !== "input") return false;
+    // Secret or plain, the component is either an `Input` or wraps one.
+    return isInputShape(component) || findShape(component, isInputShape, 2) !== undefined;
+  },
+
+  read(component, ctx): DialogModel {
+    const record = component as HostRecord;
+    const input = isInputShape(component) ? record : findShape(component, isInputShape, 2);
+    const getValue = input ? (input as HostRecord).getValue : undefined;
+    const prefill = typeof getValue === "function" ? String((getValue as () => string).call(input) ?? "") : "";
+    const title = typeof record.baseTitle === "string" && record.baseTitle.length > 0
+      ? plain(record.baseTitle)
+      : (ctx.entry?.title ?? "Input");
+    return {
+      kind: "input",
+      title,
+      placeholder: ctx.entry?.placeholder,
+      secret: ctx.entry?.secret === true,
+      prefill: prefill.length > 0 ? prefill : undefined,
+    };
+  },
+
+  act(component, action, ctx) {
+    if (action.type === "cancel") return ctx.sendKey("esc");
+    if (action.type !== "submit") return false;
+    const text = action.text ?? "";
+    const input = isInputShape(component) ? component : findShape(component, isInputShape, 2);
+    // Clearing and typing into the component's own input keeps cursor and
+    // undo state coherent; Enter then runs the host's submit handler.
+    if (!setInputValue(input ?? component, text)) return false;
+    return ctx.sendKey("enter");
+  },
+};
+
+/**
+ * Adapter #3 — multi-line editor (`ui.editor`, `showExtensionEditor`, OMP's
+ * `showCollabAwareEditor`). Terminal-only by design (§4.8.3): Telegram mirrors
+ * it and accepts a whole reply; editing keeps happening locally.
+ */
+export const extensionEditorAdapter: DialogAdapter = {
+  id: "ext-editor",
+
+  detect(component, ctx) {
+    if (ctx.entry?.kind !== "editor") return false;
+    return isEditorShape(component) || findShape(component, isEditorShape, 2) !== undefined;
+  },
+
+  read(component, ctx): DialogModel {
+    const record = component as HostRecord;
+    const editor = isEditorShape(component) ? record : findShape(component, isEditorShape, 2);
+    const getText = editor ? (editor as HostRecord).getText : undefined;
+    const prefill = typeof getText === "function" ? String((getText as () => string).call(editor) ?? "") : "";
+    return {
+      kind: "editor",
+      title: typeof record.baseTitle === "string" && record.baseTitle.length > 0
+        ? plain(record.baseTitle)
+        : (ctx.entry?.title ?? "Editor"),
+      prefill: prefill.length > 0 ? prefill : (ctx.entry?.prefill ?? undefined),
+    };
+  },
+
+  act(component, action, ctx) {
+    if (action.type === "cancel") return ctx.sendKey("esc");
+    if (action.type !== "submit") return false;
+    const text = action.text ?? "";
+    const editor = isEditorShape(component) ? component : findShape(component, isEditorShape, 2);
+    const setText = editor ? (editor as HostRecord).setText : undefined;
+    if (typeof setText === "function") {
+      // The editor advertises a setter, so using it is allowed (§4.1.3).
+      try {
+        (setText as (value: string) => void).call(editor, text);
+      } catch {
+        return false;
+      }
+      return ctx.sendKey("enter");
+    }
+    if (!setInputValue(component, text)) return false;
+    return ctx.sendKey("enter");
+  },
+};

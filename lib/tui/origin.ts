@@ -1,8 +1,21 @@
 /**
- * OriginTracker (stage 1): a Telegram-issued command owns the output produced
- * while it runs. A scope ends when the submit completed, focus is back in the
- * editor and no output arrived for IDLE_MS. The draft saved before submission
- * is restored exactly then, not when the host's submit handler returns.
+ * OriginTracker: a Telegram-issued command owns the output produced while it
+ * runs. A scope ends when the submit completed, focus is back in the editor and
+ * no output arrived for IDLE_MS; the draft saved before submission is restored
+ * exactly then — not when the host's submit handler returns.
+ *
+ * §4.3's second completion signal — watch the `session.prompt` the submit caused
+ * and keep the scope alive until it returns — is not here yet, and it is not
+ * optional: `/goals <topic>` answers through a dialog that appears in a *later*
+ * turn, so phase 2 needs it. It comes with the Gateway work (§4.2.3), because the
+ * whole point is the submit path that starts a turn.
+ *
+ * What was removed is an earlier half-version that waited on a prompt for every
+ * command. §4.2.3 is explicit that a host-builtin command never calls
+ * `session.prompt` (`isHostBuiltin(text) -> promptDone = true`), and nothing
+ * installed the hook, so that rule froze every output-only command — the entire
+ * point of the gateway — until the 60s cap. When it comes back it must come with
+ * the builtin skip, the quiet window and the tests §7.1 asks for.
  */
 import { log } from "../logger.ts";
 
@@ -27,7 +40,6 @@ export type CommandScope = {
   draft: string;
   localEdited: boolean;
   submitDone: boolean;
-  promptDone: boolean;
   lastOutputAt: number;
   startedAt: number;
   telegramMessageId?: number;
@@ -79,7 +91,6 @@ export class OriginTracker {
       draft,
       localEdited: false,
       submitDone: false,
-      promptDone: true,
       lastOutputAt: now,
       startedAt: now,
       ended: false,
@@ -144,7 +155,6 @@ export class OriginTracker {
       return;
     }
     if (!scope.submitDone) return;
-    if (!scope.promptDone) return;
     if (!this.deps.isEditorFocused()) return;
     if (now - scope.lastOutputAt < IDLE_MS) return;
     this.end(scope, "idle");
