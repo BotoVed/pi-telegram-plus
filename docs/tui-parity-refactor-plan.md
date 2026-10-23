@@ -772,7 +772,10 @@ tgplus:dlg:<sessionId>:<generation>:<op>[:<arg>]
 | `/hotkeys` | 显示终端快捷键 | 不提交。发送插件生成的 Telegram 用法说明 |
 | `/quit`、`/exit` | 退出进程 | Telegram 上二次确认（`✅ 确认退出` / `取消`），确认后提交 |
 | `/debug` | 写调试文件 | 直接提交，输出回传 |
-| `/import` | 从文件导入 | 直接提交，参数照传 |
+| `/import` | 从文件导入 | **保留原生处理器**，不提交编辑器（§9 决定 21）；参数照传 |
+| `/reload` | 重新加载扩展/技能/提示词 | **保留原生处理器**（§9 决定 21） |
+| `/fork`、`/clone` | 复制会话/分支 | **保留原生处理器**（§9 决定 21）；需要选择器的步骤由阶段 3 的 Broker 接管 |
+| `/new` | 清空当前会话 | **调用宿主 `ctx.newSession()`**，不提交编辑器（§9 决定 22）；完成后通知并恢复草稿 |
 | 外部编辑器（`ctrl+g`） | 打开 `$EDITOR` | 不支持；editor 对话框只能用"发送一条消息"输入 |
 | 彩蛋命令（`/arminsayshi`、`/dementedelves`） | 动画 | 直接提交，输出回传 |
 
@@ -780,7 +783,7 @@ OMP 的同类命令按同样原则补表：默认"直接提交 + 输出回传"�
 
 | OMP 命令 | 宿主行为（阶段 0 探测） | Telegram 等价 |
 |---|---|---|
-| `/help`、`/status`、`/usage`、`/stats`、`/context`、`/changelog`、`/debug`、`/skills`、`/plugins`、`/extensions`、`/tools`、`/agents`、`/mcp`、`/plan`、`/session`、`/jobs`、`/todo`、`/memory` | 输出信息或打开只读面板（`showCommandReport`/`showDebugSelector`/`showUsageDashboard`/`showExtensionsDashboard`/`showAgentsDashboard`） | 直接提交；输出由 OutputCapture 回传；面板走 `InfoPanelAdapter`/快照，按钮只有"关闭" |
+| `/help`、`/status`、`/usage`、`/stats`、`/context`、`/changelog`、`/debug`、`/skills`、`/plugins`、`/extensions`、`/tools`、`/agents`、`/mcp`、`/plan`、`/session`、`/jobs`、`/todo`、`/memory` | 输出信息或打开只读面板（`showCommandReport`/`showDebugSelector`/`showUsageDashboard`/`showExtensionsDashboard`/`showAgentsDashboard`） | **阶段 3 接入 Gateway**：先实现 `InfoPanelAdapter`/快照面板截获，正文回传；按钮只有"关闭"。阶段 1 不接入，否则只会回 ack（§9 决定 23） |
 | `/model`、`/models`、`/switch`、`/modelpreset`、`/effort`、`/settings`、`/theme`、`/thinking`、`/sessions`、`/resume`、`/pin`、`/tree`、`/fork`、`/login`、`/logout` | 打开选择器（`showModelSelector`/`showSettingsSelector`/`showSessionSelector`/`showTreeSelector`/`showOAuthSelector`）；探测确认这些焦点组件没有可读数据字段 | 直接提交；阶段 3 先按 `SnapshotAdapter` 提供 ↑↓/Enter/Esc，不伪装成原生列表（§4.6.5 OMP 结论） |
 | `/new`、`/fresh`、`/clear`、`/delete`、`/fork`（确认）、`/cleanse`、`/wt`、`/worktree` | 可能弹确认框或要求参数 | 直接提交；确认框按 §4.7.2 的 `confirm` 渲染，按钮"是/否" |
 | `/copy`、`/open` | 读最后一条消息/链接；`/copy` 可能打开 `showCopySelector` | `/copy` 不提交，直接把最后一条 assistant 文本发到 Telegram；`/open` 直接提交，输出回传 |
@@ -902,10 +905,10 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 ### 阶段 1：基础设施 + 只输出命令
 
 - `host.ts`、`focus.ts`、`origin.ts`、`gateway.ts`、`output.ts`。
-- Gateway 只对**静态白名单**中的命令启用：附录 A"只有输出"一组中的 pi 命令，以及阶段 0 确认的 OMP 同类命令。白名单外的命令仍走旧路径（含旧镜像）。白名单内的命令**绝不**进入 `runTuiCommand`。
+- Gateway 只对**静态白名单**中的 pi 命令启用：附录 A"只有输出"中可提交且不替换运行时的命令。白名单外的命令仍走旧路径（含旧镜像）。白名单内的命令**绝不**进入 `runTuiCommand`。`/new` 走 `ctx.newSession()`；`/reload`、`/fork`、`/clone`、`/import` 保留原生处理器（§9 决定 21、22）。OMP 的同类命令在阶段 3 接入（§9 决定 23）。
 - 本阶段不实例化 Broker；FocusTracker 只为 scope 结束判断和 OutputCapture 服务。新旧两套 hook 并存时，新 hook 是被动的（只观察，不发 Telegram 对话框消息），对话框画面仍由旧镜像负责。
 - 修复草稿覆盖问题（白名单命令）。
-- **验收**：pi 上 `/session`、`/compact`、`/name x`、`/new`、`/reload`、`/changelog`、`/share`、`/export` 从 Telegram 执行，宿主状态与终端执行一致，输出完整回传（含 `/compact` 完成后的结果），本地草稿不丢。
+- **验收**：pi 上 `/session`、`/compact`、`/name x`、`/new`、`/changelog`、`/share`、`/export` 从 Telegram 执行，宿主状态与终端执行一致，输出完整回传（含 `/compact` 完成后的结果），本地草稿不丢。**OMP 的同类命令不在本阶段验收范围，移到阶段 3。**
 
 ### 阶段 2：Broker + 扩展对话框
 
@@ -919,7 +922,8 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 ### 阶段 3：列表、设置、登录
 
 - 适配器 5-9；所有命令切换到 Gateway；删除三个命令集合常量。
-- **验收**：`/model`（含搜索、翻页、当前值）、`/resume`、`/settings`（含切换值、子菜单）、`/login`（多步，含 API key 输入且 Telegram 上不出现明文）、`/logout`、`/scoped-models`、`/tree`、`/fork`（编辑器文本发到 Telegram，本地草稿恢复）在 pi 和 OMP 上可用，结果状态与终端一致。
+- **OMP 只有输出的命令接入 Gateway**：先实现 `InfoPanelAdapter`/快照面板截获，覆盖 `showCommandReport`、`showDebugSelector`、`showUsageDashboard`、`showExtensionsDashboard`、`showAgentsDashboard` 等全屏报告；再把 `/status`、`/usage`、`/stats`、`/context`、`/changelog`、`/help`、`/skills`、`/plugins`、`/extensions`、`/tools`、`/agents`、`/mcp`、`/plan`、`/jobs`、`/todo`、`/memory` 加入 OMP 白名单。面板必须能在 Telegram 看到正文，不能只回 ack。
+- **验收**：`/model`（含搜索、翻页、当前值）、`/resume`、`/settings`（含切换值、子菜单）、`/login`（多步，含 API key 输入且 Telegram 上不出现明文）、`/logout`、`/scoped-models`、`/tree`、`/fork`（编辑器文本发到 Telegram，本地草稿恢复）在 pi 和 OMP 上可用，结果状态与终端一致；**OMP 的只有输出命令从 Gateway 执行且面板正文被截获**。
 
 ### 阶段 4：终端专属命令与收尾
 
@@ -1011,6 +1015,9 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 18 | OMP 内置选择器（model/settings/session/tree/oauth）没有可读字段 | **先降级为快照**，只提供 ↑↓/Enter/Esc；不解析渲染文本伪造原生列表。若后续 OMP 版本暴露字段，再按探测结果升级 |
 | 19 | OMP 的 `mode.editor.onSubmit` 在捕获时不存在 | 交给 §4.1.1 的每秒 tick 安装；捕获只记录字段名，不假设初始化顺序 |
 | 20 | `/export` 的路径来源 | `exportToHtml`/`exportToJsonl` 返回 **Promise**；等待解析后的字符串作为路径。`/share` 内部调用同一方法，按 scope 标签区分（§4.8） |
+| 21 | `/reload`、`/fork`、`/clone`、`/import` 是否提交给宿主编辑器 | **不提交，保留原生处理器。** 提交给编辑器会走 `runtimeHost` 的会话替换路径，绕过 pi 的 `withSession` 顺序；扩展运行时会被重新加载，而旧轮询实例尚未释放，单例协调器会拒绝新实例（"another local pi instance is already polling this bot token"）。原生处理器已经在宿主控制 API 内完成同样的状态变更。 |
+| 22 | `/new` 如何执行 | **调用宿主 `ctx.newSession()`，不提交编辑器。** 编辑器路径走 `handleClearCommand()` → `runtimeHost.newSession()`，同样会绕过 `withSession` 并触发轮询实例交接；命令上下文里的 `ctx.newSession()` 是宿主支持的替换入口。命令 scope 仍需保存/恢复草稿。 |
+| 23 | OMP 何时接入 Gateway | **推迟到阶段 3。** 阶段 0 证明 OMP 的 `/status`、`/usage`、`/stats`、`/context`、`/skills` 等走 `showCommandReport` 全屏面板，面板内容不在 `chatContainer` 的 `addChild` 流里；阶段 1 没有 `InfoPanelAdapter`，接入只会回一条 ack 而没有正文。阶段 3 先做面板截获，再把 OMP 的只有输出命令加入白名单。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 
@@ -1104,7 +1111,9 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 打开对话框 | `/settings`、`/fork`、`/tree`、`/trust`、`/logout`、`/resume` | 立即返回 |
 | 打开对话框 | `/scoped-models`、`/login`、`/model`（无参数，或参数无精确匹配） | await |
 | 只有输出 | `/name`、`/session`、`/changelog`、`/debug`、彩蛋命令 | 立即返回 |
-| 只有输出 | `/export`、`/import`、`/share`、`/clone`、`/new`（`handleClearCommand`）、`/compact`、`/reload`、`/model <精确名>` | await |
+| 只有输出 | `/export`、`/share`、`/compact`、`/model <精确名>` | await |
+| 宿主控制（原生处理器） | `/reload`、`/fork`、`/clone`、`/import` | await 或立即返回；**不提交编辑器**（§9 决定 21） |
+| 宿主控制（会话替换） | `/new` | 走 `ctx.newSession()`，不提交编辑器（§9 决定 22） |
 | 终端专属（§4.8） | `/copy`、`/hotkeys`、`/quit` | — |
 | 前缀 | `!`/`!!` | 保留现有 `runTelegramBash` |
 
@@ -1112,7 +1121,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 扩展命令、提示词模板、技能不在这个 `if` 链中，会落到后面的通用提交逻辑（压缩中 L2236、流式中 L2248、空闲时 `onInputCallback` L2262），同样适用 Gateway 的"直接提交"。
 
-阶段 1 的白名单取"只有输出"两行（去掉 §4.8 中不提交的命令）。
+阶段 1 的白名单取"只有输出"两行中可提交且不替换运行时的命令：`/name`、`/session`、`/changelog`、`/debug`、`/export`、`/share`、`/compact` 和彩蛋命令；`/new` 走 `ctx.newSession()`；`/reload`、`/fork`、`/clone`、`/import` 保留原生处理器。OMP 的命令在阶段 3 接入。
 
 ## 附录 B：pi 对话框组件结构（0.81.1）
 
