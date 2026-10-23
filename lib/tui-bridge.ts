@@ -444,7 +444,8 @@ function injectInput(sequence: string): boolean {
 }
 
 function injectKey(name: string): boolean {
-  const sequence = KEY_SEQUENCES[name.toLowerCase()];
+  const key = name.toLowerCase();
+  const sequence = KEY_SEQUENCES[key] ?? (/^ctrl-[a-z]$/.test(key) ? String.fromCharCode(key.charCodeAt(5) - 96) : undefined);
   return sequence !== undefined && injectInput(sequence);
 }
 

@@ -31,6 +31,10 @@ missing or mislabelled cannot be published.
   that only exits on interrupt can be left from Telegram.
 - **A mirrored prompt is no longer frozen after six minutes.** The polling loop
   now runs until the dialog closes, the turn ends, or the host stops rendering.
+- **Dialogs expose the keys their own legend advertises.** The host footer
+  names actions the mirror lacked (`⌃R` reload, `⌃O` expand, `⌃Q` submit,
+  `PgUp`/`PgDn`); the last lines of the dialog are parsed and those keys become
+  buttons, so /extensions, /agents and /mcp no longer dead-end on a shortcut.
 - **Pasted newlines no longer submit a dialog field early.**
 
 ### Testing

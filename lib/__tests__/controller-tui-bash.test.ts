@@ -502,6 +502,43 @@ describe("TUI command bridge routing", () => {
     expect(key).toHaveBeenCalledWith("ctrl-c");
   });
 
+  it("renders the keys the dialog advertises", async () => {
+    const key = vi.fn(() => true);
+    const screen = [
+      "MCP Server Management",
+      "PgUp/PgDn scroll · ⌃O expand · ⎋ to close",
+    ].join("\n");
+    const harness = createHarness({
+      bridge: createBridge({
+        snapshot: vi.fn(() => ({ text: screen, interactive: true, host: "omp" as const, width: 100 })),
+        key,
+      }),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+    });
+
+    await harness.controller.handleMessage({
+      message_id: 58,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "/settings",
+    });
+    await vi.waitFor(() => expect(harness.calls.some((call) => call.method === "buttons")).toBe(true));
+    const last = harness.calls.filter((call) => call.method === "buttons").at(-1)!;
+    const texts = (last.rows as Array<Array<{ text: string }>>).flat().map((button) => button.text);
+    expect(texts).toContain("PgUp");
+    expect(texts).toContain("PgDn");
+    expect(texts).toContain("⌃O");
+    expect(texts).not.toContain("Home");
+
+    await harness.controller.handleCallbackQuery({
+      id: "cb-pgup",
+      data: "tgplus:tui:pageup",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(key).toHaveBeenCalledWith("pageup");
+  });
+
   it("flattens pasted newlines before injecting dialog input", async () => {
     const write = vi.fn(() => true);
     const harness = createHarness({

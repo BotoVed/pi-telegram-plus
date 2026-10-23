@@ -761,14 +761,54 @@ function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: Sele
   return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(clipScreen(body, TUI_SNAPSHOT_MAX_BYTES))}${selector ? "" : snapshotLinks(body)}`;
 }
 
-function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
+// The host prints its own key legend at the bottom of every dialog ("⌃R reload
+// · PgUp/PgDn scroll"). Anything it advertises that a Telegram keyboard lacks is
+// an unreachable action, so the legend is parsed and turned into buttons. Keys
+// without a meaningful Telegram-side effect (⌃G opens $EDITOR, ⌃Z suspends) are
+// deliberately absent from the table.
+const LEGEND_KEYS: Array<[RegExp, string, string]> = [
+  [/⌃C|ctrl\+c/i, "Ctrl+C", "ctrl-c"],
+  [/⌃R|ctrl\+r/i, "⌃R", "ctrl-r"],
+  [/⌃O|ctrl\+o/i, "⌃O", "ctrl-o"],
+  [/⌃Q|ctrl\+q/i, "⌃Q", "ctrl-q"],
+  [/⌃L|ctrl\+l/i, "⌃L", "ctrl-l"],
+  [/PgUp|page ?up/i, "PgUp", "pageup"],
+  [/PgDn|page ?down/i, "PgDn", "pagedown"],
+  [/⇧⇥|shift\+tab/i, "⇧Tab", "shift-tab"],
+  [/\bHome\b/, "Home", "home"],
+  [/\bEnd\b/, "End", "end"],
+];
+
+/** Keys advertised by the dialog's own footer, in render order. */
+export function advertisedKeys(text: string): Array<{ text: string; action: string }> {
+  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
+  // Legends live at the bottom; scanning the whole screen would also match
+  // prose that happens to mention a key.
+  const legend = lines.slice(-4).join("\n");
+  const found: Array<{ text: string; action: string; at: number }> = [];
+  for (const [pattern, label, action] of LEGEND_KEYS) {
+    const match = pattern.exec(legend);
+    if (!match) continue;
+    found.push({ text: label, action, at: match.index });
+  }
+  return found.sort((a, b) => a.at - b.at).slice(0, 6).map(({ text: label, action }) => ({ text: label, action }));
+}
+
+function tuiKeyRows(screenText = ""): Array<Array<{ text: string; value: string }>> {
   const button = (text: string, action: string) => ({ text, value: encodeTuiCallback(action) });
+  const base = new Set(["up", "down", "left", "right", "enter", "esc", "space", "tab", "shift-tab", "ctrl-c"]);
+  const extra = advertisedKeys(screenText).filter((key) => !base.has(key.action));
+  const legendRows: TelegramButton[][] = [];
+  for (let i = 0; i < extra.length; i += 3) {
+    legendRows.push(extra.slice(i, i + 3).map((key) => button(key.text, key.action)));
+  }
   return [
     [button("↑", "up"), button("↓", "down")],
     [button("←", "left"), button("→", "right")],
     [button("Enter", "enter"), button("Esc", "esc")],
     [button("Space", "space"), button("Tab", "tab")],
     [button("⇧Tab", "shift-tab"), button("Ctrl+C", "ctrl-c")],
+    ...legendRows,
     [button("⌨️ Type", "type"), button("Refresh", "refresh"), button("Close", "close")],
   ];
 }
@@ -803,7 +843,7 @@ function selectorOverflows(selector: SelectorState): boolean {
   return selector.block.split("\n").some((line) => /\u2588\s*[│|]?\s*$/.test(line));
 }
 
-function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging): SelectorKeyboard | undefined {
+function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging, screenText = ""): SelectorKeyboard | undefined {
   if (!selector.options.some((option) => option.selected)) return undefined;
   // Windowed hosts (OMP) show one page of their scrolling window; complete
   // lists (pi) render everything, capped only by Telegram's button budget.
@@ -841,6 +881,14 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
       { text: "◀ Question", value: encodeTuiCallback("q:prev") },
       { text: "Question ▶", value: encodeTuiCallback("q:next") },
     ]);
+  }
+  // Selector dialogs advertise extra actions in the same footer legend.
+  const selectorBase = new Set([
+    "up", "down", "left", "right", "enter", "esc", "space", "tab", "shift-tab", "ctrl-c",
+  ]);
+  const legend = advertisedKeys(screenText || selector.block).filter((key) => !selectorBase.has(key.action));
+  for (let i = 0; i < legend.length; i += 3) {
+    rows.push(legend.slice(i, i + 3).map((key) => ({ text: key.text, value: encodeTuiCallback(key.action) })));
   }
   const footer: TelegramButton[] = [];
   // Checkbox questions need an explicit submit: Enter confirms the question,
@@ -936,7 +984,7 @@ export function createTelegramController(deps: {
     }
     const canControl = snapshot.interactive && getTuiMode() === "full" && !mirror.pendingText;
     const selectorKeyboard = canControl && selector
-      ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true })
+      ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true }, snapshot.text ?? "")
       : undefined;
     // Panels drawn into the transcript (not focusable overlays) still carry a
   // boxed title; show it instead of the generic "TUI"/"TUI screen" label.
@@ -959,7 +1007,7 @@ export function createTelegramController(deps: {
     const rows: TelegramButton[][] | undefined = mirror.pendingText
       ? [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]
       : canControl
-        ? (selectorKeyboard?.rows ?? tuiKeyRows())
+        ? (selectorKeyboard?.rows ?? tuiKeyRows(snapshot.text ?? ""))
         : undefined;
     const keyboardSig = rows ? keyboardSignature(rows) : "none";
     if (text === mirror.lastText && mirror.lastCanControl === canControl && keyboardSig === mirror.lastKeyboard && !mirror.pendingText) return;
