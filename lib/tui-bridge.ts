@@ -403,6 +403,11 @@ const KEY_SEQUENCES: Record<string, string> = {
   "shift-tab": "\x1b[Z",
   pageup: "\x1b[5~",
   pagedown: "\x1b[6~",
+  home: "\x1b[H",
+  end: "\x1b[F",
+  // The host's own key legends advertise ⌃C to leave a dialog; without it the
+  // mirror had no way to cancel a prompt that only exits on interrupt.
+  "ctrl-c": "\x03",
 };
 
 function injectInput(sequence: string): boolean {

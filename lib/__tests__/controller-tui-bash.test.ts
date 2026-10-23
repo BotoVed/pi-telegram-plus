@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTelegramController, trimScreenChrome } from "../controller.ts";
+import { clipScreen, createTelegramController, snapshotLinks, trimScreenChrome } from "../controller.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
@@ -238,7 +238,7 @@ describe("TUI command bridge routing", () => {
     expect(harness.calls.some((call) => call.text?.includes("TUI command"))).toBe(true);
   });
 
-  it("truncates an oversized screen snapshot to its bottom so the mirror stays one message", async () => {
+  it("keeps both ends of an oversized screen so instructions and state survive", async () => {
     const bigScreen = Array.from({ length: 80 }, (_, i) => `row ${i} ${"█".repeat(90)}`).join("\n");
     const harness = createHarness({
       bridge: createBridge({
@@ -259,8 +259,10 @@ describe("TUI command bridge routing", () => {
     const edit = harness.calls.find((call) => call.messageId !== undefined && call.text?.includes("<pre>"))!;
     expect(Buffer.byteLength(edit.text!, "utf8")).toBeLessThanOrEqual(3600);
     expect(edit.text).toContain("…");
+    // The head carries instructions/URLs, the tail carries live state.
+    expect(edit.text).toContain("row 0 ");
     expect(edit.text).toContain("row 79");
-    expect(edit.text).not.toContain("row 0 ");
+    expect(edit.text).not.toContain("row 40 ");
   });
 
   it("renders an interactive selector and routes callback keys in full mode", async () => {
@@ -469,6 +471,102 @@ describe("TUI command bridge routing", () => {
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 1)).toBe(true);
   });
 
+  it("offers the cancel keys the host advertises", async () => {
+    const key = vi.fn(() => true);
+    const harness = createHarness({
+      bridge: createBridge({
+        snapshot: vi.fn(() => ({ text: "Login\n> ", interactive: true, host: "pi" as const, width: 100 })),
+        key,
+      }),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+    });
+
+    await harness.controller.handleMessage({
+      message_id: 55,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "/settings",
+    });
+    await vi.waitFor(() => expect(harness.calls.some((call) => call.method === "buttons")).toBe(true));
+    const last = harness.calls.filter((call) => call.method === "buttons").at(-1)!;
+    const texts = (last.rows as Array<Array<{ text: string }>>).flat().map((button) => button.text);
+    expect(texts).toContain("Ctrl+C");
+    expect(texts).toContain("⇧Tab");
+
+    await harness.controller.handleCallbackQuery({
+      id: "cb-ctrl-c",
+      data: "tgplus:tui:ctrl-c",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    expect(key).toHaveBeenCalledWith("ctrl-c");
+  });
+
+  it("flattens pasted newlines before injecting dialog input", async () => {
+    const write = vi.fn(() => true);
+    const harness = createHarness({
+      bridge: createBridge({
+        snapshot: vi.fn(() => ({ text: "Path\n> ", interactive: true, host: "pi" as const, width: 100 })),
+        write,
+      }),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+    });
+
+    await harness.controller.handleMessage({
+      message_id: 56,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "/settings",
+    });
+    await vi.waitFor(() => expect(harness.calls.some((call) => call.method === "buttons")).toBe(true));
+    await harness.controller.handleCallbackQuery({
+      id: "cb-type",
+      data: "tgplus:tui:type",
+      message: { message_id: 1, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
+    });
+    await harness.controller.handleMessage({
+      message_id: 57,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "line1\nline2",
+    });
+    expect(write).toHaveBeenCalledWith("line1 line2");
+  });
+
+});
+
+describe("Mirror text fitting", () => {
+  it("collapses the host's blank padding before the byte budget", () => {
+    const screen = ["header https://auth.example/start", "", "", "", "", "footer legend"].join("\n");
+    expect(clipScreen(screen, 3000)).toBe("header https://auth.example/start\n\nfooter legend");
+  });
+
+  it("keeps both ends and elides the middle of a long screen", () => {
+    const screen = Array.from({ length: 80 }, (_, i) => `row ${i} ${"█".repeat(90)}`).join("\n");
+    const clipped = clipScreen(screen, 3000);
+    expect(Buffer.byteLength(clipped, "utf8")).toBeLessThanOrEqual(3000);
+    expect(clipped.split("\n")[0]).toContain("row 0 ");
+    expect(clipped.trimEnd().split("\n").at(-1)).toContain("row 79");
+    expect(clipped).toContain("\n…\n");
+  });
+
+  it("rejoins a URL the host hard-wrapped at the render width", () => {
+    const pad = (line: string) => line.padEnd(99);
+    const head = `    https://auth.example/authorize?client_id=${"a".repeat(34)}&response_type`;
+    const screen = [
+      pad(head),
+      pad("    Local shortcut (this machine only): http://localhost:1455/launch"),
+      pad(head),
+      pad("    =code&scope=openid+profile"),
+      pad("    l+offline_access&state=1234"),
+    ].join("\n");
+    const links = snapshotLinks(screen);
+    const escaped = head.trim().replace(/&/g, "&amp;");
+    expect(links).toContain(`${escaped}=code&amp;scope=openid+profilel+offline_access&amp;state=1234`);
+    // The wrapped first copy is only a prefix and must not be offered twice.
+    expect(links.match(/authorize/g)).toHaveLength(1);
+  });
 });
 
 describe("Host capability routing", () => {

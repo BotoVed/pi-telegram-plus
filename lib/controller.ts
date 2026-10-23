@@ -531,7 +531,10 @@ const TUI_POLL_ATTEMPTS = 40;
 // Host-rendered prompts: poll the overlay until the host takes it back.
 const TUI_PROMPT_POLL_MS = 150;
 const TUI_PROMPT_EDIT_MS = 1500;
-const TUI_PROMPT_MAX_POLLS = 2400;
+// A prompt stays mirrored for as long as it is on screen: the loop exits when
+// the dialog closes, the turn ends or the host stops rendering. An OAuth wait
+// can easily outlive a fixed six-minute budget.
+
 // A command's overlay can draw a frame or two after dispatch; treat a screen as
 // final only after it has been stable this long.
 const TUI_MIRROR_IDLE_MS = 3_000;
@@ -639,25 +642,79 @@ function tailText(text: string, maxChars = 3200): string {
 // dialogs, prompts, and the latest output render there.
 const TUI_SNAPSHOT_MAX_BYTES = 3000;
 
-function tailScreen(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) return text;
-  const lines = text.split("\n");
-  let bytes = 4; // "…\n"
-  let start = lines.length;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const lineBytes = Buffer.byteLength(lines[i], "utf8") + 1;
-    if (bytes + lineBytes > maxBytes) break;
-    bytes += lineBytes;
-    start = i;
+/**
+ * Fit a rendered screen into a Telegram message without losing the parts a
+ * user needs to interact: the host pads dialogs to the terminal height with
+ * blank rows, which used to eat the budget and push the dialog's own header
+ * (instructions, OAuth URL) out of the mirror. Collapse that padding first,
+ * then keep both ends when the rest still overflows.
+ */
+export function clipScreen(text: string, maxBytes: number): string {
+  const collapsed: string[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "" && collapsed.length > 0 && collapsed[collapsed.length - 1].trim() === "") continue;
+    collapsed.push(line);
   }
-  return `…\n${lines.slice(start).join("\n")}`;
+  while (collapsed.length > 0 && collapsed[collapsed.length - 1].trim() === "") collapsed.pop();
+  const trimmed = collapsed.join("\n");
+  if (Buffer.byteLength(trimmed, "utf8") <= maxBytes) return trimmed;
+  const budget = maxBytes - 4; // "\n…\n"
+  const headLimit = Math.floor(budget * 0.45);
+  const head: string[] = [];
+  let headBytes = 0;
+  let index = 0;
+  for (; index < collapsed.length; index += 1) {
+    const size = Buffer.byteLength(collapsed[index], "utf8") + 1;
+    if (head.length > 0 && headBytes + size > headLimit) break;
+    head.push(collapsed[index]);
+    headBytes += size;
+  }
+  const tail: string[] = [];
+  let tailBytes = 0;
+  for (let i = collapsed.length - 1; i > index; i -= 1) {
+    const size = Buffer.byteLength(collapsed[i], "utf8") + 1;
+    if (tail.length > 0 && tailBytes + size > budget - headBytes) break;
+    tail.push(collapsed[i]);
+    tailBytes += size;
+  }
+  tail.reverse();
+  return [...head, "…", ...tail].join("\n");
 }
 
 // URLs inside <pre> are not linkified by Telegram; repeat them as plain text
 // so OAuth/authorization screens offer a tappable link from the mirror.
-function snapshotLinks(body: string): string {
-  const urls = [...new Set(body.match(/\bhttps?:\/\/[^\s<>"'`]+/g) ?? [])]
-    .map((url) => url.replace(/[).,;:]+$/, ""))
+// The host hard-wraps a URL that is wider than the render column, so the tail
+// of an authorization URL lands on the following line as an unbroken token;
+// joining it back is the difference between a usable link and a dead one.
+export function snapshotLinks(body: string): string {
+  const lines = body.split("\n");
+  const found: string[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = /https?:\/\/[^\s<>"'`]+/.exec(line);
+    if (!match) continue;
+    let url = match[0];
+    // `trimEnd().length >= 80` means the token actually runs to the render
+    // edge; a short URL that merely ends its line is complete already.
+    const atEdge = line.trimEnd().endsWith(url) && line.trimEnd().length >= 90;
+    if (atEdge) {
+      for (let next = index + 1; next < lines.length; next += 1) {
+        const continuation = lines[next].trim();
+        // A wrapped token has no spaces of its own; anything with whitespace
+        // is the next line of prose, not a URL tail.
+        if (!continuation || /\s/.test(continuation)) break;
+        if (!/^[\w%&=+:/?#@!$'()*,;\[\].~-]/.test(continuation)) break;
+        url += continuation;
+        index = next;
+        if (lines[next].length < 80) break;
+      }
+    }
+    found.push(url.replace(/[).,;:]+$/, ""));
+  }
+  // Keep the longest form of each link: the wrapped first copy is a prefix.
+  const urls = found
+    .filter((url) => !found.some((other) => other.length > url.length && other.startsWith(url)))
+    .filter((url, i, all) => all.indexOf(url) === i)
     .slice(0, 3);
   return urls.length > 0 ? `\n\n${urls.map((url) => `🔗 ${escapeHtml(url)}`).join("\n")}` : "";
 }
@@ -668,7 +725,9 @@ function snapshotLinks(body: string): string {
 function hasInputPrompt(body: string): boolean {
   return body.split("\n").some((line) => {
     const stripped = line.replace(/^[\s│┃|]*/, "").replace(/[\s│┃|]+$/, "");
-    return /^>[\s\u2580-\u259F]*$/.test(stripped);
+    if (/^>[\s\u2580-\u259F]*$/.test(stripped)) return true;
+    // Other hosts draw the caret at the end of a labelled field ("Path: ▌").
+    return /[▌▏]$/.test(stripped) && !/^[\s\u2580-\u259F]+$/.test(stripped);
   });
 }
 
@@ -699,7 +758,7 @@ function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: Sele
   const shownTitle = selector?.title ?? title;
   const rawBody = selector ? selector.block : snapshot.text || "(empty screen)";
   const body = selector ? rawBody : trimScreenChrome(rawBody);
-  return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(tailScreen(body, TUI_SNAPSHOT_MAX_BYTES))}${selector ? "" : snapshotLinks(body)}`;
+  return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(clipScreen(body, TUI_SNAPSHOT_MAX_BYTES))}${selector ? "" : snapshotLinks(body)}`;
 }
 
 function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
@@ -709,6 +768,7 @@ function tuiKeyRows(): Array<Array<{ text: string; value: string }>> {
     [button("←", "left"), button("→", "right")],
     [button("Enter", "enter"), button("Esc", "esc")],
     [button("Space", "space"), button("Tab", "tab")],
+    [button("⇧Tab", "shift-tab"), button("Ctrl+C", "ctrl-c")],
     [button("⌨️ Type", "type"), button("Refresh", "refresh"), button("Close", "close")],
   ];
 }
@@ -788,6 +848,7 @@ function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging):
   if (selector.multiSelect) footer.push({ text: "⏎ Submit", value: encodeTuiCallback("enter") });
   footer.push(
     { text: "Esc", value: encodeTuiCallback("esc") },
+    { text: "Ctrl+C", value: encodeTuiCallback("ctrl-c") },
     { text: "⌨️ Type", value: encodeTuiCallback("type") },
     { text: "Refresh", value: encodeTuiCallback("refresh") },
     { text: "Close", value: encodeTuiCallback("close") },
@@ -950,7 +1011,7 @@ export function createTelegramController(deps: {
       tuiMirrors.set(key, mirror);
       await refreshTuiMirror(mirror);
       let lastEditAt = Date.now();
-      for (let poll = 0; poll < TUI_PROMPT_MAX_POLLS; poll += 1) {
+      for (;;) {
         await sleep(TUI_PROMPT_POLL_MS);
         if (tuiMirrors.get(key) !== mirror) return;
         if (!deps.getActiveTurn(chatId, messageThreadId)) return;
@@ -1058,7 +1119,7 @@ export function createTelegramController(deps: {
         let lastEditAt = Date.now();
         let lastText = snapshot?.text ?? "";
         let idleSince = Date.now();
-        for (let poll = 0; poll < TUI_PROMPT_MAX_POLLS; poll += 1) {
+        for (;;) {
           await sleep(TUI_PROMPT_POLL_MS);
           if (tuiMirrors.get(key) !== mirror) return;
           let live: TuiSnapshot | undefined;
@@ -1876,7 +1937,9 @@ export function createTelegramController(deps: {
       if (pendingTuiMirror?.pendingText && message.text !== undefined) {
         pendingTuiMirror.pendingText = false;
         pendingTuiMirror.lastText = undefined;
-        if (!bridge.write(message.text)) {
+        // A dialog field is a key sequence, not a document: newlines from a
+        // pasted Telegram message would submit before the text is complete.
+        if (!bridge.write(message.text.replace(/\r?\n/g, " "))) {
           await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId, sourceMessageId);
           tuiMirrors.delete(targetKey(chatId, messageThreadId));
           return;

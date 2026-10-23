@@ -16,6 +16,23 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TUI mirrors keep the dialog header.** Hosts pad a dialog to the terminal
+  height with blank rows, and the mirror's byte budget used to be spent on that
+  padding: `/setup` lost the OAuth authorization URL, leaving only the local
+  shortcut. Padding is collapsed first and an overflowing screen keeps both
+  ends, so instructions stay visible.
+- **Wrapped authorization URLs are rejoined.** The host hard-wraps a URL at the
+  render width; the link list now stitches the continuation lines back
+  together instead of offering a truncated, dead link.
+- **Interactive mirrors expose the host's own cancel keys.** The key legends
+  advertise `⌃C`; the mirror now sends it (plus `⇧Tab`, Home, End), so a prompt
+  that only exits on interrupt can be left from Telegram.
+- **A mirrored prompt is no longer frozen after six minutes.** The polling loop
+  now runs until the dialog closes, the turn ends, or the host stops rendering.
+- **Pasted newlines no longer submit a dialog field early.**
+
 ### Testing
 
 - **Per-command parity audit (`npm run test:e2e:parity`).** Boots a fresh isolated host
