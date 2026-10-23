@@ -391,6 +391,19 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     getConfig: () => config,
     tuiBridge,
     isTelegramActive: () => isTelegramEnabled() && isActiveInstance(),
+    newSession: async () => {
+      const previous = runtimeState.dispose;
+      const session = getActiveSession();
+      const ctx = session?.extensionRunner?.createCommandContext?.();
+      const create = (ctx as unknown as { newSession?: (options?: unknown) => Promise<{ cancelled?: boolean }> } | undefined)?.newSession;
+      if (!create) return { cancelled: true };
+      const result = await create.call(ctx, { withSession: async () => undefined });
+      // If the replacement loaded a fresh extension instance, the old runtime
+      // is now unreachable from the new one. Stop it explicitly so the
+      // coordinator can hand the bot token to the new instance immediately.
+      if (previous && previous !== runtimeState.dispose) previous();
+      return result;
+    },
   });
 
   runCommandFromMenu = async (name, args) => {
@@ -804,9 +817,16 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   function refreshStatus(error = lastStatusError): void {
     const state = buildStatusState(error);
     const session = getActiveSession();
-    const ctx = session?.extensionRunner?.createCommandContext?.();
-    if (ctx?.ui?.setStatus) {
-      ctx.ui.setStatus(TELEGRAM_STATUS_KEY, formatTelegramStatusLine(ctx.ui.theme, state));
+    try {
+      const ctx = session?.extensionRunner?.createCommandContext?.();
+      if (ctx?.ui?.setStatus) {
+        ctx.ui.setStatus(TELEGRAM_STATUS_KEY, formatTelegramStatusLine(ctx.ui.theme, state));
+      }
+    } catch (err) {
+      // /new, /fork, /reload and session switches replace the extension
+      // runner. A status tick can still hold the previous session for one
+      // turn; using its ctx now would throw and (on pi) kill the process.
+      indexLog.debug("status refresh skipped: session context replaced", { err });
     }
     heartbeat.refreshStatus(state);
   }
@@ -814,8 +834,12 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   function clearStatus(): void {
     heartbeat.stopTypingOnly();
     const session = getActiveSession();
-    const ctx = session?.extensionRunner?.createCommandContext?.();
-    if (ctx?.ui?.setStatus) clearTelegramStatus(ctx);
+    try {
+      const ctx = session?.extensionRunner?.createCommandContext?.();
+      if (ctx?.ui?.setStatus) clearTelegramStatus(ctx);
+    } catch (err) {
+      indexLog.debug("status clear skipped: session context replaced", { err });
+    }
   }
 
   let disposed = false;

@@ -26,6 +26,11 @@ import { log } from "./logger.ts";
 import { commandErrorMessage, getRunnerMode, hasNativeAuthApi, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
 import { isOmpHost } from "./session-capture.ts";
 import { getCurrentTelegramTurn, runWithTelegramTurn } from "./turn-context.ts";
+import { OriginTracker } from "./tui/origin.ts";
+import { FocusTracker } from "./tui/focus.ts";
+import { OutputCapture } from "./tui/output.ts";
+import { CommandGateway } from "./tui/gateway.ts";
+import { readEditorText as readHostEditorText, writeEditorText as writeHostEditorText } from "./tui/host.ts";
 
 const ctrlLog = log.child("controller");
 
@@ -950,6 +955,8 @@ export function createTelegramController(deps: {
   /** Host-family probe; overridable for tests. Defaults to the live module check. */
   isOmpHost?: () => boolean;
   isTelegramActive?: () => boolean;
+  /** Host control API for /new; supplied by the runtime so it can retire the old polling instance. */
+  newSession?: () => Promise<{ cancelled?: boolean } | void>;
 }): TelegramController {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
@@ -957,6 +964,40 @@ export function createTelegramController(deps: {
   const tuiMirrors = new Map<string, TuiMirror>();
   const getTuiMode = () => deps.getConfig?.().tuiBridge ?? "commands";
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  const focusTracker = new FocusTracker();
+  const originTracker = new OriginTracker({
+    isEditorFocused: () => {
+      const current = focusTracker.current();
+      return current.kind === "unknown" ? bridge.isEditorFocused() : focusTracker.isEditor();
+    },
+    readDraft: () => {
+      const reader = bridge.readEditorText;
+      return reader ? reader.call(bridge) : readHostEditorText();
+    },
+    writeDraft: (text) => {
+      const writer = bridge.writeEditorText;
+      return writer ? writer.call(bridge, text) : writeHostEditorText(text);
+    },
+  });
+  const outputCapture = new OutputCapture(deps.transport, originTracker);
+  const commandGateway = new CommandGateway({
+    bridge,
+    origin: originTracker,
+    output: outputCapture,
+    focus: focusTracker,
+    isEnabled: () => getTuiMode() !== "off",
+    readDraft: () => {
+      const reader = bridge.readEditorText;
+      return reader ? reader.call(bridge) : readHostEditorText();
+    },
+    writeDraft: (text) => {
+      const writer = bridge.writeEditorText;
+      return writer ? writer.call(bridge, text) : writeHostEditorText(text);
+    },
+    newSession: deps.newSession,
+  });
+  commandGateway.start();
 
   const refreshTuiMirror = async (mirror: TuiMirror): Promise<void> => {
     let snapshot: TuiSnapshot | undefined;
@@ -1804,6 +1845,23 @@ export function createTelegramController(deps: {
       return true;
     }
 
+    // Stage 1 gateway: output-only commands go straight to the host editor.
+    // Native handlers and the screen mirror must not also run for these.
+    if (getTuiMode() !== "off" && bridge.isAvailable() && commandGateway.couldHandle(name)) {
+      if (commandGateway.handles(name)) {
+        const handled = await commandGateway.run({
+          name,
+          args,
+          origin: { chatId, messageThreadId, sourceMessageId },
+          transport: deps.transport,
+        });
+        if (handled) {
+          recordCommandUsage(name);
+          return true;
+        }
+      }
+    }
+
     // These commands deliberately use the host selector/confirmation UI when
     // the bridge is enabled. Telegram-native handlers remain the fallback when
     // the host catalog does not expose the command.
@@ -2123,6 +2181,7 @@ export function createTelegramController(deps: {
     dispose() {
       unsubscribeLocalTui();
       tuiMirrors.clear();
+      commandGateway.dispose();
     },
   };
 }

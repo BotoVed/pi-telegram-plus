@@ -34,6 +34,9 @@ export type TuiBridgeAdapter = {
   getHost(): TuiHost;
   getCommands(): Promise<TuiCommand[]>;
   submit(text: string): boolean;
+  submitResult?(text: string): { ok: boolean; result?: unknown };
+  readEditorText?(): string;
+  writeEditorText?(text: string): boolean;
   snapshot(width: number): TuiSnapshot | undefined;
   key(name: string): boolean;
   write(text: string): boolean;
@@ -42,14 +45,21 @@ export type TuiBridgeAdapter = {
   onLocalSubmit(listener: (text: string) => void): () => void;
 };
 
-type BridgeState = {
+export type TuiHostState = {
+  host: TuiHost;
   mode?: HostObject;
   ui?: HostObject;
   editor?: HostObject;
-  host: TuiHost;
+  defaultEditor?: HostObject;
+  session?: HostObject;
+  chat?: HostObject;
+};
+
+type BridgeState = TuiHostState & {
   hostCommands: TuiCommand[];
   suppressLocalSubmit: boolean;
   localSubscribers: Set<(text: string) => void>;
+  captureSubscribers: Set<(state: TuiHostState) => void>;
 };
 
 const state: BridgeState = {
@@ -57,6 +67,7 @@ const state: BridgeState = {
   hostCommands: [],
   suppressLocalSubmit: false,
   localSubscribers: new Set(),
+  captureSubscribers: new Set(),
 };
 
 const editorWrappers = new WeakMap<HostObject, { original: HostCallable; wrapped: HostCallable }>();
@@ -141,9 +152,78 @@ function captureMode(mode: unknown, host: TuiHost): void {
   state.host = host;
   state.ui = ui;
   state.editor = editor;
+  state.defaultEditor = asHostObject(modeObject.defaultEditor);
+  state.session = asHostObject(modeObject.session);
+  state.chat = asHostObject(modeObject.chatContainer ?? modeObject.chat);
   ensureWrappedEditor();
   probeCapture(modeObject, host);
+  for (const listener of state.captureSubscribers) {
+    try {
+      listener({
+        host: state.host,
+        mode: state.mode,
+        ui: state.ui,
+        editor: state.editor,
+        defaultEditor: state.defaultEditor,
+        session: state.session,
+        chat: state.chat,
+      });
+    } catch (err) {
+      bridgeLog.debug("capture listener failed", { err });
+    }
+  }
   bridgeLog.debug("captured TUI mode", { host, hasEditor: !!state.editor, hasUi: !!state.ui });
+}
+
+/** Latest captured host objects. The bridge owns capture; new TUI modules read this view. */
+export function getTuiHostState(): TuiHostState {
+  return {
+    host: state.host,
+    mode: state.mode,
+    ui: state.ui,
+    editor: state.editor,
+    defaultEditor: state.defaultEditor,
+    session: state.session,
+    chat: state.chat,
+  };
+}
+
+export function onTuiCaptured(listener: (state: TuiHostState) => void): () => void {
+  state.captureSubscribers.add(listener);
+  const current = getTuiHostState();
+  if (current.mode) {
+    try { listener(current); } catch (err) { bridgeLog.debug("capture listener failed", { err }); }
+  }
+  return () => { state.captureSubscribers.delete(listener); };
+}
+
+export function readEditorText(): string {
+  const editor = state.editor ?? state.defaultEditor;
+  if (!editor) return "";
+  const getText = asCallable(editor.getText);
+  if (getText) {
+    try {
+      const value = getText.call(editor);
+      return typeof value === "string" ? value : "";
+    } catch {
+      return "";
+    }
+  }
+  const value = editor.text ?? editor.value;
+  return typeof value === "string" ? value : "";
+}
+
+export function writeEditorText(text: string): boolean {
+  const editor = state.editor ?? state.defaultEditor;
+  if (!editor) return false;
+  const setText = asCallable(editor.setText);
+  if (!setText) return false;
+  try {
+    setText.call(editor, text);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function installTuiBridge(): Promise<void> {
@@ -451,30 +531,36 @@ function injectKey(name: string): boolean {
   return sequence !== undefined && injectInput(sequence);
 }
 
-function submitToHost(text: string): boolean {
-  const editor = state.editor;
-  if (!editor) return false;
+function submitToHostResult(text: string): { ok: boolean; result?: unknown } {
+  // OMP assigns `editor.onSubmit` after the mode is captured; the tick hook
+  // installs it when it appears, so make sure that has run before submitting.
+  ensureWrappedEditor();
+  const editor = state.editor ?? state.defaultEditor;
+  if (!editor) return { ok: false };
   const setText = asCallable(editor.setText);
   if (setText) {
     try {
       setText.call(editor, text);
     } catch (err) {
       bridgeLog.debug("TUI setText failed", { err });
-      return false;
+      return { ok: false };
     }
   }
   const submit = asCallable(editor.onSubmit);
-  if (!submit) return false;
+  if (!submit) return { ok: false };
   state.suppressLocalSubmit = true;
   try {
-    submit.call(editor, text);
+    return { ok: true, result: submit.call(editor, text) };
   } catch (err) {
     bridgeLog.debug("TUI submit failed", { err });
-    return false;
+    return { ok: false };
   } finally {
     state.suppressLocalSubmit = false;
   }
-  return true;
+}
+
+function submitToHost(text: string): boolean {
+  return submitToHostResult(text).ok;
 }
 
 export const tuiBridge: TuiBridgeAdapter = {
@@ -490,6 +576,9 @@ export const tuiBridge: TuiBridgeAdapter = {
   getHost: () => state.host,
   getCommands: () => getTuiCommands(),
   submit: (text: string) => submitToHost(text),
+  submitResult: (text: string) => submitToHostResult(text),
+  readEditorText,
+  writeEditorText,
   snapshot(width: number): TuiSnapshot | undefined {
     ensureWrappedEditor();
     const text = renderScreen(width);

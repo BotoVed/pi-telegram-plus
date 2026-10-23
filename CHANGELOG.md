@@ -16,6 +16,21 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
+### Changed
+
+- **Output-only commands now run in the host.** On pi, `/session`, `/compact`,
+  `/name`, `/changelog`, `/debug`, `/export`, `/share` and `/new` are submitted
+  through the host's own command path instead of being re-rendered in Telegram.
+  The plugin captures the host's status and chat output (including the
+  compaction summary) and returns it to the chat; the terminal and Telegram
+  therefore see the same command result. `/new` uses the host's `ctx.newSession`
+  control API so the Telegram polling instance is retired cleanly. OMP's
+  report/panel commands stay on the existing mirror path until panel capture
+  lands.
+- **A draft typed in the terminal survives a Telegram command.** The editor
+  content is saved before submission and restored when the command scope ends;
+  text typed while the command runs is never overwritten.
+
 ### Fixed
 
 - **TUI mirrors keep the dialog header.** Hosts pad a dialog to the terminal
