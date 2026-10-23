@@ -955,8 +955,8 @@ export function createTelegramController(deps: {
   /** Host-family probe; overridable for tests. Defaults to the live module check. */
   isOmpHost?: () => boolean;
   isTelegramActive?: () => boolean;
-  /** Host control API for /new; supplied by the runtime so it can retire the old polling instance. */
-  newSession?: () => Promise<{ cancelled?: boolean } | void>;
+  /** Host control API for /new; overridable for tests. */
+  newSession?: (origin: { chatId: number; messageThreadId?: number; sourceMessageId?: number }) => Promise<{ cancelled?: boolean } | void>;
 }): TelegramController {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
@@ -995,7 +995,22 @@ export function createTelegramController(deps: {
       const writer = bridge.writeEditorText;
       return writer ? writer.call(bridge, text) : writeHostEditorText(text);
     },
-    newSession: deps.newSession,
+    newSession: deps.newSession ?? (async (origin) => {
+      const session = deps.getSession();
+      if (!session) return { cancelled: true };
+      const ctx = session.extensionRunner.createCommandContext();
+      const create = (ctx as unknown as { newSession?: (options?: unknown) => Promise<{ cancelled?: boolean }> } | undefined)?.newSession;
+      if (!create) return { cancelled: true };
+      const telegramUi = deps.ui.create(origin.chatId, origin.messageThreadId, origin.sourceMessageId);
+      const turn = deps.getActiveTurn(origin.chatId, origin.messageThreadId)
+        ?? { chatId: origin.chatId, messageThreadId: origin.messageThreadId, sourceMessageId: origin.sourceMessageId, queuedAttachments: [] };
+      return runWithTelegramTurn(turn, () => runWithTelegramUi({
+        session,
+        ui: telegramUi,
+        turn,
+        run: async () => await create.call(ctx, { withSession: async () => undefined }),
+      }));
+    }),
   });
   commandGateway.start();
 

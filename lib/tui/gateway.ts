@@ -67,8 +67,8 @@ export type GatewayDeps = {
   hostState?: () => HostState;
   readDraft?: () => string;
   writeDraft?: (text: string) => boolean;
-  /** Host control API for `/new`; avoids the extension reload of editor submission. */
-  newSession?: () => Promise<{ cancelled?: boolean } | void>;
+  /** Host control API for `/new`; runs in the Telegram turn/UI context. */
+  newSession?: (origin: Origin) => Promise<{ cancelled?: boolean } | void>;
 };
 
 export class CommandGateway {
@@ -198,11 +198,7 @@ export class CommandGateway {
     if (messageId === undefined) return true;
     const draft = (this.deps.readDraft ?? readEditorText)();
     try {
-      const result = await this.deps.newSession!();
-      // A new session replaces the Telegram runtime. Give the coordinator a
-      // moment to hand the bot token over before reporting completion. The
-      // next Telegram update is queued by the Bot API in the meantime.
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      const result = await this.deps.newSession!(request.origin);
       if (result && "cancelled" in result && result.cancelled) {
         await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n<i>已取消</i>`).catch(() => undefined);
         return true;

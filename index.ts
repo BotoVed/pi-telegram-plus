@@ -391,19 +391,6 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     getConfig: () => config,
     tuiBridge,
     isTelegramActive: () => isTelegramEnabled() && isActiveInstance(),
-    newSession: async () => {
-      const previous = runtimeState.dispose;
-      const session = getActiveSession();
-      const ctx = session?.extensionRunner?.createCommandContext?.();
-      const create = (ctx as unknown as { newSession?: (options?: unknown) => Promise<{ cancelled?: boolean }> } | undefined)?.newSession;
-      if (!create) return { cancelled: true };
-      const result = await create.call(ctx, { withSession: async () => undefined });
-      // If the replacement loaded a fresh extension instance, the old runtime
-      // is now unreachable from the new one. Stop it explicitly so the
-      // coordinator can hand the bot token to the new instance immediately.
-      if (previous && previous !== runtimeState.dispose) previous();
-      return result;
-    },
   });
 
   runCommandFromMenu = async (name, args) => {
