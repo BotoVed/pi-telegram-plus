@@ -28,16 +28,15 @@ export type RenderedDialog = {
   pages: number;
 };
 
-type RenderContext = {
+export type RenderContext = {
   sessionId: string;
   generation: number;
   page?: number;
   redact?: (text: string) => string;
 };
 
-// eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
+const CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F]/g;
 
 function clean(value: string | undefined): string {
   if (!value) return "";
@@ -169,7 +168,9 @@ function renderSettings(model: Extract<DialogModel, { kind: "settings" }>, ctx: 
     const rows = inner.rows.slice();
     rows.push(cancelRow(ctx, "↩ 返回"));
     const keyMap = new Map<string, string>();
-    for (const [key, value] of inner.keyMap) keyMap.set(`s:${key}`, value);
+    // Keys are the exact callback arguments of the buttons drawn above, so the
+    // Broker can look one up without knowing this is a nested view.
+    for (const [key, value] of inner.keyMap) keyMap.set(key, value);
     return { text: `${inner.text}\n<i>子菜单 · 返回发 Esc</i>`, rows, keyMap, page: 0, pages: 1 };
   }
   const page = Math.max(0, ctx.page ?? 0);
@@ -254,7 +255,7 @@ function renderApproval(model: Extract<DialogModel, { kind: "approval" }>, ctx: 
     const built = button(shorten(option.label, MAX_LABEL), ctx, "a", String(index));
     if (!built) return;
     buttons.push(built);
-    keyMap.set(`o.${index}`, option.key);
+    keyMap.set(String(index), option.key);
   });
   buttons.push(...cancelRow(ctx));
   return { text: header(model.title, undefined, [body]), rows: chunk(buttons), keyMap, page: 0, pages: 1 };

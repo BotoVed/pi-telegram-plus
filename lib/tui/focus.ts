@@ -252,9 +252,7 @@ export class FocusTracker {
       | { getUIContext?: () => unknown }
       | undefined;
     const toolUi = this.readUiContext(runner);
-    if (toolUi && toolUi !== ui) {
-      hookEntryMethods(toolUi, UI_CONTEXT_SPECS, sink, state.host === "omp" ? "omp" : "pi", this.tagged);
-    }
+    if (toolUi && toolUi !== ui) hookEntryMethods(toolUi, UI_CONTEXT_SPECS, sink, state.host === "omp" ? "omp" : "pi", this.tagged);
     if (state.host === "omp") hookEntryMethods(state.mode, OMP_ENTRY_SPECS, sink, "omp", this.tagged);
     if (state.host === "pi") hookEntryMethods(state.mode, PI_ENTRY_SPECS, sink, "pi", this.tagged);
   }
@@ -263,9 +261,14 @@ export class FocusTracker {
     const getUi = runner?.getUIContext;
     if (typeof getUi !== "function") return undefined;
     try {
-      const value = getUi.call(runner);
-      // Our own routed UI (a proxy over the host context) must not be patched.
-      if ((value as Record<string, unknown> | undefined)?.__piTelegramPlusRoutedUi === true) return undefined;
+      let value = getUi.call(runner) as Record<string, unknown> | undefined;
+      // Never patch our own routed UI - unwrap to the host context underneath it.
+      // Without this the entry hooks are skipped whenever a Telegram swap happens to be
+      // installed at hook time, and every dialog afterwards reads as a snapshot.
+      for (let depth = 0; value?.__piTelegramPlusRoutedUi === true && depth < 8; depth += 1) {
+        const base = value.__piTelegramPlusRoutedBaseUi;
+        value = base && typeof base === "object" ? (base as Record<string, unknown>) : undefined;
+      }
       return isHostObject(value) ? value : undefined;
     } catch {
       return undefined;
@@ -295,6 +298,10 @@ export class FocusTracker {
   private verify(): void {
     const ui = this.lastState?.ui;
     if (!ui) return;
+    // The runner's UI context is a moving target: a Telegram swap can be what is
+    // installed when the hooks first run. Re-check every tick that the host context
+    // underneath it is hooked - `hookEntryMethods` skips what it already wrapped.
+    this.attachEntryHooks(this.lastState!);
     const read = this.readCurrent(ui);
     if (!read || read === this.info.component) {
       this.verifyTarget = undefined;

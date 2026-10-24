@@ -11,6 +11,7 @@ import { log } from "../logger.ts";
 import type { TelegramTransport } from "../types.ts";
 import { hookMethod, isHostObject, onHostState, type HostState } from "./host.ts";
 import type { CommandScope, OriginTracker } from "./origin.ts";
+import type { SecretStore } from "./secrets.ts";
 
 const outputLog = log.child("tui-output");
 
@@ -58,6 +59,7 @@ export class OutputCapture {
   constructor(
     private readonly transport: OutputTransport,
     private readonly origin: OriginTracker,
+    private readonly secrets?: SecretStore,
   ) {}
 
   start(): void {
@@ -101,6 +103,14 @@ export class OutputCapture {
     });
   }
 
+  /** Secrets never ride the output path (§4.7.4): raw text is masked first. */
+  private redact(text: string): string {
+    const binding = this.binding;
+    if (!binding || !this.secrets) return text;
+    const { chatId, messageThreadId } = binding.telegram;
+    return this.secrets.redact(`${chatId}:${messageThreadId ?? "main"}`, text);
+  }
+
   private attach(state: HostState): void {
     for (const target of [state.mode, state.ui]) {
       if (!isHostObject(target) || this.attached.has(target)) continue;
@@ -111,7 +121,7 @@ export class OutputCapture {
           const message = args[0];
           if (typeof message !== "string" || message.trim().length === 0) return;
           const prefix = name === "showError" ? "❌ " : name === "showWarning" ? "⚠️ " : "";
-          this.push(`${prefix}${escapeHtml(stripAnsi(message))}`);
+          this.push(`${prefix}${escapeHtml(this.redact(stripAnsi(message)))}`);
         });
       }
     }
@@ -135,7 +145,7 @@ export class OutputCapture {
         if (!isHostObject(child)) return;
         const mode = state.mode;
         if (isAgentComponent(child, mode)) return;
-        const html = renderComponent(child);
+        const html = renderComponent(child, (raw) => this.redact(raw));
         if (!html) return;
         this.push(html);
       });
@@ -278,16 +288,19 @@ function isAgentComponent(child: Record<string, unknown>, mode: Record<string, u
   return false;
 }
 
-export function renderComponent(component: Record<string, unknown>): string | undefined {
+export function renderComponent(
+  component: Record<string, unknown>,
+  redact: (text: string) => string = (text) => text,
+): string | undefined {
   const markdown = component.markdown;
-  if (typeof markdown === "string" && markdown.trim()) return markdownToTelegramHtml(markdown);
+  if (typeof markdown === "string" && markdown.trim()) return markdownToTelegramHtml(redact(markdown));
   const text = component.text;
   if (typeof text === "string" && text.trim()) {
-    const clean = stripAnsi(text);
+    const clean = redact(stripAnsi(text));
     return clean.includes("\n") ? `<pre>${escapeHtml(clean)}</pre>` : escapeHtml(clean);
   }
   const content = component.content;
-  if (typeof content === "string" && content.trim()) return `<pre>${escapeHtml(stripAnsi(content))}</pre>`;
+  if (typeof content === "string" && content.trim()) return `<pre>${escapeHtml(redact(stripAnsi(content)))}</pre>`;
   const render = component.render;
   if (typeof render === "function") {
     try {
@@ -295,7 +308,7 @@ export function renderComponent(component: Record<string, unknown>): string | un
       const textValue = Array.isArray(value)
         ? value.map((line) => String(line)).join("\n")
         : typeof value === "string" ? value : "";
-      const clean = stripAnsi(textValue).trim();
+      const clean = redact(stripAnsi(textValue)).trim();
       if (clean) return `<pre>${escapeHtml(clean)}</pre>`;
     } catch {
       return undefined;

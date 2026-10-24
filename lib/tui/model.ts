@@ -160,9 +160,15 @@ export type DialogSession = {
     secret: boolean;
     purpose: "input" | "editor" | "search" | "type";
   };
-  /** generation -> page index -> item.key; only the last 3 generations. */
-  keyMap: Map<number, Map<number, string>>;
+  /**
+   * generation -> callback argument -> item/option key, exactly as rendered.
+   * A callback is resolved against the *live* model by key, so a stale button
+   * can never act on a different row. Only the last generations are kept.
+   */
+  keyMap: Map<number, Map<string, string>>;
   page: number;
+  /** The exact text+keyboard last put on the message; equal means no edit. */
+  published?: string;
   state: "open" | "resolving" | "closed";
   closedBy?: "telegram" | "terminal" | "replaced";
   lastAction?: string;

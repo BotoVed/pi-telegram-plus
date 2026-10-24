@@ -1,5 +1,5 @@
 import type { ExtensionCommandContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { decodeMoreCallback, decodeRunCallback, decodeTuiCallback, decodeUiCallback, encodeMoreCallback, encodeRunCallback, encodeTuiCallback } from "./callback-protocol.ts";
+import { DIALOG_CALLBACK_PREFIX, decodeDialogCallback, decodeMoreCallback, decodeRunCallback, decodeTuiCallback, decodeUiCallback, encodeMoreCallback, encodeRunCallback, encodeTuiCallback } from "./callback-protocol.ts";
 import { parseLeadingCommand, normalizeLeadingCommand } from "./command-parser.ts";
 import type {
   CapturedAgentSession,
@@ -15,7 +15,7 @@ import type {
 } from "./types.ts";
 import type { TelegramUiRuntime } from "./telegram-ui.ts";
 import type { TuiBridgeAdapter, TuiSnapshot } from "./tui-bridge.ts";
-import { tuiBridge as defaultTuiBridge } from "./tui-bridge.ts";
+import { tuiBridge as defaultTuiBridge, hostOwnsPrompts } from "./tui-bridge.ts";
 import type { SelectorState } from "./tui-selector.ts";
 import { parseSelectorText, readDialogTitle, selectorNavigateKeys } from "./tui-selector.ts";
 import { escapeHtml } from "./html.ts";
@@ -30,6 +30,8 @@ import { OriginTracker } from "./tui/origin.ts";
 import { FocusTracker } from "./tui/focus.ts";
 import { OutputCapture } from "./tui/output.ts";
 import { CommandGateway } from "./tui/gateway.ts";
+import { DialogBroker } from "./tui/broker.ts";
+import { SecretStore } from "./tui/secrets.ts";
 import { readEditorText as readHostEditorText, writeEditorText as writeHostEditorText } from "./tui/host.ts";
 
 const ctrlLog = log.child("controller");
@@ -239,6 +241,9 @@ function createRoutedTelegramUi(baseUi: unknown, telegramUi: ExtensionUIContext,
   return new Proxy({}, {
     get(_target, prop, receiver) {
       if (prop === "__piTelegramPlusRoutedUi") return true;
+      // Lets the focus tracker reach the host context underneath: entry hooks must
+      // land on the real object even while a Telegram swap is installed.
+      if (prop === "__piTelegramPlusRoutedBaseUi") return baseUi;
       const target = getTarget();
       const value = Reflect.get(target ?? {}, prop, receiver);
       return typeof value === "function" ? value.bind(target) : value;
@@ -274,12 +279,23 @@ function createRoutedTelegramUi(baseUi: unknown, telegramUi: ExtensionUIContext,
  * spreading the context (some hosts expose `model` and friends as getters).
  */
 function withUiContext<T extends object>(ctx: T, ui: ExtensionUIContext): T {
-  return Object.defineProperty(ctx, "ui", {
-    value: ui,
-    configurable: true,
-    enumerable: true,
-    writable: true,
-  });
+  try {
+    return Object.defineProperty(ctx, "ui", {
+      value: ui,
+      configurable: true,
+      enumerable: true,
+      writable: true,
+    });
+  } catch {
+    // Some hosts hand out a context whose `ui` cannot be redefined. A read-through
+    // proxy overrides just that member and leaves every other getter on the
+    // original object intact.
+    return new Proxy(ctx, {
+      get: (target, property, receiver) =>
+        property === "ui" ? ui : Reflect.get(target, property, receiver),
+      has: (target, property) => property === "ui" || Reflect.has(target, property),
+    }) as T;
+  }
 }
 
 // Runners whose getUIContext()/createContext() consult the Telegram UI stack.
@@ -392,13 +408,14 @@ function installToolUiRouting(session: CapturedAgentSession): void {
 }
 
 /**
- * Host-rendered prompt observer. Instead of answering prompts itself, it
- * delegates every call to the host UI (so the terminal draws the dialog) and
- * only reports the prompt methods, which lets the mirror attach to the overlay
- * the host is about to render. Answers travel back as injected keys, keeping
- * Telegram and the terminal on one implementation.
+ * §4.9 host-prompt UI. Instead of answering prompts itself, it delegates every
+ * call to the host UI (so the terminal draws the dialog) and only reports the
+ * prompt methods, which lets the mirror attach to the overlay the host is about
+ * to render. Answers travel back as injected keys, so Telegram and the terminal
+ * drive one implementation; once the DialogBroker can attribute the dialog to a
+ * chat it takes over and the mirror stands down.
  */
-function createPromptObserverUi(baseUi: unknown, telegramUi: ExtensionUIContext, onPrompt: () => void): ExtensionUIContext {
+function createHostPromptUi(baseUi: unknown, telegramUi: ExtensionUIContext, onPrompt?: () => void): ExtensionUIContext {
   // Host-specific prompt entry points count too: OMP's `ask` tool goes through
   // ui.askDialog(), and approvals through ui.approve().
   const promptMethods = new Set([
@@ -407,9 +424,16 @@ function createPromptObserverUi(baseUi: unknown, telegramUi: ExtensionUIContext,
   return new Proxy({}, {
     get(_target, prop, receiver) {
       if (prop === "__piTelegramPlusRoutedUi") return true;
+      if (prop === "__piTelegramPlusRoutedBaseUi") return baseUi;
       const target = baseUi ?? {};
       const value = Reflect.get(target as object, prop, receiver);
-      if (typeof value !== "function") return value;
+      if (typeof value !== "function") {
+        // A plugin-only affordance - the nested `menu` keyboard the management screens
+        // walk - has no host twin, so the plugin's own implementation keeps serving it
+        // even while the host owns the prompts.
+        const own = (telegramUi as unknown as Record<string, unknown>)[String(prop)];
+        return typeof own === "function" ? own.bind(telegramUi) : value;
+      }
       const name = String(prop);
       if (name === "notify") {
         // Notifications are not prompts: the terminal still prints them, and
@@ -433,7 +457,7 @@ function createPromptObserverUi(baseUi: unknown, telegramUi: ExtensionUIContext,
       if (!promptMethods.has(name)) return value.bind(target);
       return (...args: unknown[]) => {
         try {
-          onPrompt();
+          onPrompt?.();
         } catch {
           // Observation must never break the host prompt.
         }
@@ -503,10 +527,15 @@ async function runWithTelegramUi<T>(deps: {
   turn: TelegramTurn;
   run: () => Promise<T>;
   /**
-   * Set when the TUI bridge can drive the host UI: prompts then render in the
-   * terminal and this callback attaches the mirror instead of answering from
-   * Telegram.
+   * Who answers the prompts raised inside `run` (§4.2.6 item 2):
+   * - `"host"`: the host UI draws them, so the terminal can answer and the
+   *   DialogBroker or the mirror presents them here. Used whenever the broker
+   *   is live, which is what keeps both ends able to answer one dialog.
+   * - `"telegram-native"` (default): the plugin answers them in Telegram, which
+   *   is what `off` mode and the plugin's own flows need.
    */
+  uiMode?: "telegram-native" | "host";
+  /** Attached to a host-rendered prompt to bring the mirror up on the overlay. */
   observePrompts?: () => void;
 }): Promise<T> {
   // Tool contexts (ask / eval preludes) resolve `ui` from a private store that
@@ -514,17 +543,54 @@ async function runWithTelegramUi<T>(deps: {
   // routing wrappers regardless; they pass straight through when no Telegram
   // turn is active.
   installToolUiRouting(deps.session);
+  const hostPrompts = deps.uiMode === "host";
   const observe = deps.observePrompts;
   const restore = pushTelegramUiContext(
     deps.session.extensionRunner,
     deps.ui,
     deps.turn,
-    observe ? (baseUi) => createPromptObserverUi(baseUi, deps.ui, observe) : undefined,
+    hostPrompts ? (baseUi) => createHostPromptUi(baseUi, deps.ui, observe) : undefined,
   );
   try {
     return await deps.run();
   } finally {
     restore();
+  }
+}
+
+/** One quiet window before a command scope releases the UI swap; longer than
+ * pi-goal's 50ms CONTINUATION_IDLE_RETRY_MS so a scheduled continuation gets a
+ * chance to start before the chain is judged drained. */
+const ENQUEUE_HOLD_WINDOW_MS = 120;
+
+/**
+ * Hold the Telegram UI swap across a command's enqueued agent turns (§4.2.6).
+ *
+ * pi-goal-style commands enqueue the turn and return immediately; the extension
+ * schedules continuation turns 50ms after a turn ends. After each idle we wait
+ * one window longer than that retry interval: a chain that is still running
+ * keeps the swap (so its `ctx.ui.select/confirm/input` dialogs and their output
+ * stay attributed to the chat), a drained chain hands the terminal back.
+ *
+ * Only holds when the agent was idle before the command arrived, so a locally
+ * streamed turn is never hijacked. Shared by the native command handler and the
+ * CommandGateway.
+ */
+async function holdThroughEnqueuedTurns(ctx: unknown, wasIdle: boolean): Promise<void> {
+  if (!wasIdle) return;
+  const runner = ctx as { isIdle?(): boolean; waitForIdle?(): Promise<unknown> } | undefined;
+  if (!runner || typeof runner.isIdle !== "function" || typeof runner.waitForIdle !== "function") return;
+  const idle = () => runner.isIdle!();
+  const wait = () => runner.waitForIdle!();
+  try {
+    for (;;) {
+      await wait();
+      await new Promise((r) => setTimeout(r, ENQUEUE_HOLD_WINDOW_MS));
+      if (idle()) break;
+    }
+  } catch (err) {
+    // Session disposed / torn down during the wait — nothing to do but log.
+    ctrlLog.debug("waitForIdle during enqueued turn interrupted", { err });
   }
 }
 
@@ -938,6 +1004,13 @@ type TuiMirror = {
   lastKeyboard?: string;
 };
 
+/** Text that must not be swallowed by a dialog: shell input and slash commands. */
+function isDialogExemptText(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("!")) return true;
+  return parseLeadingCommand(trimmed) !== undefined;
+}
+
 export function createTelegramController(deps: {
   getSession: () => CapturedAgentSession | undefined;
   transport: TelegramTransport;
@@ -947,6 +1020,8 @@ export function createTelegramController(deps: {
   getBotUsername(): string | undefined;
   telegramCommands: Map<string, TelegramCommandHandler>;
   getActiveTurn(chatId: number, messageThreadId?: number): TelegramTurn | undefined;
+  /** Active turns oldest first, for dialog ownership (§4.3 rule 2). */
+  getActiveTurns?(): TelegramTurn[];
   beginTelegramTurn(chatId: number, replaceMessageId?: number, messageThreadId?: number, sourceMessageId?: number): TelegramTurn | undefined;
   endTelegramTurn(chatId: number, turn: TelegramTurn): void;
   saveIncomingTelegramAttachment?: (fileId: string, fileName: string | undefined, kind: string) => Promise<string>;
@@ -980,7 +1055,8 @@ export function createTelegramController(deps: {
       return writer ? writer.call(bridge, text) : writeHostEditorText(text);
     },
   });
-  const outputCapture = new OutputCapture(deps.transport, originTracker);
+  const secretStore = new SecretStore();
+  const outputCapture = new OutputCapture(deps.transport, originTracker, secretStore);
   const commandGateway = new CommandGateway({
     bridge,
     origin: originTracker,
@@ -1013,6 +1089,20 @@ export function createTelegramController(deps: {
     }),
   });
   commandGateway.start();
+
+  const dialogBroker = new DialogBroker({
+    transport: deps.transport,
+    focus: focusTracker,
+    origin: originTracker,
+    secrets: secretStore,
+    activeChatId: () => deps.getConfig?.().activeChatId,
+    activeTurns: () => deps.getActiveTurns?.() ?? [],
+    writeText: (text) => bridge.write(text),
+    // The broker replaces the screen mirror: both only run in `full` mode, and
+    // a host without a usable bridge has no focus to track anyway.
+    enabled: () => getTuiMode() === "full" && bridge.isAvailable(),
+  });
+  dialogBroker.start();
 
   const refreshTuiMirror = async (mirror: TuiMirror): Promise<void> => {
     let snapshot: TuiSnapshot | undefined;
@@ -1140,9 +1230,24 @@ export function createTelegramController(deps: {
   };
 
   const promptMirrorHook = (turn: TelegramTurn): (() => void) | undefined => {
+    // The DialogBroker mirrors dialogs from its real component; a mirror of
+    // the same screen would be a second stale copy of one dialog (§4.4). Only a
+    // dialog this chat can see counts: a session the terminal owns has no
+    // message here, and standing down for it would leave no keyboard at all.
     if (getTuiMode() !== "full" || !bridge.isAvailable()) return undefined;
+    if (dialogBroker.mirrorsFor(turn.chatId, turn.messageThreadId)) return undefined;
     return () => startPromptMirror(turn);
   };
+
+  /**
+   * §4.2.6 item 2: while the DialogBroker is live, prompts raised by work this
+   * chat started belong to the host UI — a terminal user can answer them and
+   * Telegram mirrors them, so neither end is locked out. Everywhere else - and on
+   * hosts whose dialogs the broker cannot read yet - the plugin keeps answering
+   * them in Telegram. See hostOwnsPrompts for the full condition.
+   */
+  const promptUiMode = (): "telegram-native" | "host" =>
+    (hostOwnsPrompts(bridge, getTuiMode()) ? "host" : "telegram-native");
 
   const runTuiCommand = async (
     name: string,
@@ -1213,6 +1318,16 @@ export function createTelegramController(deps: {
     }
 
     if (snapshot.interactive && getTuiMode() === "full") {
+      // Give the broker a beat: a dialog this command opened belongs to it, and
+      // two mirrors of one dialog would fight over the same keystrokes. Only a
+      // session that drew a message in this chat may take the keyboard away.
+      await sleep(TUI_PROMPT_POLL_MS * 2);
+      if (dialogBroker.mirrorsFor(chatId, messageThreadId)) {
+        await deps.transport
+          .editText(chatId, messageId, `<b>▶️ ${escapeHtml(commandText)}</b>\n\n<i>选择器已在上面的消息里，也可以直接在终端操作。</i>`)
+          .catch(ctrlLog.swallow("debug", "editText broker-owned ack failed", { chatId }));
+        return;
+      }
       const key = targetKey(chatId, messageThreadId);
       const mirror: TuiMirror = { chatId, messageThreadId, messageId };
       tuiMirrors.set(key, mirror);
@@ -1655,6 +1770,7 @@ export function createTelegramController(deps: {
         session,
         ui: telegramUi,
         turn,
+        uiMode: promptUiMode(),
         observePrompts: promptMirrorHook(turn),
         run: () => deliverToMainThread(text, chatId, messageThreadId, sourceMessageId),
       }));
@@ -1713,6 +1829,7 @@ export function createTelegramController(deps: {
             session,
             ui: telegramUi,
             turn,
+            uiMode: promptUiMode(),
             observePrompts: promptMirrorHook(turn),
             run: async () => {
               // Goal auto-continuations can be streaming without owning an
@@ -1731,6 +1848,7 @@ export function createTelegramController(deps: {
         session,
         ui: telegramUi,
         turn: existingTurn,
+        uiMode: promptUiMode(),
         observePrompts: promptMirrorHook(existingTurn),
         run: () => session.prompt(text, { source: "interactive", streamingBehavior: "steer" as const }),
       }));
@@ -1752,7 +1870,7 @@ export function createTelegramController(deps: {
     setTail(key, task);
   };
 
-  const runCommandHandler = (handler: TelegramCommandHandler, args: string, session: CapturedAgentSession, chatId: number, messageThreadId?: number, sourceMessageId?: number) => {
+  const runCommandHandler = (handler: TelegramCommandHandler, args: string, session: CapturedAgentSession, chatId: number, messageThreadId?: number, sourceMessageId?: number, label = "command") => {
     // Commands run immediately — they do not acquire a turn and are never
     // blocked by an active agent prompt.  Fast config / status commands
     // briefly borrow the UI context; the rendering pipeline still finds the
@@ -1763,10 +1881,21 @@ export function createTelegramController(deps: {
     // polling loop and block callback processing for that update.
     const telegramUi = deps.ui.create(chatId, messageThreadId, sourceMessageId);
     const ctx = session.extensionRunner.createCommandContext();
-    // OMP has no setUIContext(), so runWithTelegramUi below cannot install the
-    // routed UI. Route the command's own prompts (e.g. /new's confirm) directly
-    // through the Telegram UI instead of letting them open in the terminal.
-    const commandCtx = typeof session.extensionRunner.setUIContext === "function"
+    // Whether the host - rather than the plugin - answers prompts raised by this
+    // command's own work (§4.2.6 item 2).
+    const hostPrompts = promptUiMode() === "host";
+    // §4.3 rule 1: while a Telegram-issued command runs, the dialogs it opens
+    // belong to this chat. Without a scope the broker tracks them silently
+    // (§4.3 rule 3) and the chat is left with a raw key mirror - no typed
+    // input, no secret handling, no keyboard withdrawal when it closes.
+    const scope = hostPrompts
+      ? originTracker.begin({ chatId, messageThreadId, sourceMessageId }, label, "", "")
+      : undefined;
+    // In telegram-native mode the command's own prompts (e.g. /new's confirm) are pinned
+    // to the Telegram UI, and a host with no UI-context setter needs the same treatment
+    // because there is no routed proxy to lean on. In host mode the host answers, and its
+    // context still exposes the plugin's `menu` affordance (see createHostPromptUi).
+    const commandCtx = typeof session.extensionRunner.setUIContext === "function" || hostPrompts
       ? ctx
       : withUiContext(ctx, telegramUi);
     // Capture idleness BEFORE the handler runs. Commands like /sisyphus and
@@ -1778,36 +1907,28 @@ export function createTelegramController(deps: {
     // Only hold the swap when the agent was idle when the command arrived: if a
     // local turn was already streaming, holding the swap would hijack the local
     // user's TUI (modals would route to Telegram, editor would no-op).
-    const idleFn = typeof (ctx as any).isIdle === "function" ? (ctx as any).isIdle : undefined;
-    const waitFn = typeof (ctx as any).waitForIdle === "function" ? (ctx as any).waitForIdle : undefined;
-    const wasIdle = idleFn ? idleFn.call(ctx) : false;
+    const wasIdle = typeof (ctx as any).isIdle === "function" ? (ctx as any).isIdle.call(ctx) : false;
     const commandTurn = deps.getActiveTurn(chatId, messageThreadId) ?? { chatId, messageThreadId, sourceMessageId, queuedAttachments: [] };
     void runWithTelegramTurn(commandTurn, () => runWithTelegramUi({
       session,
       ui: telegramUi,
       turn: commandTurn,
-      // Command handlers are plugin flows: they own the Telegram UI (menus,
-      // confirmations). Only agent/tool prompts are mirrored from the host.
+      // With the broker live the host owns the prompt: a command's own dialog
+      // (an extension's `ui.select`, a `/goals` confirmation) renders in the
+      // terminal, so the terminal user can answer it too. The scope above makes
+      // the broker attribute it to this chat, and the broker's keyboard is the
+      // one the chat sees - no screen mirror, which could not take typed text,
+      // hide a secret answer, or withdraw itself once the terminal answered.
+      uiMode: promptUiMode(),
       run: async () => {
-        await handler(args, commandCtx);
-        if (!wasIdle || !idleFn || !waitFn) return;
-        // Hold the Telegram UI swap across the command's enqueued turn and any
-        // auto-continue chain it spawns. pi-goal schedules continuation turns via
-        // setTimeout(0 / 50ms) after a turn ends, so a single waitForIdle()
-        // resolves before the next turn starts. After each idle, yield one
-        // macrotask window (120ms > pi-goal's 50ms CONTINUATION_IDLE_RETRY_MS) to
-        // let a pending continuation begin; if the agent starts streaming again,
-        // keep waiting. Stop when the agent stays idle through the window — the
-        // chain has drained and the local TUI is fully usable again.
         try {
-          for (;;) {
-            await waitFn.call(ctx);
-            await new Promise((r) => setTimeout(r, 120));
-            if (idleFn.call(ctx)) break;
-          }
-        } catch (err) {
-          // Session disposed / torn down during the wait — nothing to do but log.
-          ctrlLog.debug("waitForIdle during enqueued turn interrupted", { err });
+          await handler(args, commandCtx);
+          await holdThroughEnqueuedTurns(ctx, wasIdle);
+        } finally {
+          // The scope deliberately outlives the handler: a dialog answered a
+          // moment later still belongs to this chat, and the tracker ends the
+          // scope only once focus is back in the editor and output went quiet.
+          if (scope) originTracker.markSubmitDone(scope);
         }
       },
     })).catch(async (err) => {
@@ -1928,7 +2049,7 @@ export function createTelegramController(deps: {
     }
     if (handler) {
       recordCommandUsage(name);
-      await runCommandHandler(handler, args, session, chatId, messageThreadId, sourceMessageId);
+      await runCommandHandler(handler, args, session, chatId, messageThreadId, sourceMessageId, name);
       return true;
     }
     const externalCommand =
@@ -1937,7 +2058,7 @@ export function createTelegramController(deps: {
       ?? session.extensionRunner.getCommand(name.replace(/-/g, "_"));
     if (externalCommand) {
       recordCommandUsage(name);
-      await runCommandHandler(externalCommand.handler, args, session, chatId, messageThreadId, sourceMessageId);
+      await runCommandHandler(externalCommand.handler, args, session, chatId, messageThreadId, sourceMessageId, name);
       return true;
     }
 
@@ -1972,11 +2093,31 @@ export function createTelegramController(deps: {
       if (typeof chatId !== "number") return;
       const messageThreadId = query.message?.message_thread_id;
       const sourceMessageId = query.message?.message_id;
-      await deps.transport.answerCallbackQuery(query.id).catch(ctrlLog.swallow("debug", "answerCallbackQuery failed", { queryId: query.id }));
       if (!(await deps.authorizeUser(query.from?.id))) return;
       await deps.setActiveChatId(chatId);
 
       const data = query.data ?? "";
+      // Dialog buttons are answered here and nowhere else (§4.5 rule 3). This
+      // branch runs before the generic acknowledgement because the toast has to
+      // travel inside the same answerCallbackQuery call. Anything carrying the
+      // dialog prefix belongs to a dialog - even a payload that no longer
+      // decodes, because submitted as text it would run as a prompt.
+      if (data.startsWith(DIALOG_CALLBACK_PREFIX)) {
+        const dialogCallback = decodeDialogCallback(data);
+        const result = dialogCallback === undefined
+          ? { handled: true, toast: "这个菜单已经过期", clear: true }
+          : dialogBroker.handleCallback(chatId, messageThreadId, dialogCallback);
+        await deps.transport.answerCallbackQuery(query.id, result.toast)
+          .catch(ctrlLog.swallow("debug", "answerCallbackQuery failed", { queryId: query.id }));
+        const pageMessageId = query.message?.message_id;
+        if (result.clear && pageMessageId !== undefined) {
+          await deps.transport.removeInlineKeyboard(chatId, pageMessageId)
+            .catch(ctrlLog.swallow("debug", "removeInlineKeyboard dialog keyboard failed", { chatId }));
+        }
+        return;
+      }
+
+      await deps.transport.answerCallbackQuery(query.id).catch(ctrlLog.swallow("debug", "answerCallbackQuery failed", { queryId: query.id }));
       const uiValue = decodeUiCallback(data);
       if (uiValue !== undefined) {
         const result = deps.ui.resolveInput(chatId, uiValue, query.message?.message_id, true, messageThreadId);
@@ -2076,6 +2217,14 @@ export function createTelegramController(deps: {
       if (trimmed.startsWith("!")) {
         const excludeFromContext = trimmed.startsWith("!!");
         const command = trimmed.slice(excludeFromContext ? 2 : 1).trim();
+        if (dialogBroker.mirrorsFor(chatId, messageThreadId)) {
+          // §4.2: the dialog owns the keyboard, so the shell command has nowhere
+          // to land; say so instead of queueing it behind the dialog.
+          await deps.transport.sendText(chatId, "⚠️ 终端里有对话框正在等待输入：先回答它，或发送 /stop 关闭。", messageThreadId, sourceMessageId)
+            .catch(ctrlLog.swallow("warn", "sendText dialog busy notice failed", { chatId }));
+          return;
+        }
+
         void runTelegramBash(
           command,
           excludeFromContext,
@@ -2097,6 +2246,10 @@ export function createTelegramController(deps: {
       }
       if (message.reply_to_message || message.quote || message.text_quote || message.external_reply) logTelegramReplyContext(message);
       if (trimmed === "/stop") {
+        // §4.5 rule 6: the dialog gets the Esc first, then the normal /stop path
+        // runs (pending input, bash abort, turn interrupt).
+        dialogBroker.cancelFor(chatId, messageThreadId);
+
         // /stop cancellation priority: first try canceling a reply-targeted
         // pending input, then any pending input, then abort the agent turn.
         const cancelResult = deps.ui.resolveInput(chatId, undefined, replyToInput, false, messageThreadId);
@@ -2153,8 +2306,33 @@ export function createTelegramController(deps: {
       if (hasTextInput) {
         const wasSensitive = deps.ui.isSensitiveInput(chatId, replyToInput, messageThreadId);
         const inputResult = deps.ui.resolveInput(chatId, rawText, replyToInput, false, messageThreadId);
+        ctrlLog.debug("TMP native text", { chatId, handled: inputResult.handled });
         if (inputResult.handled) {
           if (wasSensitive) await deps.transport.deleteMessage(chatId, message.message_id);
+          return;
+        }
+      }
+      // Only now does a mirrored host dialog get the text (§4.5.1): in the terminal this
+      // same message would be a search term or a typed answer. A prompt the plugin raised
+      // in this chat is answered above - it waits on a Telegram keyboard *here*, while the
+      // mirror only borrows the chat. Without that order a terminal dialog nobody asked
+      // about in this chat (an unadapted snapshot, say) swallows the answer the user is
+      // typing for the prompt, and the prompt then eats the next message instead.
+      const dialogSession = dialogBroker.sessionFor(chatId, messageThreadId);
+      ctrlLog.debug("TMP dialog text", {
+        chatId,
+        session: dialogSession !== undefined,
+        drawn: dialogSession?.telegram !== undefined,
+        purpose: dialogSession?.pendingInput?.purpose ?? null,
+        modelKind: (dialogSession?.model as { kind?: string } | undefined)?.kind ?? null,
+      });
+      if (dialogSession !== undefined && message.text !== undefined && !isDialogExemptText(rawText)) {
+        const result = dialogBroker.handleText(dialogSession, rawText, message.message_id);
+        if (result.handled) {
+          if (result.toast !== undefined) {
+            await deps.transport.sendText(chatId, result.toast, messageThreadId, sourceMessageId)
+              .catch(ctrlLog.swallow("warn", "sendText dialog hint failed", { chatId }));
+          }
           return;
         }
       }
@@ -2194,6 +2372,7 @@ export function createTelegramController(deps: {
     },
 
     dispose() {
+      dialogBroker.stop();
       unsubscribeLocalTui();
       tuiMirrors.clear();
       commandGateway.dispose();

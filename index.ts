@@ -368,6 +368,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       return outputPath;
     },
     getActiveTurn: (chatId: number, messageThreadId?: number) => activeTurns.get(activeTurnKey(chatId, messageThreadId)),
+    getActiveTurns: () => [...activeTurns.values()],
     beginTelegramTurn: (chatId, replaceMessageId, messageThreadId, sourceMessageId) => {
       const key = activeTurnKey(chatId, messageThreadId);
       if (activeTurns.has(key)) return undefined; // reject if this chat/thread is busy
