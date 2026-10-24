@@ -77,7 +77,7 @@ describe("Polling cursor: coordinator authoritative, project lastUpdateId seed/b
     // Polling advances to 75.
     await coordinator.persistCursor(75);
 
-    // Now a new project (or /tg-switch owner) reads the coordinator cursor.
+    // Now a new project (or a switched-over owner) reads the coordinator cursor.
     // It should get 75, NOT the project's stale lastUpdateId of 50.
     const coordinatorCursor = await coordinator.syncCursor();
     expect(coordinatorCursor).toBe(75);
@@ -130,7 +130,7 @@ describe("Polling cursor: coordinator authoritative, project lastUpdateId seed/b
     expect(await readProjectBinding(unbound)).toBeUndefined();
   });
 
-  it("multi-project shared bot does not regress: /tg-switch uses coordinator cursor", async () => {
+  it("multi-project shared bot does not regress: instance switch uses coordinator cursor", async () => {
     const bot = makeBot({ token: "shared-tok" });
     await addBot(bot);
 
@@ -148,7 +148,7 @@ describe("Polling cursor: coordinator authoritative, project lastUpdateId seed/b
     await coordinator.syncCursor(30);
     await coordinator.persistCursor(60);
 
-    // Project B becomes the active owner via /tg-switch.
+    // Project B becomes the active owner via the /tg switch-instance menu.
     // It should use the coordinator cursor (60), NOT its own project lastUpdateId (10).
     const coordinatorCursor = await coordinator.syncCursor();
     expect(coordinatorCursor).toBe(60);

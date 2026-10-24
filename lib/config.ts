@@ -515,7 +515,7 @@ async function migrateToV3(value: unknown): Promise<BotRegistry> {
     return { version: 3, bots, ...(defaultBotId === undefined ? {} : { defaultBotId }) };
   }
 
-  throw new Error("Unsupported Telegram config format. Please recreate ~/.pi/agent/tg.json as version 3 or run /tg-bot-add.");
+  throw new Error("Unsupported Telegram config format. Please recreate ~/.pi/agent/tg.json as version 3 or add a bot via /tg → Bots → Add bot.");
 }
 
 function createBotRecordFromConfig(config: TelegramConfig, name: string): BotRecord {

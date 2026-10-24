@@ -22,7 +22,7 @@ export type BotRegistry = {
 /** A registered bot's identity. Stored in the central registry, not per-project. */
 export type BotRecord = {
   id: string;
-  /** Unique human-friendly name for display and `/tg-bot-*` commands. */
+  /** Unique human-friendly name for display in the `/tg` menu. */
   name: string;
   token: string;
   botUsername?: string;

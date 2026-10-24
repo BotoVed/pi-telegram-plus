@@ -39,12 +39,12 @@ export type MenuUi = {
   closeMenu?: () => Promise<void>;
 };
 
-// ── Reusable flow functions (shared by flat commands and /tg menu) ─────────
+// ── Reusable flow functions (shared by the /tg menu) ───────────────────────
 
 export async function listBotsFlow(ui: MenuUi): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("No bots registered. Use /tg-bot-add or /tg → Bots → Add bot to add one.", "info");
+    ui.notify("No bots registered. Use /tg → Bots → Add bot to add one.", "info");
     return;
   }
   const lines = registry.bots.map((bot) => {
@@ -151,7 +151,7 @@ export async function clearBotDefaultFlow(
   const followsDefault = !(await readProjectBinding(cwd));
   ui.notify(
     followsDefault
-      ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg-bind-cwd) or set a default in the TUI to reconnect."
+    ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg → Project → Bot) or set a default in the TUI to reconnect."
       : "Default bot cleared.",
     followsDefault ? "warning" : "info",
   );
@@ -262,14 +262,14 @@ export async function bindProjectFlow(
 ): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("No bots registered. Use /tg-bot-add or /tg → Bots → Add bot first.", "error");
+    ui.notify("No bots registered. Use /tg → Bots → Add bot first.", "error");
     return;
   }
   let bot: BotRecord | undefined;
   if (botId) {
     bot = registry.bots.find((b) => b.id === botId) ?? findBotByIdOrName(registry, botId);
     if (!bot) {
-      ui.notify(`Bot not found: ${escapeHtml(botId)}. Use /tg-bot-list to see registered bots.`, "error");
+      ui.notify(`Bot not found: ${escapeHtml(botId)}. Use /tg → Bots → Bot list to see registered bots.`, "error");
       return;
     }
   } else {
@@ -321,7 +321,7 @@ export async function enableProjectFlow(
 ): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("No Telegram bot registered. Use /tg-bot-add or /tg → Bots → Add bot first.", "error");
+    ui.notify("No Telegram bot registered. Use /tg → Bots → Add bot first.", "error");
     return;
   }
   const workspacePath = resolve(cwd);
@@ -330,7 +330,7 @@ export async function enableProjectFlow(
     await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: true }));
   } else {
     if (!registry.defaultBotId) {
-      ui.notify("No default bot set. Use /tg-bot-default to set one, or /tg → Bots → Set default.", "error");
+      ui.notify("No default bot set. Use /tg → Bots → Bot list → Set as default.", "error");
       return;
     }
     await updateProjectBindingLocked(workspacePath, () => ({ botId: registry.defaultBotId, enabled: true }));
@@ -359,7 +359,7 @@ export async function disableProjectFlow(
   // how to re-enable (the menu can't, once disconnected).
   if (wasEnabled && project) {
     ui.notify(
-      `Disabling bot for this project. If /tg is open it will close; re-enable via /tg-cwd-connect in the TUI or /tg → Project → Enabled after restarting pi.`,
+      `Disabling bot for this project. If /tg is open it will close; re-enable via /tg → Project → Enabled after restarting pi.`,
       "info",
     );
   }
@@ -397,172 +397,4 @@ export async function unbindProjectFlow(
   await deps.syncTelegramCommands();
   deps.refreshStatus();
   ui.notify(`Removed Telegram project binding:\n${escapeHtml(project.path)}\nProject now uses the default bot (if any).`, "info");
-}
-
-// ── Flat command handlers (thin wrappers that parse args then call flows) ──
-
-async function handleTgBotAdd(
-  _args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  await addBotFlow(ctx.ui, deps);
-}
-
-async function handleTgBotList(
-  _args: string,
-  ctx: any,
-  _deps: TelegramCommandDeps,
-): Promise<void> {
-  await listBotsFlow(ctx.ui);
-}
-
-async function handleTgBotUpdate(
-  args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  const query = args.trim();
-  if (!query) {
-    ctx.ui.notify("Usage: /tg-bot-update <id|name>", "error");
-    return;
-  }
-  const registry = await readBotRegistry();
-  const bot = findBotByIdOrName(registry, query);
-  if (!bot) {
-    ctx.ui.notify(`Bot not found: ${escapeHtml(query)}`, "error");
-    return;
-  }
-  await updateBotFlow(ctx.ui, deps, ctx.cwd || process.cwd(), bot.id);
-}
-
-async function handleTgBotRemove(
-  args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  const query = args.trim();
-  if (!query) {
-    ctx.ui.notify("Usage: /tg-bot-remove <id|name>", "error");
-    return;
-  }
-  const registry = await readBotRegistry();
-  const bot = findBotByIdOrName(registry, query);
-  if (!bot) {
-    ctx.ui.notify(`Bot not found: ${escapeHtml(query)}`, "error");
-    return;
-  }
-  await removeBotFlow(ctx.ui, deps, ctx.cwd || process.cwd(), bot.id, true);
-}
-
-async function handleTgBotDefault(
-  args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  const query = args.trim();
-  if (!query) {
-    ctx.ui.notify("Usage: /tg-bot-default <id|name|clear>", "error");
-    return;
-  }
-  if (query === "clear" || query === "none" || query === "off") {
-    await clearBotDefaultFlow(ctx.ui, deps, ctx.cwd || process.cwd());
-    return;
-  }
-  const registry = await readBotRegistry();
-  const bot = findBotByIdOrName(registry, query);
-  if (!bot) {
-    ctx.ui.notify(`Bot not found: ${escapeHtml(query)}`, "error");
-    return;
-  }
-  await setBotDefaultFlow(ctx.ui, bot.id, deps, ctx.cwd || process.cwd());
-}
-
-// ── Project binding handlers ──────────────────────────────────────────────
-
-async function handleTgBindCwd(
-  args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  const query = args.trim();
-  await bindProjectFlow(ctx.ui, deps, ctx.cwd || process.cwd(), query || undefined);
-}
-
-async function handleTgCwdConnect(
-  _args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  await enableProjectFlow(ctx.ui, deps, ctx.cwd || process.cwd());
-}
-
-async function handleTgCwdDisconnect(
-  _args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  await disableProjectFlow(ctx.ui, deps, ctx.cwd || process.cwd());
-}
-
-async function handleTgUnbindCwd(
-  _args: string,
-  ctx: any,
-  deps: TelegramCommandDeps,
-): Promise<void> {
-  await unbindProjectFlow(ctx.ui, deps, ctx.cwd || process.cwd(), true);
-}
-
-// ── Registration ──────────────────────────────────────────────────────────
-
-export function registerTelegramCommands(
-  registry: { registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: any) => Promise<void> }) => void },
-  deps: TelegramCommandDeps,
-): void {
-  // ── Bot CRUD ──────────────────────────────────────────────────────────
-  registry.registerCommand("tg-bot-add", {
-    description: "Add a Telegram bot to the registry",
-    handler: (args, ctx) => handleTgBotAdd(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-bot-list", {
-    description: "List registered Telegram bots",
-    handler: (args, ctx) => handleTgBotList(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-bot-update", {
-    description: "Update a registered Telegram bot (token, name, etc.)",
-    handler: (args, ctx) => handleTgBotUpdate(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-bot-remove", {
-    description: "Remove a Telegram bot from the registry",
-    handler: (args, ctx) => handleTgBotRemove(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-bot-default", {
-    description: "Set the default Telegram bot",
-    handler: (args, ctx) => handleTgBotDefault(args, ctx, deps),
-  });
-
-  // ── Project binding ──────────────────────────────────────────────────
-  registry.registerCommand("tg-bind-cwd", {
-    description: "Bind current project to a registered Telegram bot",
-    handler: (args, ctx) => handleTgBindCwd(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-cwd-connect", {
-    description: "Enable the Telegram bot for the current project",
-    handler: (args, ctx) => handleTgCwdConnect(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-cwd-disconnect", {
-    description: "Disable the Telegram bot for the current project",
-    handler: (args, ctx) => handleTgCwdDisconnect(args, ctx, deps),
-  });
-
-  registry.registerCommand("tg-unbind-cwd", {
-    description: "Remove current project Telegram bot binding",
-    handler: (args, ctx) => handleTgUnbindCwd(args, ctx, deps),
-  });
 }

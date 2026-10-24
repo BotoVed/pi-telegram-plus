@@ -6,28 +6,6 @@ import { getTuiCommands, type TuiCommand } from "./tui-bridge.ts";
 
 const menuLog = log.child("menu-commands");
 
-// Local-cwd management commands that must NOT appear in the Telegram bot menu
-// (they require interactive prompts / local cwd context). They are no longer
-// registered in the host TUI at all; they stay as Telegram-dispatch handlers
-// (reachable via /tg or by typing them) and this set also keeps them out of
-// the bot menu when recent-usage would otherwise inject them.
-const BOT_MENU_EXCLUDED = new Set([
-  // Bot CRUD + bind/unbind are local-cwd management commands.
-  "tg-bot-add",
-  "tg-bot-update",
-  "tg-bot-remove",
-  "tg-bot-default",
-  "tg-bind-cwd",
-  "tg-unbind-cwd",
-  "tg-cwd-connect",
-  "tg-cwd-disconnect",
-  // Flat tg-* commands are consolidated into the /tg menu. They stay
-  // registered as dispatchable slash commands but are excluded from the
-  // bot menu so only /tg appears as the single management entry point.
-  "tg-switch",
-  "tg-bot-list",
-]);
-
 const TELEGRAM_MENU_COMMANDS: Array<{ command: string; description: string }> = [
   // Keep the built-in pi commands in the same order as the TUI slash menu.
   { command: "login", description: "Configure provider authentication" },
@@ -108,7 +86,6 @@ export function buildTelegramMenuCommandsFull(
 ): TelegramMenuBuildResult {
   const commands = new Map<string, string>();
   const addCommand = (name: string, description?: string) => {
-    if (BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(name.replace(/-/g, "_"))) return;
     const telegramName = toTelegramCommandName(name);
     if (!telegramName || commands.has(telegramName)) return;
     commands.set(telegramName, (description?.trim() || `Run /${telegramName}`).slice(0, 256));
@@ -142,7 +119,7 @@ export function buildTelegramMenuCommandsFull(
   const recentPriority = new Map<string, number>();
   for (const [index, name] of (options.recent ?? []).entries()) {
     const telegramName = toTelegramCommandName(name);
-    if (!telegramName || BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(telegramName)) continue;
+    if (!telegramName) continue;
     if (!recentPriority.has(telegramName)) recentPriority.set(telegramName, index);
   }
 
@@ -152,7 +129,6 @@ export function buildTelegramMenuCommandsFull(
   for (const command of options.tuiCommands ?? []) {
     const n = toTelegramCommandName(command.name);
     if (!n) continue;
-    if (BOT_MENU_EXCLUDED.has(command.name) || BOT_MENU_EXCLUDED.has(n)) continue;
     if (commands.has(n)) continue;
     if (seenDynamic.has(n)) continue;
     seenDynamic.add(n);
@@ -161,7 +137,6 @@ export function buildTelegramMenuCommandsFull(
   for (const cmd of pi.getCommands()) {
     const n = toTelegramCommandName(cmd.name);
     if (!n) continue;
-    if (BOT_MENU_EXCLUDED.has(cmd.name) || BOT_MENU_EXCLUDED.has(n)) continue;
     if (commands.has(n)) continue;
     if (seenDynamic.has(n)) continue;
     seenDynamic.add(n);
@@ -170,7 +145,6 @@ export function buildTelegramMenuCommandsFull(
   for (const name of options.recent ?? []) {
     const n = toTelegramCommandName(name);
     if (!n) continue;
-    if (BOT_MENU_EXCLUDED.has(name) || BOT_MENU_EXCLUDED.has(n)) continue;
     if (commands.has(n) || seenDynamic.has(n)) continue;
     seenDynamic.add(n);
     dynamic.push({ name, desc: undefined });

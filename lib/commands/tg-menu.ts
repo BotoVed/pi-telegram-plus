@@ -20,8 +20,7 @@ import {
   unbindProjectFlow,
 } from "./telegram-commands.ts";
 
-/** Format a live instance for display in the switch selector. Exported so the
- *  flat /tg-switch handler in index.ts can reuse the same formatting. */
+/** Format a live instance for display in the switch selector. */
 export function formatInstanceChoice(instance: TelegramInstanceMetadata, activeId: string): string {
   const marker = instance.id === activeId ? "✓" : " ";
   const project = (basename(instance.cwd) || instance.cwd).slice(0, 28);
@@ -86,9 +85,8 @@ export type SwitchInstanceDeps = {
   startPolling: () => void;
   requestReconcile: () => void;
   getCurrentTurn: () => { chatId: number; messageThreadId?: number; sourceMessageId?: number } | undefined;
-  /** Shared handoff gate (same Set used by the flat /tg-switch handler and
-   *  isActiveInstance) so a menu-triggered switch blocks outbound sends
-   *  during the handoff, just like the flat command. */
+  /** Shared handoff gate (same Set used by isActiveInstance) so a
+   *  menu-triggered switch blocks outbound sends during the handoff. */
   pendingHandoffs: Set<string>;
 };
 
@@ -303,7 +301,7 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
       if (enabled) {
         const ok = await ui.confirm(
           "Disable bot for this project?",
-          "Disabling will disconnect the bot — the /tg menu will close and you can't re-enable it from Telegram. Re-enable via /tg-cwd-connect in the TUI or restart pi. Continue?",
+          "Disabling will disconnect the bot — the /tg menu will close and you can't re-enable it from Telegram. Re-enable via /tg → Project → Enabled after restarting pi. Continue?",
         );
         if (ok) await disableProjectFlow(ui, deps, cwd);
       } else {
@@ -324,7 +322,7 @@ async function configMenu(ui: MenuUi, configDeps: TgConfigDeps, sessionDeps?: Se
     const currentRetry = config.retryCount ?? 3;
     const currentBash = config.bashConfirm ?? "dangerous";
     // Model thinking level lives on the session, not the bridge config; the
-    // flat /tg-thinking command was removed, so this menu is its Telegram-side
+    // flat thinking command was removed, so this menu is its Telegram-side
     // home (pi users also have native /thinking; OMP has no Telegram-reachable
     // hotkey).
     const session = sessionDeps?.getSession();

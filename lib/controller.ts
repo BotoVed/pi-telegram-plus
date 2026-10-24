@@ -2024,11 +2024,31 @@ export function createTelegramController(deps: {
     // v6 (决定 48): no bridge, no path to the host. Host-facing commands answer
     // with the fixed outage notice instead of silently falling back; plugin-owned
     // bot management stays available.
-    if (!bridge.isAvailable() && !PLUGIN_LOCAL_COMMANDS[name] && !name.startsWith("tg-")) {
+    if (!bridge.isAvailable() && !PLUGIN_LOCAL_COMMANDS[name]) {
       await deps.transport.sendText(chatId, `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`, messageThreadId, sourceMessageId)
         .catch(ctrlLog.swallow("warn", "sendText bridge outage notice failed", { chatId }));
       return true;
     }
+
+    // The flat /tg-* commands were removed; /tg is the only management entry.
+    // Answer unknown tg-* commands here instead of forwarding them to the host
+    // as prompt text. A plugin handler or host-served command that still owns
+    // a tg- name wins over the notice.
+    if (name.startsWith("tg-") && !deps.telegramCommands.has(name)) {
+      const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
+      const catalog = await bridge.getCommands().catch(() => []);
+      const served = catalog.some((command) => candidates.has(command.name)
+        || (command.aliases ?? []).some((alias) => candidates.has(alias)));
+      const external = session.extensionRunner.getCommand(name)
+        ?? session.extensionRunner.getCommand(name.replace(/_/g, "-"))
+        ?? session.extensionRunner.getCommand(name.replace(/-/g, "_"));
+      if (!served && !external) {
+        await deps.transport.sendText(chatId, "未知命令，请使用 /tg。", messageThreadId, sourceMessageId)
+          .catch(ctrlLog.swallow("warn", "sendText unknown-command notice failed", { chatId }));
+        return true;
+      }
+    }
+
     // /more opens the overflow keyboard for this bot's menu. Only claimed when
     // an overflow exists, so a user-registered /more keeps working otherwise.
     if (name === "more" && menuOverflow().length > 0) {

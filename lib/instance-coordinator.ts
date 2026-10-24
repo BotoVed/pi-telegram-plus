@@ -269,7 +269,7 @@ export class TelegramInstanceCoordinator {
                 || previous.instanceId !== expected.instanceId
                 || previous.generation !== expected.generation) {
                 if (previous) this.cacheActive(previous);
-                throw new Error("Telegram active instance changed while the switch was pending; run /tg-switch again");
+                throw new Error("Telegram active instance changed while the switch was pending; retry via /tg → Switch instance");
             }
             const active: TelegramActiveInstance = {
                 instanceId,

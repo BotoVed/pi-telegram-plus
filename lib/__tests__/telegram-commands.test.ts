@@ -12,8 +12,20 @@ vi.mock("../telegram-api.ts", () => ({
   getTelegramBotUsername: mocks.getTelegramBotUsername,
 }));
 
-import { registerTelegramCommands, type TelegramCommandDeps } from "../commands/telegram-commands.ts";
-import { readBotRegistry, readProjectBinding, addBot, writeBotRegistry } from "../config.ts";
+import {
+  addBotFlow,
+  bindProjectFlow,
+  clearBotDefaultFlow,
+  disableProjectFlow,
+  enableProjectFlow,
+  listBotsFlow,
+  removeBotFlow,
+  setBotDefaultFlow,
+  unbindProjectFlow,
+  updateBotFlow,
+  type TelegramCommandDeps,
+} from "../commands/telegram-commands.ts";
+import { readBotRegistry, readProjectBinding, addBot } from "../config.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
 
 function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
@@ -25,11 +37,11 @@ function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
   };
 }
 
-describe("Telegram commands (bot registry + project binding)", () => {
+describe("Telegram management flows (bot registry + project binding)", () => {
   let agentDir: string;
   let projectDir: string;
   let originalAgentDir: string | undefined;
-  let commands: Map<string, (args: string, ctx: any) => Promise<void>>;
+  let deps: TelegramCommandDeps;
   let config: TelegramConfig;
   let resolvedConfig: ResolvedTelegramConfig | undefined;
   let pollingActive: boolean;
@@ -38,10 +50,10 @@ describe("Telegram commands (bot registry + project binding)", () => {
   beforeEach(async () => {
     originalAgentDir = process.env.PI_CODING_AGENT_DIR;
     agentDir = await mkdtemp(join(tmpdir(), "ptp-cmd-"));
+    await mkdir(join(agentDir, "projects"), { recursive: true });
     process.env.PI_CODING_AGENT_DIR = agentDir;
     projectDir = await mkdtemp(join(tmpdir(), "ptp-cmd-proj-"));
 
-    commands = new Map();
     config = {};
     resolvedConfig = undefined;
     pollingActive = false;
@@ -49,7 +61,7 @@ describe("Telegram commands (bot registry + project binding)", () => {
     mocks.getTelegramBotUsername.mockReset();
     mocks.getTelegramBotUsername.mockResolvedValue("testbot");
 
-    const deps: TelegramCommandDeps = {
+    deps = {
       getConfig: () => config,
       setConfig: (c) => { config = c; },
       persistConfig: async (c) => { config = c; },
@@ -59,7 +71,7 @@ describe("Telegram commands (bot registry + project binding)", () => {
         config = next.config;
       },
       isTelegramEnabled: () => config.telegramEnabled === true,
-      transport: {} as any,
+      transport: {} as unknown as TelegramCommandDeps["transport"], // flows never send in these tests
       getPolling: () => ({
         start: () => { pollingActive = true; pollingCalls.push("start"); },
         stop: async () => { pollingActive = false; pollingCalls.push("stop"); },
@@ -70,15 +82,6 @@ describe("Telegram commands (bot registry + project binding)", () => {
       startStatusHeartbeat: () => undefined,
       clearStatusError: () => undefined,
     };
-
-    registerTelegramCommands(
-      {
-        registerCommand: (name, options) => {
-          commands.set(name, options.handler);
-        },
-      },
-      deps,
-    );
   });
 
   afterEach(async () => {
@@ -93,33 +96,16 @@ describe("Telegram commands (bot registry + project binding)", () => {
       input: vi.fn(),
       inputSecret: vi.fn(),
       select: vi.fn(),
+      confirm: vi.fn(),
     },
   });
 
-  it("registers all expected commands", () => {
-    expect([...commands.keys()]).toContain("tg-bot-add");
-    expect([...commands.keys()]).toContain("tg-bot-list");
-    expect([...commands.keys()]).toContain("tg-bot-update");
-    expect([...commands.keys()]).toContain("tg-bot-remove");
-    expect([...commands.keys()]).toContain("tg-bot-default");
-    expect([...commands.keys()]).toContain("tg-bind-cwd");
-    expect([...commands.keys()]).toContain("tg-cwd-connect");
-    expect([...commands.keys()]).toContain("tg-cwd-disconnect");
-    expect([...commands.keys()]).toContain("tg-unbind-cwd");
-  });
-
-  it("does NOT register old global commands", () => {
-    expect([...commands.keys()]).not.toContain("tg-global-setup");
-    expect([...commands.keys()]).not.toContain("tg-global-connect");
-    expect([...commands.keys()]).not.toContain("tg-global-disconnect");
-  });
-
-  it("/tg-bot-add adds a bot and sets it as default (first bot)", async () => {
+  it("addBotFlow adds a bot and sets it as default (first bot)", async () => {
     const ctx = makeCtx();
     ctx.ui.input.mockResolvedValueOnce("my-bot");
     ctx.ui.inputSecret.mockResolvedValueOnce("token-123");
 
-    await commands.get("tg-bot-add")!("", ctx);
+    await addBotFlow(ctx.ui, deps);
 
     const registry = await readBotRegistry();
     expect(registry.bots).toHaveLength(1);
@@ -133,13 +119,13 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-bot-add rejects duplicate name", async () => {
+  it("addBotFlow rejects duplicate name", async () => {
     await addBot(makeBot({ name: "existing", token: "t1" }));
     const ctx = makeCtx();
     ctx.ui.input.mockResolvedValueOnce("existing");
     ctx.ui.inputSecret.mockResolvedValueOnce("t2");
 
-    await commands.get("tg-bot-add")!("", ctx);
+    await addBotFlow(ctx.ui, deps);
 
     const registry = await readBotRegistry();
     expect(registry.bots).toHaveLength(1); // still only the original
@@ -149,11 +135,11 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-bot-list shows registered bots", async () => {
+  it("listBotsFlow shows registered bots", async () => {
     await addBot(makeBot({ name: "alpha", token: "t1", botUsername: "alphabot" }));
     const ctx = makeCtx();
 
-    await commands.get("tg-bot-list")!("", ctx);
+    await listBotsFlow(ctx.ui);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("alpha"),
@@ -161,37 +147,37 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-bot-list shows 'no bots' when registry is empty", async () => {
+  it("listBotsFlow shows 'no bots' with the /tg menu path when registry is empty", async () => {
     const ctx = makeCtx();
 
-    await commands.get("tg-bot-list")!("", ctx);
+    await listBotsFlow(ctx.ui);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("No bots registered"),
+      expect.stringContaining("No bots registered. Use /tg → Bots → Add bot"),
       "info",
     );
   });
 
-  it("/tg-bot-default sets the default bot", async () => {
+  it("setBotDefaultFlow sets the default bot", async () => {
     const bot1 = makeBot({ name: "a" });
     const bot2 = makeBot({ name: "b" });
     await addBot(bot1);
     await addBot(bot2);
 
     const ctx = makeCtx();
-    await commands.get("tg-bot-default")!(bot2.name, ctx);
+    await setBotDefaultFlow(ctx.ui, bot2.id, deps, projectDir);
 
     const registry = await readBotRegistry();
     expect(registry.defaultBotId).toBe(bot2.id);
   });
 
-  it("/tg-bot-default clear unsets the global default without touching the project binding", async () => {
+  it("clearBotDefaultFlow unsets the global default without touching the project binding", async () => {
     const bot = makeBot({ name: "only", token: "tok-only" });
     await addBot(bot); // becomes default
     config = { botToken: bot.token };
 
     const ctx = makeCtx();
-    await commands.get("tg-bot-default")!("clear", ctx);
+    await clearBotDefaultFlow(ctx.ui, deps, projectDir);
 
     expect((await readBotRegistry()).defaultBotId).toBeUndefined();
     expect(await readProjectBinding(projectDir)).toBeUndefined();
@@ -202,12 +188,12 @@ describe("Telegram commands (bot registry + project binding)", () => {
     expect(config.botToken).toBeUndefined(); // unbound project re-resolved immediately
   });
 
-  it("/tg-bot-remove removes a bot and warns about default", async () => {
+  it("removeBotFlow removes a bot and warns about default", async () => {
     const bot = makeBot({ name: "only" });
     await addBot(bot);
 
     const ctx = makeCtx();
-    await commands.get("tg-bot-remove")!(bot.name, ctx);
+    await removeBotFlow(ctx.ui, deps, projectDir, bot.id, true);
 
     const registry = await readBotRegistry();
     expect(registry.bots).toHaveLength(0);
@@ -217,27 +203,27 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-bot-update updates allowedUserId with a valid integer", async () => {
+  it("updateBotFlow updates allowedUserId with a valid integer", async () => {
     const bot = makeBot({ name: "mybot", token: "tok-x" });
     await addBot(bot);
     const ctx = makeCtx();
     ctx.ui.input.mockResolvedValueOnce("allowedUserId");
     ctx.ui.input.mockResolvedValueOnce("12345");
 
-    await commands.get("tg-bot-update")!(bot.name, ctx);
+    await updateBotFlow(ctx.ui, deps, projectDir, bot.id);
 
     const registry = await readBotRegistry();
     expect(registry.bots[0].allowedUserId).toBe(12345);
   });
 
-  it("/tg-bot-update rejects a non-integer allowedUserId", async () => {
+  it("updateBotFlow rejects a non-integer allowedUserId", async () => {
     const bot: BotRecord = { id: crypto.randomUUID(), name: "mybot", token: "tok-x", allowedUserId: 1 };
     await addBot(bot);
     const ctx = makeCtx();
     ctx.ui.input.mockResolvedValueOnce("allowedUserId");
     ctx.ui.input.mockResolvedValueOnce("not-a-number");
 
-    await commands.get("tg-bot-update")!(bot.name, ctx);
+    await updateBotFlow(ctx.ui, deps, projectDir, bot.id);
 
     const registry = await readBotRegistry();
     expect(registry.bots[0].allowedUserId).toBe(1); // unchanged
@@ -247,23 +233,23 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-bind-cwd with no bots guides to /tg-bot-add", async () => {
+  it("bindProjectFlow with no bots guides to the /tg menu", async () => {
     const ctx = makeCtx();
 
-    await commands.get("tg-bind-cwd")!("", ctx);
+    await bindProjectFlow(ctx.ui, deps, projectDir);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("No bots registered"),
+      expect.stringContaining("No bots registered. Use /tg → Bots → Add bot first."),
       "error",
     );
   });
 
-  it("/tg-bind-cwd with bot name creates project binding", async () => {
+  it("bindProjectFlow with bot name creates project binding", async () => {
     const bot = makeBot({ name: "mybot", token: "tok-x" });
     await addBot(bot);
 
     const ctx = makeCtx();
-    await commands.get("tg-bind-cwd")!("mybot", ctx);
+    await bindProjectFlow(ctx.ui, deps, projectDir, "mybot");
 
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.botId).toBe(bot.id);
@@ -274,7 +260,7 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-bind-cwd to a different bot notifies 'Switching bot' before the switch", async () => {
+  it("bindProjectFlow to a different bot notifies 'Switching bot' before the switch", async () => {
     const bot1 = makeBot({ name: "b1", token: "t1" });
     const bot2 = makeBot({ name: "b2", token: "t2" });
     await addBot(bot1);
@@ -282,32 +268,31 @@ describe("Telegram commands (bot registry + project binding)", () => {
     config = { botToken: "t1", telegramEnabled: true }; // currently on bot1
 
     const ctx = makeCtx();
-    await commands.get("tg-bind-cwd")!("b2", ctx);
+    await bindProjectFlow(ctx.ui, deps, projectDir, "b2");
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("Switching bot to b2"), "info");
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.botId).toBe(bot2.id);
   });
 
-  it("/tg-bind-cwd initial bind (no prior bot) does not notify 'Switching bot'", async () => {
+  it("bindProjectFlow initial bind (no prior bot) does not notify 'Switching bot'", async () => {
     const bot = makeBot({ name: "mybot", token: "tok-x" });
     await addBot(bot);
     // config = {} from beforeEach (no prior botToken)
     const ctx = makeCtx();
-    await commands.get("tg-bind-cwd")!("mybot", ctx);
+    await bindProjectFlow(ctx.ui, deps, projectDir, "mybot");
     expect(ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("Switching bot"), "info");
   });
 
-  it("/tg-unbind-cwd removes the project binding", async () => {
+  it("unbindProjectFlow removes the project binding", async () => {
     const bot = makeBot({ name: "mybot", token: "tok-x" });
     await addBot(bot);
 
-    // First bind.
     const ctx = makeCtx();
-    await commands.get("tg-bind-cwd")!("mybot", ctx);
-
+    // First bind.
+    await bindProjectFlow(ctx.ui, deps, projectDir, "mybot");
     // Then unbind.
-    await commands.get("tg-unbind-cwd")!("", ctx);
+    await unbindProjectFlow(ctx.ui, deps, projectDir, true);
 
     const binding = await readProjectBinding(projectDir);
     expect(binding).toBeUndefined();
@@ -317,10 +302,10 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-unbind-cwd with no binding shows info message", async () => {
+  it("unbindProjectFlow with no binding shows info message", async () => {
     const ctx = makeCtx();
 
-    await commands.get("tg-unbind-cwd")!("", ctx);
+    await unbindProjectFlow(ctx.ui, deps, projectDir, true);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
       expect.stringContaining("no Telegram binding"),
@@ -328,26 +313,26 @@ describe("Telegram commands (bot registry + project binding)", () => {
     );
   });
 
-  it("/tg-cwd-connect creates minimal binding with default bot when none exists", async () => {
+  it("enableProjectFlow creates minimal binding with default bot when none exists", async () => {
     const bot = makeBot({ name: "default", token: "tok-d" });
     await addBot(bot);
 
     const ctx = makeCtx();
-    await commands.get("tg-cwd-connect")!("", ctx);
+    await enableProjectFlow(ctx.ui, deps, projectDir);
 
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.botId).toBe(bot.id);
     expect(binding?.binding.enabled).toBe(true);
   });
 
-  it("/tg-cwd-disconnect disables the bot in the project binding", async () => {
+  it("disableProjectFlow disables the bot in the project binding", async () => {
     const bot = makeBot({ name: "mybot", token: "tok-x" });
     await addBot(bot);
 
     const ctx = makeCtx();
-    await commands.get("tg-bind-cwd")!("mybot", ctx);
+    await bindProjectFlow(ctx.ui, deps, projectDir, "mybot");
 
-    await commands.get("tg-cwd-disconnect")!("", ctx);
+    await disableProjectFlow(ctx.ui, deps, projectDir);
 
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.enabled).toBe(false);

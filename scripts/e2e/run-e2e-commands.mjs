@@ -335,14 +335,28 @@ async function runHost(host, label, phase = "main") {
       record("command /exit shuts down", outcome === "exited", String(outcome ?? "no outcome"));
       }
     } else {
+      // The flat tg-cwd-disconnect command is gone (T4.10): disconnect goes
+      // through the /tg menu - /tg → 📁 Project → Enabled toggle → confirm.
       try {
-        const call = await dispatch("/tg-cwd-disconnect");
-        record("command /tg-cwd-disconnect disables the project", /Disabling bot|disabled/i.test(String(call.body?.text ?? "")),
+        const since = await cursor();
+        await dispatch("/tg");
+        const mainMenu = await waitFor("/tg main menu", (state) =>
+          state.calls.slice(since).findLast((entry) => findButton(entry, /🤖 Bots/)) ?? false);
+        const projectButton = findButton(mainMenu, /📁 Project/);
+        if (!projectButton) throw new Error(`no 📁 Project entry: ${buttonsOf(mainMenu).map((b) => b.text).join(" / ")}`);
+        const project = await click(projectButton, mainMenu.body?.message_id ?? mainMenu.message_id);
+        const enabledButton = findButton(project, /^Enabled: ● on$/);
+        if (!enabledButton) throw new Error(`no enabled toggle: ${buttonsOf(project).map((b) => b.text).join(" / ")}`);
+        const prompt = await click(enabledButton, project.body?.message_id ?? project.message_id);
+        const yes = findButton(prompt, /^(Yes|Confirm|OK|✅.*)$/i);
+        if (!yes) throw new Error(`no confirm button: ${buttonsOf(prompt).map((b) => b.text).join(" / ")}`);
+        const call = await click(yes, prompt.body?.message_id ?? prompt.message_id);
+        record("menu Project → Enabled disables the project", /Disabling bot|disabled/i.test(String(call.body?.text ?? "")),
           String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 90));
         await sleep(1500);
         record("host stays alive after disconnect", hostAlive());
       } catch (error) {
-        record("command /tg-cwd-disconnect disables the project", false, String(error.message).slice(0, 200));
+        record("menu Project → Enabled disables the project", false, String(error.message).slice(0, 200));
       }
     }
     const paneTail = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
@@ -570,24 +584,6 @@ async function runHost(host, label, phase = "main") {
     if (!hostAlive()) {
       record(`host alive after ${command}`, false, "tmux session went away");
       return { results, ok: false, session, runDir };
-    }
-  }
-
-  // ── Hidden management commands (not in the bot menu by design) ────────
-  // /more only answers when the bot menu overflows its page; /tg-cwd-disconnect
-  // stops polling by design, so both are handled in their own phases.
-  const hidden = [
-    "/tg-bot-list", "/tg-bot-default", "/tg-bot-update", "/tg-bot-remove",
-  ];
-  for (const command of hidden) {
-    try {
-      const call = await dispatch(command, { timeoutMs: 15_000 });
-      const text = String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 70);
-      record(`hidden ${command}`, true, text || `${buttonsOf(call).length} buttons`);
-      await settle();
-    } catch (error) {
-      const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
-      record(`hidden ${command}`, false, `${String(error.message).slice(0, 160)}${/Uncaught|TypeError/.test(pane) ? " · pane error" : ""}`);
     }
   }
 
@@ -838,8 +834,8 @@ async function runHost(host, label, phase = "main") {
   }
 
   // ── Management mutations (isolated dirs; exercises the real flows) ────
-  // Adding a bot goes through the /tg menu: the `/tg-bot-*` commands are slated
-  // for removal (T4.10) and the menu is what users actually have. The name is
+  // Adding a bot goes through the /tg menu: the flat tg-bot-* commands were
+  // removed (T4.10) and the menu is what users actually have. The name is
   // asked by the host's own input dialog (brokered), the token by the plugin's
   // secret prompt, so this exercises both answer paths.
   try {
@@ -859,10 +855,22 @@ async function runHost(host, label, phase = "main") {
       state.calls.slice(since).findLast((c) => RESPONSE_METHODS.has(c.method) && /Bot added/i.test(String(c.body?.text ?? ""))) ?? false);
     record("menu Bots → Add bot answered from Telegram", true, String(added.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
 
-    // The add flow leaves the bot-name prompt behind, so this command first closes it and
-    // says so; the confirmation of the removal is the message that names the bot as removed.
-    const removed = await dispatch("/tg-bot-remove e2e-extra", { match: /removed/i });
-    record("management /tg-bot-remove", true,
+    // The add flow leaves the bot-name prompt behind; settle cancels it, then
+    // removal goes through the /tg menu (Bots → Bot list → e2e-extra → Remove).
+    await settle();
+    const mainForRemove = await openMain();
+    const botsForRemove = await menuStep("Bots (remove flow)", mainForRemove, /🤖 Bots/, [/🤖 Bots/, "➕ Add bot"]);
+    const listForRemove = await menuStep("Bots → Bot list (remove flow)", botsForRemove, /^Bot list$/, [/Bot list/]);
+    const extraEntry = buttonsOf(listForRemove).find((b) => /e2e-extra/.test(String(b.text ?? "")));
+    if (!extraEntry) throw new Error(`no e2e-extra entry: ${buttonsOf(listForRemove).map((b) => b.text).join(" / ")}`);
+    const detail = await click(extraEntry, listForRemove.body?.message_id ?? listForRemove.message_id);
+    const remove = findButton(detail, /^Remove$/);
+    if (!remove) throw new Error(`no Remove entry: ${buttonsOf(detail).map((b) => b.text).join(" / ")}`);
+    const rmPrompt = await click(remove, detail.body?.message_id ?? detail.message_id);
+    const rmYes = findButton(rmPrompt, /^(Yes|Confirm|OK|✅.*)$/i);
+    if (!rmYes) throw new Error(`no confirm on remove prompt: ${buttonsOf(rmPrompt).map((b) => b.text).join(" / ")}`);
+    const removed = await click(rmYes, rmPrompt.body?.message_id ?? rmPrompt.message_id);
+    record("menu Bots → list → Remove answered from Telegram", /removed/i.test(String(removed.body?.text ?? "")),
       String(removed.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
   } catch (error) {
     record("management bot CRUD", false, String(error.message).slice(0, 220));
@@ -870,27 +878,43 @@ async function runHost(host, label, phase = "main") {
   await settle();
 
   try {
-    const bind = await dispatch("/tg-bind-cwd");
-    const options = buttonsOf(bind);
-    const target = bind.body?.message_id ?? bind.message_id;
-    const botButton = options.find((b) => /(pi|omp)-bot|^Bot: |bi\(/.test(String(b.text ?? ""))) ?? options[0];
-    if (botButton) {
-      await click(botButton, target);
-      record("management /tg-bind-cwd", true, `picked ${botButton.text}`);
-    } else {
-      record("management /tg-bind-cwd", false, "no bot option");
-    }
-    const unbind = await dispatch("/tg-unbind-cwd");
-    record("management /tg-unbind-cwd", /Removed|unbind/i.test(String(unbind.body?.text ?? "")),
-      String(unbind.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
-    const connect = await dispatch("/tg-cwd-connect");
-    record("management /tg-cwd-connect", /enabled|already/i.test(String(connect.body?.text ?? "")),
-      String(connect.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
-    const sw = await dispatch("/tg-switch");
-    record("management /tg-switch", String(sw.body?.text ?? "") !== "" || buttonsOf(sw).length > 0,
-      String(sw.body?.text ?? "").replace(/\s+/g, " ").slice(0, 70));
+    // Bind / unbind go through the /tg menu (the flat commands are gone, T4.10).
+    let main = await openMain();
+    const project = await menuStep("Project (bind flow)", main, /📁 Project/, [/Project/, /Bot: /, /Enabled: /]);
+    const botRow = findButton(project, /^Bot: /);
+    if (!botRow) throw new Error(`no Bot: row: ${buttonsOf(project).map((b) => b.text).join(" / ")}`);
+    const picker = await click(botRow, project.body?.message_id ?? project.message_id);
+    const botButton = buttonsOf(picker).find((b) => /(pi|omp)-bot|bi\(|★|·/.test(String(b.text ?? "")));
+    if (!botButton) throw new Error(`no bot option: ${buttonsOf(picker).map((b) => b.text).join(" / ")}`);
+    const bound = await click(botButton, picker.body?.message_id ?? picker.message_id);
+    record("menu Project → Bind bot", /bound|Switching bot/i.test(String(bound.body?.text ?? "")) || buttonsOf(bound).length > 0,
+      `picked ${botButton.text} · ${String(bound.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60)}`);
+    await settle();
+
+    main = await openMain();
+    const project2 = await menuStep("Project (unbind flow)", main, /📁 Project/, [/Project/, /Bot: /, /Enabled: /]);
+    const botRow2 = findButton(project2, /^Bot: /);
+    if (!botRow2) throw new Error(`no Bot: row: ${buttonsOf(project2).map((b) => b.text).join(" / ")}`);
+    const picker2 = await click(botRow2, project2.body?.message_id ?? project2.message_id);
+    const unbindButton = findButton(picker2, /^Unbind$/);
+    if (!unbindButton) throw new Error(`no Unbind entry: ${buttonsOf(picker2).map((b) => b.text).join(" / ")}`);
+    const unbindPrompt = await click(unbindButton, picker2.body?.message_id ?? picker2.message_id);
+    const unbindYes = findButton(unbindPrompt, /^(Yes|Confirm|OK|✅.*)$/i);
+    if (!unbindYes) throw new Error(`no confirm on unbind prompt: ${buttonsOf(unbindPrompt).map((b) => b.text).join(" / ")}`);
+    const unbound = await click(unbindYes, unbindPrompt.body?.message_id ?? unbindPrompt.message_id);
+    record("menu Project → Unbind", /Removed|unbind/i.test(String(unbound.body?.text ?? "")),
+      String(unbound.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
+    await settle();
+
+    // Switch instance opens the live-instance picker; go Back without switching.
+    main = await openMain();
+    const switchMenu = await menuStep("Switch instance", main, /🔄 Switch instance/, [/Switch Telegram pi instance/, /⬅️ Back/]);
+    const back = findButton(switchMenu, /^⬅️ Back$/);
+    if (back) await click(back, switchMenu.body?.message_id ?? switchMenu.message_id).catch(() => undefined);
+    record("menu Switch instance picker", buttonsOf(switchMenu).length >= 2,
+      buttonsOf(switchMenu).map((b) => b.text).join(" / ").slice(0, 70));
   } catch (error) {
-    record("management bind/connect/switch", false, String(error.message).slice(0, 220));
+    record("management bind/unbind/switch via menu", false, String(error.message).slice(0, 220));
   }
   await settle();
 

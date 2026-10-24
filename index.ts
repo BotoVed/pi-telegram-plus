@@ -23,9 +23,7 @@ import { authorizeTelegramUser, ensureTelegramPairingCode, formatPairingInstruct
 import { getCurrentTelegramTurn } from "./lib/turn-context.ts";
 
 import { registerAllCommands } from "./lib/commands/register.ts";
-import { registerTelegramCommands } from "./lib/commands/telegram-commands.ts";
 import { registerTgMenuCommand } from "./lib/commands/tg-menu.ts";
-import { formatInstanceChoice } from "./lib/commands/tg-menu.ts";
 import { syncTelegramCommands, scheduleTelegramCommandRefresh, cancelTelegramCommandRefreshes } from "./lib/menu-commands.ts";
 import { installTuiBridge, tuiBridge, getTuiCommands } from "./lib/tui-bridge.ts";
 import type { ResolvedTelegramConfig, TelegramConfig, TelegramTurn } from "./lib/types.ts";
@@ -209,10 +207,9 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   };
 
   // Plugin commands that also appear in the host TUI slash menu. Telegram bot
-  // management (tg-*, tg-switch) is deliberately NOT registered in the TUI:
-  // bot tokens and local-cwd bindings must not surface as terminal slash
-  // commands, and the /tg menu owns these flows. They stay in the Telegram
-  // dispatch map, reachable from chats via /tg or by typing them.
+  // management is deliberately NOT registered in the TUI: bot tokens and
+  // local-cwd bindings must not surface as terminal slash commands; the /tg
+  // menu owns these flows, reachable only from Telegram chats.
   // /import is excluded too: it is now a built-in pi command; Telegram handler
   // registration only.
   const TUI_VISIBLE_COMMANDS = new Set([
@@ -233,30 +230,8 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     getActiveTurn: getCurrentActiveTurn,
   });
 
-  registerTelegramCommands({
-    registerCommand: (name: string, options: { description?: string; handler: TelegramCommandHandler }) => {
-      telegramCommands.set(name, options.handler);
-      if (TUI_VISIBLE_COMMANDS.has(name) && options.description) {
-        pi.registerCommand(name, { description: options.description, handler: options.handler });
-      }
-    },
-  }, {
-    getConfig: () => config,
-    setConfig,
-    persistConfig: persistCurrentConfig,
-    getResolvedConfig: () => resolvedConfig,
-    switchResolvedConfig,
-    isTelegramEnabled,
-    transport,
-    getPolling: () => polling,
-    refreshStatus,
-    syncTelegramCommands: () => syncTelegramCommands(config.botToken, pi),
-    startStatusHeartbeat: () => heartbeat.startStatusHeartbeat(refreshStatus),
-    clearStatusError: () => { lastStatusError = undefined; },
-  });
-
-  // /tg multi-level menu — consolidates the flat /tg-* commands into one
-  // inline-keyboard menu (Bots / Project / Commands / Config / Switch instance).
+  // /tg multi-level menu — the single entry point for bot / project /
+  // instance management (Bots / Project / Commands / Config / Switch instance).
   let runCommandFromMenu: ((name: string, args: string) => Promise<void>) | undefined;
   registerTgMenuCommand({
     registerCommand: (name: string, options: { description?: string; handler: TelegramCommandHandler }) => {
@@ -717,77 +692,6 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
 
   coordinatorTimer = setInterval(requestCoordinatorReconcile, 2_000);
 
-  const handleTgSwitch: TelegramCommandHandler = async (args, ctx) => {
-    const currentCoordinator = coordinator;
-    if (!currentCoordinator || !currentCoordinator.isActive()) {
-      ctx.ui.notify("This pi instance is not the active Telegram instance.", "error");
-      return;
-    }
-    const instances = await currentCoordinator.listInstances();
-    const active = currentCoordinator.getActive();
-    if (!active || instances.length === 0) {
-      ctx.ui.notify("No live Telegram instances are available.", "error");
-      return;
-    }
-
-    let target: TelegramInstanceMetadata | undefined;
-    const query = args.trim();
-    if (!query) {
-      const choices = instances.map((instance) => formatInstanceChoice(instance, active.instanceId));
-      const selected = await ctx.ui.select("Switch Telegram pi instance", choices);
-      if (!selected) return;
-      target = instances[choices.indexOf(selected)];
-    } else if (query.toLowerCase() === "current") {
-      target = instances.find((instance) => instance.id === active.instanceId);
-    } else {
-      const matches = instances.filter((instance) => instance.id === query || instance.id.startsWith(query));
-      if (matches.length > 1) {
-        ctx.ui.notify(`Instance id is ambiguous: ${query}`, "error");
-        return;
-      }
-      target = matches[0];
-    }
-    if (!target) {
-      ctx.ui.notify(`Telegram instance not found: ${query || "selection"}`, "error");
-      return;
-    }
-
-    const turn = getCurrentTelegramTurn();
-    const chatId = turn?.chatId ?? config.activeChatId;
-    if (chatId === undefined) {
-      ctx.ui.notify("No active Telegram chat is available for history replay.", "error");
-      return;
-    }
-
-    const handoffId = randomUUID();
-    pendingHandoffs.add(handoffId);
-    try {
-      await polling.stop();
-      await currentCoordinator.switchTo(
-        target.id,
-        {
-          chatId,
-          messageThreadId: turn?.messageThreadId,
-          sourceMessageId: turn?.sourceMessageId,
-        },
-        { instanceId: active.instanceId, generation: active.generation },
-      );
-    } catch (error) {
-      throw error;
-    } finally {
-      pendingHandoffs.delete(handoffId);
-      requestCoordinatorReconcile();
-      if (pendingHandoffs.size === 0
-        && currentCoordinator.isActive()
-        && !currentCoordinator.getActive()?.replay) {
-        polling.start();
-      }
-    }
-  };
-  telegramCommands.set("tg-switch", handleTgSwitch);
-  // Telegram-only: switching which local instance owns the bot is a chat-side
-  // operation; it is not registered as a TUI slash command.
-
   function buildStatusState(error?: string): Parameters<typeof formatTelegramStatusLine>[1] {
     const enabled = !!config.botToken && isTelegramEnabled();
     return {
@@ -871,7 +775,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       if (!resolvedConfig) {
         switchResolvedConfig({ registry: { version: 3, bots: [] }, hasProjectBinding: false, config: {} });
         getActiveSession()?.extensionRunner.getUIContext().notify(
-          `Telegram config could not be loaded. Run /tg-bot-add to create a bot. ${error instanceof Error ? error.message : String(error)}`,
+          `Telegram config could not be loaded. Use /tg → Bots → Add bot to create a bot. ${error instanceof Error ? error.message : String(error)}`,
           "error",
         );
       } else {

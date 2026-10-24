@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import { createTelegramController } from "../controller.ts";
+import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import {
   buildTelegramMenuCommands,
   buildTelegramMenuCommandsFull,
@@ -35,40 +36,11 @@ describe("Telegram command menu", () => {
         });
     });
 
-    it("excludes flat /tg-* commands from the bot menu", () => {
-        const commands = buildTelegramMenuCommands({
-            getCommands: () => [
-                { name: "tg-bot-add", description: "Add" },
-                { name: "tg-bot-list", description: "List" },
-                { name: "tg-bot-update", description: "Update" },
-                { name: "tg-bot-remove", description: "Remove" },
-                { name: "tg-bot-default", description: "Default" },
-                { name: "tg-switch", description: "Switch" },
-                { name: "tg-bind-cwd", description: "Bind" },
-                { name: "tg-unbind-cwd", description: "Unbind" },
-                { name: "tg-cwd-connect", description: "Connect" },
-                { name: "tg-cwd-disconnect", description: "Disconnect" },
-            ],
-        } as any);
-
-        const names = commands.map((c) => c.command);
-        expect(names).not.toContain("tg_bot_add");
-        expect(names).not.toContain("tg_bot_list");
-        expect(names).not.toContain("tg_bot_update");
-        expect(names).not.toContain("tg_bot_remove");
-        expect(names).not.toContain("tg_bot_default");
-        expect(names).not.toContain("tg_switch");
-        expect(names).not.toContain("tg_bind_cwd");
-        expect(names).not.toContain("tg_unbind_cwd");
-        expect(names).not.toContain("tg_cwd_connect");
-        expect(names).not.toContain("tg_cwd_disconnect");
-        // But /tg IS included
-        expect(names).toContain("tg");
-    });
-
-    it("routes the Telegram menu command to the tg-switch handler", async () => {
-        const handler = vi.fn(async () => undefined);
-        const telegramCommands = new Map([["tg-switch", handler]]);
+    it("answers removed flat tg-* commands with the /tg hint instead of forwarding", async () => {
+        const sent: Array<{ chatId: number; text: string }> = [];
+        const transport = {
+            sendText: async (chatId: number, text: string) => { sent.push({ chatId, text }); return 1; },
+        } as unknown as TelegramTransport;
         let currentUi: unknown;
         const session = {
             extensionRunner: {
@@ -77,12 +49,12 @@ describe("Telegram command menu", () => {
                 getCommand: () => undefined,
                 createCommandContext: () => ({}),
             },
-        } as any;
+        } as unknown as CapturedAgentSession;
         const controller = createTelegramController({
             getSession: () => session,
-            transport: {} as any,
+            transport,
             ui: {
-                create: () => ({}) as any,
+                create: () => ({}) as never,
                 resolveInput: () => ({ handled: false }),
                 isSensitiveInput: () => false,
                 hasPendingInput: () => false,
@@ -91,7 +63,7 @@ describe("Telegram command menu", () => {
             authorizeUser: async () => true,
             setActiveChatId: async () => undefined,
             getBotUsername: () => "test_bot",
-            telegramCommands,
+            telegramCommands: new Map(),
             getActiveTurn: () => undefined,
             beginTelegramTurn: () => undefined,
             endTelegramTurn: () => undefined,
@@ -101,12 +73,12 @@ describe("Telegram command menu", () => {
             message_id: 1,
             chat: { id: 42 },
             from: { id: 7 },
-            text: "/tg_switch current",
+            text: "/tg-bot-add",
         });
 
-        await vi.waitFor(() => {
-            expect(handler).toHaveBeenCalledWith("current", expect.anything());
-        });
+        expect(sent).toHaveLength(1);
+        expect(sent[0]?.chatId).toBe(42);
+        expect(sent[0]?.text).toContain("未知命令，请使用 /tg");
     });
 });
 

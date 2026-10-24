@@ -248,7 +248,7 @@ async function runHost(host, outFile) {
       .map((c) => `/${c.command}`);
     killSession(catalog.session);
   }
-  const skip = new Set(["/quit", "/exit", "/tg-cwd-disconnect", "/tg-unbind-cwd"]);
+  const skip = new Set(["/quit", "/exit"]);
   const order = only.length > 0 ? only : advertised.filter((c) => !skip.has(c));
   console.log(`# ${host}: auditing ${order.length} commands (fresh host per command)`);
   for (const command of order) {
