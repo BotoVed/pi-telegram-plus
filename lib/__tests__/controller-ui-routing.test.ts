@@ -5,6 +5,7 @@ import type { TelegramCommandHandler } from "../controller.ts";
 import { isRoutedUi, setRunnerUiContext } from "../pi-compat.ts";
 import { createTelegramUiRuntime } from "../telegram-ui.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
+import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
 function createTransport(sent: Array<{ chatId: number; text: string; rows?: Array<Array<{ text: string; value: string }>>; messageThreadId?: number; replyToMessageId?: number; message_id?: number }>): TelegramTransport {
   return {
@@ -35,29 +36,53 @@ function defer() {
   return { promise, resolve };
 }
 
+// v6 gates every host command behind the bridge; the routing tests below run
+// with it up (which also selects host-prompt mode, the mode the leak lived in).
+function availableBridge(): TuiBridgeAdapter {
+  return {
+    ready: async () => undefined,
+    isAvailable: () => true,
+    getHost: () => "pi" as const,
+    getCommands: async () => [],
+    submit: () => false,
+    snapshot: () => undefined,
+    key: () => false,
+    write: () => false,
+    isEditorFocused: () => true,
+    isInteractiveFocus: () => false,
+    onLocalSubmit: () => () => undefined,
+  };
+}
+
+// Real hosts hand out a fresh command context per command; the UI swap
+// redefines `ui` on it in place, so a shared double would leak one command's
+// wrapper into another command's handler.
+function makeCommandContext(getUi: () => unknown, getMode: () => string): Record<string, unknown> {
+  const ctx: Record<string, unknown> = {
+    isIdle: () => false,
+    waitForIdle: async () => undefined,
+  };
+  Object.defineProperty(ctx, "ui", { get: getUi, configurable: true });
+  Object.defineProperty(ctx, "mode", { get: getMode, configurable: true });
+  return ctx;
+}
+
 describe("Telegram controller UI routing", () => {
-  // Known issue (plan 3A-1): in host mode a notify from chat B reaches chat A when two chats run host commands at once. Fixed by the follow-up task; un-skip then.
-  it.skip("keeps overlapping Telegram command UIs isolated by chat", async () => {
+  it("keeps overlapping Telegram command UIs isolated by chat", async () => {
     const sent: Array<{ chatId: number; text: string }> = [];
     const transport = createTransport(sent);
     const tuiNotifications: string[] = [];
     const tuiUi = { notify: async (message: string) => { tuiNotifications.push(message); } };
-    let currentUi: any = tuiUi;
+    let currentUi: unknown = tuiUi;
     let activeMode = "tui";
-    const commandCtx: any = {
-      isIdle: () => false,
-      waitForIdle: async () => undefined,
-    };
-    Object.defineProperty(commandCtx, "ui", { get: () => currentUi });
-    Object.defineProperty(commandCtx, "mode", { get: () => activeMode });
     const session = {
       extensionRunner: {
         getUIContext: () => currentUi,
         setUIContext: (ui: unknown, mode?: string) => { currentUi = ui; if (mode) activeMode = mode; },
         getCommand: () => undefined,
-        createCommandContext: () => commandCtx,
+        createCommandContext: () => makeCommandContext(() => currentUi, () => activeMode),
       },
-    } as any;
+    } as unknown as CapturedAgentSession;
     const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
     const a = defer();
     const b = defer();
@@ -84,6 +109,7 @@ describe("Telegram controller UI routing", () => {
       getActiveTurn: () => undefined,
       beginTelegramTurn: (chatId: number, replaceMessageId?: number) => ({ chatId, queuedAttachments: [], replaceMessageId }),
       endTelegramTurn: () => undefined,
+      tuiBridge: availableBridge(),
     });
 
     await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/a" });
@@ -102,7 +128,121 @@ describe("Telegram controller UI routing", () => {
     ]));
     expect(sent.find((item) => item.chatId === 111 && item.text.includes("B "))).toBeUndefined();
     expect(sent.find((item) => item.chatId === 222 && item.text.includes("A "))).toBeUndefined();
-    expect(tuiNotifications).toEqual([]);
+    // Host mode prints notifications on the terminal as well as in the chat by
+    // design (see createHostPromptUi); the isolation point is that each copy
+    // reaches its OWN chat and never the other one.
+    expect(tuiNotifications).toEqual(["A start", "B start", "A end", "B end"]);
+    expect(currentUi).toBe(tuiUi);
+    expect(activeMode).toBe("tui");
+  });
+
+  it("routes a runner notify outside any Telegram turn to the host UI, not a chat", async () => {
+    const sent: Array<{ chatId: number; text: string }> = [];
+    const transport = createTransport(sent);
+    const tuiNotifications: string[] = [];
+    const tuiUi = { notify: async (message: string) => { tuiNotifications.push(message); } };
+    let currentUi: unknown = tuiUi;
+    let activeMode = "tui";
+    const runner = {
+      getUIContext: () => currentUi,
+      setUIContext: (ui: unknown, mode?: string) => { currentUi = ui; if (mode) activeMode = mode; },
+      getCommand: () => undefined,
+      createCommandContext: () => makeCommandContext(() => currentUi, () => activeMode),
+    };
+    const session = { extensionRunner: runner } as unknown as CapturedAgentSession;
+    const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
+    const hold = defer();
+    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
+      ["a", async (_args, ctx) => {
+        await ctx.ui.notify("A running");
+        await hold.promise;
+      }],
+    ]);
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport,
+      ui: uiRuntime,
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test-bot",
+      telegramCommands: commands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: (chatId: number, replaceMessageId?: number) => ({ chatId, queuedAttachments: [], replaceMessageId }),
+      endTelegramTurn: () => undefined,
+      tuiBridge: availableBridge(),
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/a" });
+    await vi.waitFor(() => expect(currentUi).not.toBe(tuiUi));
+
+    // A local terminal call while the command holds the UI: no Telegram turn is
+    // active, so it must land on the host UI and never on the waiting chat.
+    const hostUi = runner.getUIContext() as { notify(message: string): Promise<unknown> };
+    await hostUi.notify("local terminal notify");
+    expect(tuiNotifications).toContain("local terminal notify");
+    expect(sent.find((item) => item.text.includes("local terminal notify"))).toBeUndefined();
+
+    hold.resolve();
+    await vi.waitFor(() => expect(currentUi).toBe(tuiUi));
+    expect(activeMode).toBe("tui");
+  });
+
+  it("keeps nested same-chat command notifications on that chat and restores the host UI", async () => {
+    const sent: Array<{ chatId: number; text: string }> = [];
+    const transport = createTransport(sent);
+    const tuiUi = { notify: async () => undefined };
+    let currentUi: unknown = tuiUi;
+    let activeMode = "tui";
+    const session = {
+      extensionRunner: {
+        getUIContext: () => currentUi,
+        setUIContext: (ui: unknown, mode?: string) => { currentUi = ui; if (mode) activeMode = mode; },
+        getCommand: () => undefined,
+        createCommandContext: () => makeCommandContext(() => currentUi, () => activeMode),
+      },
+    } as unknown as CapturedAgentSession;
+    const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
+    const a = defer();
+    const b = defer();
+    const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
+      ["n1", async (_args, ctx) => {
+        await ctx.ui.notify("n1 start");
+        await a.promise;
+        await ctx.ui.notify("n1 end");
+      }],
+      ["n2", async (_args, ctx) => {
+        await ctx.ui.notify("n2 start");
+        await b.promise;
+        await ctx.ui.notify("n2 end");
+      }],
+    ]);
+    const controller = createTelegramController({
+      getSession: () => session,
+      transport,
+      ui: uiRuntime,
+      authorizeUser: async () => true,
+      setActiveChatId: async () => undefined,
+      getBotUsername: () => "test-bot",
+      telegramCommands: commands,
+      getActiveTurn: () => undefined,
+      beginTelegramTurn: (chatId: number, replaceMessageId?: number, messageThreadId?: number, sourceMessageId?: number) => ({ chatId, messageThreadId, sourceMessageId, queuedAttachments: [], replaceMessageId }),
+      endTelegramTurn: () => undefined,
+      tuiBridge: availableBridge(),
+    });
+
+    await controller.handleMessage({ message_id: 1, chat: { id: 555 }, from: { id: 1 }, text: "/n1" });
+    await controller.handleMessage({ message_id: 2, chat: { id: 555 }, from: { id: 1 }, text: "/n2" });
+    await new Promise((r) => setTimeout(r, 0));
+    a.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    b.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+
+    for (const text of ["n1 start", "n1 end", "n2 start", "n2 end"]) {
+      const hits = sent.filter((item) => item.text.includes(text));
+      expect(hits.length).toBe(1);
+      expect(hits[0]!.chatId).toBe(555);
+    }
     expect(currentUi).toBe(tuiUi);
     expect(activeMode).toBe("tui");
   });

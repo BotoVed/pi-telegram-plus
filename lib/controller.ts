@@ -223,6 +223,8 @@ type TelegramUiStackState = {
   baseUi: unknown;
   baseMode: string;
   entries: TelegramUiStackEntry[];
+  /** Single installed UI that dispatches per Telegram turn (see createDispatchTelegramUi). */
+  dispatchUi?: ExtensionUIContext;
 };
 
 const telegramUiStacks = new WeakMap<object, TelegramUiStackState>();
@@ -274,6 +276,44 @@ function createRoutedTelegramUi(baseUi: unknown, telegramUi: ExtensionUIContext,
 }
 
 /**
+ * The single UI installed on the runner while any Telegram command is live.
+ * Every member access resolves the caller's Telegram turn from AsyncLocalStorage
+ * and forwards to that turn's routed UI; calls with no Telegram turn (a local
+ * terminal turn, a timer outside any command) go to the host's original UI.
+ * The routed-UI unwrap contract is kept so the focus tracker still reaches the
+ * real host context underneath.
+ */
+function createDispatchTelegramUi(state: TelegramUiStackState): ExtensionUIContext {
+  const getTarget = (): object => {
+    const turn = getCurrentTelegramTurn();
+    return ((turn && routedUiByTurn.get(turn)) ?? state.baseUi) as object;
+  };
+  return new Proxy({}, {
+    get(_target, prop, receiver) {
+      if (prop === "__piTelegramPlusRoutedUi") return true;
+      if (prop === "__piTelegramPlusRoutedBaseUi") return state.baseUi;
+      const target = getTarget();
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    set(_target, prop, value, receiver) {
+      return Reflect.set(getTarget(), prop, value, receiver);
+    },
+    has(_target, prop) {
+      return prop in getTarget();
+    },
+    ownKeys() {
+      return Reflect.ownKeys(getTarget());
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const desc = Reflect.getOwnPropertyDescriptor(getTarget(), prop);
+      if (!desc) return undefined;
+      return { ...desc, configurable: true };
+    },
+  }) as ExtensionUIContext;
+}
+
+/**
  * Replace `ui` on an already-created context object. Interactive modals must
  * not mutate stateful getters, so the property is redefined in place instead of
  * spreading the context (some hosts expose `model` and friends as getters).
@@ -298,9 +338,9 @@ function withUiContext<T extends object>(ctx: T, ui: ExtensionUIContext): T {
   }
 }
 
-// Runners whose getUIContext()/createContext() consult the Telegram UI stack.
-// The patch is permanent per runner and falls back to the host UI when the
-// stack is empty, so it needs no uninstall.
+// Runners whose getUIContext()/createContext() consult the per-turn routed UIs.
+// The patch is permanent per runner and falls back to the host UI when no
+// Telegram turn is active, so it needs no uninstall.
 const routedRunnerUiPatched = new WeakSet<object>();
 
 /**
@@ -308,21 +348,26 @@ const routedRunnerUiPatched = new WeakSet<object>();
  * setter (OMP). `getUIContext()` backs tool approvals and session-level
  * selects; `createContext()` backs extension hooks and extension tools.
  * Both read the private UI context directly, so overriding the instance
- * methods is the only public seam. The returned routed proxy falls back to
- * the host UI whenever no Telegram turn is active, keeping local TUI turns
- * untouched.
+ * methods is the only public seam. Each call resolves the routed UI of the
+ * CURRENT Telegram turn (AsyncLocalStorage), never the newest stack entry, so
+ * a command that is still running keeps its own chat while another one is on
+ * top; calls outside any Telegram turn fall through to the host UI, keeping
+ * local TUI turns untouched.
  */
 function installRoutedRunnerUi(runner: CapturedAgentSession["extensionRunner"]): void {
   if (routedRunnerUiPatched.has(runner)) return;
   routedRunnerUiPatched.add(runner);
   const originalGetUIContext = runner.getUIContext.bind(runner);
   const originalCreateContext = runner.createContext.bind(runner);
+  const routedUiForCurrentTurn = (): ExtensionUIContext | undefined => {
+    const turn = getCurrentTelegramTurn();
+    return turn ? routedUiByTurn.get(turn) : undefined;
+  };
 
-  runner.getUIContext = () =>
-    telegramUiStacks.get(runner)?.entries.at(-1)?.routedUi ?? originalGetUIContext();
+  runner.getUIContext = () => routedUiForCurrentTurn() ?? originalGetUIContext();
   runner.createContext = (...args: Parameters<typeof originalCreateContext>) => {
     const ctx = originalCreateContext(...args);
-    const routed = telegramUiStacks.get(runner)?.entries.at(-1)?.routedUi;
+    const routed = routedUiForCurrentTurn();
     return routed ? withUiContext(ctx, routed) : ctx;
   };
 }
@@ -495,34 +540,40 @@ function pushTelegramUiContext(
     state = { baseUi: runner.getUIContext(), baseMode: getRunnerMode(runner as any), entries: [] };
     telegramUiStacks.set(runner as object, state);
   }
-  const previousUi = state.entries.at(-1)?.routedUi ?? state.baseUi;
+  // Every command's routed UI sits directly on the host UI. Chaining it onto
+  // the previous entry's routed UI let a host-prompt UI fall through to ANOTHER
+  // chat's routed UI (its notify reached chat A while B's command ran).
   const entry: TelegramUiStackEntry = {
     turn,
     ui,
-    routedUi: makeRouted(previousUi, ui, turn),
+    routedUi: makeRouted(state.baseUi, ui, turn),
   };
   state.entries.push(entry);
   routedUiByTurn.set(turn, entry.routedUi);
-  setRunnerUiContext(runner as any, entry.routedUi, TELEGRAM_EXTENSION_MODE);
+  // Install the dispatching UI once per stack, not once per command: it reads
+  // the current Telegram turn on every property access and forwards to that
+  // turn's routed UI (or the host UI when no turn is active). Re-setting the
+  // runner UI on every push/pop is what sent A's still-running calls to B's UI.
+  if (state.entries.length === 1) {
+    state.dispatchUi = createDispatchTelegramUi(state);
+    setRunnerUiContext(runner as any, state.dispatchUi, TELEGRAM_EXTENSION_MODE);
+  }
 
   return () => {
     const current = telegramUiStacks.get(runner as object);
     if (!current) return;
     const idx = current.entries.indexOf(entry);
     if (idx === -1) return;
-    const wasTop = idx === current.entries.length - 1;
     current.entries.splice(idx, 1);
     if (routedUiByTurn.get(turn) === entry.routedUi) {
       const remaining = current.entries.findLast((candidate) => candidate.turn === turn);
       if (remaining) routedUiByTurn.set(turn, remaining.routedUi);
       else routedUiByTurn.delete(turn);
     }
-    if (wasTop) {
-      const next = current.entries.at(-1);
-      if (next) setRunnerUiContext(runner as any, next.routedUi, TELEGRAM_EXTENSION_MODE);
-      else restoreRunnerUiContext(runner as any, current.baseUi, current.baseMode);
+    if (current.entries.length === 0) {
+      restoreRunnerUiContext(runner as any, current.baseUi, current.baseMode);
+      telegramUiStacks.delete(runner as object);
     }
-    if (current.entries.length === 0) telegramUiStacks.delete(runner as object);
   };
 }
 
