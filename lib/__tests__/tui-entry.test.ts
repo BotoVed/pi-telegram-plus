@@ -146,15 +146,8 @@ describe("OMP read-only panels are recorded as panel entries (§4.6.5 #12)", () 
     return entryFromCall(spec!, args, "omp");
   };
 
-  it("keeps the title showCommandReport carries", () => {
-    const info = panelEntry("showCommandReport", [{ title: "MCP Server Management", body: {} }]);
-    expect(info).toMatchObject({ kind: "panel", title: "MCP Server Management", method: "showCommandReport" });
-  });
-
-  it("still records the panel when showCommandReport sends no title", () => {
-    const info = panelEntry("showCommandReport", [{ body: {} }]);
-    expect(info?.kind).toBe("panel");
-    expect(info?.title).toBeUndefined();
+  it("no longer records showCommandReport as a panel entry (S19)", () => {
+    expect(OMP_ENTRY_SPECS.some((spec) => spec.method === "showCommandReport")).toBe(false);
   });
 
   it("names the panels that take no title argument", () => {
@@ -241,5 +234,26 @@ describe("a dashboard that takes focus after its entry returns inherits the pane
 
     expect(kinds.at(-1)).toBe("progress");
     expect(tracker.entryFor(widget)).toBeUndefined();
+  });
+});
+
+describe("a report focused inside showCommandReport is never bound as a panel (S19)", () => {
+  it("leaves the report unbound so only OutputCapture sends it", () => {
+    const editor = { render: () => "", handleInput: () => undefined };
+    const ui: { focused: unknown; setFocus: (component: unknown) => void } = {
+      focused: undefined,
+      setFocus(component) { ui.focused = component; },
+    };
+    const report = { render: () => "", handleInput: () => undefined };
+    // OMP's showCommandReport focuses the report inside its own call.
+    const mode = { showCommandReport() { ui.setFocus(report); } };
+    const tracker = new FocusTracker();
+    // `attach` is private; drive it directly like the gateway tests do.
+    const attached = tracker as unknown as { attach(state: unknown): void };
+    attached.attach({ host: "omp", ui, editor, mode });
+
+    mode.showCommandReport();
+
+    expect(tracker.entryFor(report)).toBeUndefined();
   });
 });

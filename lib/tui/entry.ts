@@ -159,14 +159,12 @@ const OMP_PANEL_TITLES: Record<string, string> = {
   showAgentsDashboard: "Agents",
 };
 
-/** `showCommandReport({ title, body })` carries its own title; the others use a fixed one. */
-const panelFrom = (method: string): Extract => (args) => {
-  if (method === "showCommandReport") {
-    const first = args[0] as { title?: unknown } | undefined;
-    return { kind: "panel", title: typeof first?.title === "string" ? first.title : undefined, source: "omp" };
-  }
-  return { kind: "panel", title: OMP_PANEL_TITLES[method], source: "omp" };
-};
+/** OMP's full-screen dashboards take no title argument; each gets a fixed one. Reports (`showCommandReport`) are command output, handled by OutputCapture (T3.1). */
+const panelFrom = (method: string): Extract => () => ({
+  kind: "panel",
+  title: OMP_PANEL_TITLES[method],
+  source: "omp",
+});
 
 /** OMP 18.12.5 mode-level delegates that the tool context forwards to. */
 export const OMP_ENTRY_SPECS: EntrySpec[] = [
@@ -177,7 +175,6 @@ export const OMP_ENTRY_SPECS: EntrySpec[] = [
   { method: "showHookCustom", kind: "custom", factory: true, extract: customFrom },
   { method: "showAskDialog", kind: "ask", extract: askFrom },
   { method: "showCollabAwareApproval", kind: "approval", extract: approvalFrom },
-  { method: "showCommandReport", kind: "panel", extract: panelFrom("showCommandReport") },
   { method: "showDebugSelector", kind: "panel", extract: panelFrom("showDebugSelector") },
   { method: "showUsageDashboard", kind: "panel", extract: panelFrom("showUsageDashboard") },
   { method: "showExtensionsDashboard", kind: "panel", extract: panelFrom("showExtensionsDashboard") },
