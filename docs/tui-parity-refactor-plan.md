@@ -705,7 +705,7 @@ ctx.requestRender();
 - 版本不在 `0.6.x`、渲染里找不到预期标题/选项、或重渲染结果与模型不一致 → 退回 `SnapshotAdapter`。
 - 契约测试固定使用 pi-goal 0.6.0 的真实组件；升级导致文本变化时测试先失败。
 
-**例外二：OMP 入口对话框的当前行定位（2026-10-24 启用）**
+**例外二：OMP 入口对话框的当前行定位（2026-10-24 启用；已被 §4.11 取代，过渡期保留，T3.2g 删除）**
 
 背景：OMP 18.12.5 的扩展 `select`/`input`/`editor` 与 `askDialog` 组件把行和光标放在私有字段里，类名被压缩，无法按字段读取（§9 决定 28、35、36）。
 
@@ -844,6 +844,47 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 **本次重构不清理 `off` 模式**，只做取值迁移和菜单更新；`off` 下的行为不变，现有测试必须继续通过。后续清理见 §10。
 
 ---
+
+### 4.11 OMP 结构化通道（v5，2026-10-24）
+
+依据：OMP 18.12.5 源码（MIT，本机只读副本 `/Users/jaly/Documents/project/research/oh-my-pi-18.12.5`）和 2026-10-24 的三次可行性验证（S20 读结构、S21c 结构化操作、S22 collab 请求）。OMP 自带两套结构化接口：**collab**（远程访客回答对话框）和 **TSP**（组件把自己描述成语义树，并接收结构化事件）。OMP 上的对话框一律走这两条通道或输出截获，**不再读画面、不再模拟按键**。pi 一侧不受影响。
+
+#### 4.11.1 通道分配
+
+| OMP 对话框 | 通道 | 读取 | 操作 |
+|---|---|---|---|
+| 扩展 `select`、`editor`、`askDialog`、`approve` | collab | `requestGuestUi(request, signal)` 收到的请求（select：`title`、`options`、`initialIndex`、`selectionMarker`、`checkedIndices`、`markableCount`、`helpText`；editor：`title`、`prefill`） | 返回 `{ kind: "answered", value }`：select 为选项文字，editor 为文本，`undefined` 为取消 |
+| 扩展 `confirm`（OMP 内部是 Yes/No 选择器）、`input`、`custom`；内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents` 等） | TSP | 焦点组件或其子组件的 `describe(cx)` 语义树 | `handleNativeEvent(event)`：`select`、`activate`、`action`（`confirm`、`close`、`submit`、`cancel` 等）、`change`、`edit` |
+| 报告（`showCommandReport`） | 输出截获（§4.4，S17/S19） | 入口参数 `title` + `body` 渲染 | — |
+| 没有 `describe()` 的组件 | 屏幕镜像（决定 34），broker 不建会话 | — | — |
+
+#### 4.11.2 collab 桥接
+
+- **安装**：宿主为 OMP 且 `mode.collabHost` 为空时，插件把桥接对象挂到 `mode.collabHost`。FocusTracker 的每秒 tick 检查：被真实 collab 宿主替换（用户执行了 `/collab`）时停止接管；这期间 Telegram 发起的 select/editor/ask/approve 不另找路径，直接在 Telegram 回复"终端正在 /collab 协作，请在终端或协作端处理"。collab 结束、属性变回空后重新挂上。
+- **归属**：`requestGuestUi` 被调用时，只有存在 Telegram 发起的命令作用域或 Telegram turn（§4.3）才接管并返回 Promise；否则返回 `null`，OMP 只在终端显示（谁发起谁显示）。
+- **渲染**：请求交给 broker 建会话。select 渲染为按钮（多选按 `selectionMarker`/`checkedIndices`）；editor 渲染为文本输入（§4.5.1）；approve 在 OMP 内部就是一次 select（审批选项文字）。`ask` 由 OMP 逐题发 select；伪选项 "Other (type your own)" 被选中后 OMP 会再发一个 editor 请求（标题 "Custom answer: …"），"Chat about this" 作为普通选项原样显示。
+- **结束**：Telegram 先回答 → resolve `answered`，OMP 自动取消终端对话框；终端先回答 → OMP 中止 `signal`，桥接撤掉 Telegram 键盘并写摘要；桥接回答后 OMP 不会中止 `signal`，由桥接自己收尾；插件停用时对未决请求返回 `{ kind: "unavailable" }`。
+
+#### 4.11.3 TSP 适配器（`TspAdapter`）
+
+- **识别**：焦点组件或其子组件（`children`，深度 ≤ 4）同时有 `describe` 和 `handleNativeEvent` 方法 → `TspAdapter`，在 OMP 上优先于其他适配器。
+- **上下文**：`cx = { cols: 80, reduceMotion: true, dark: true, hour12: false, supports: () => true, feature: () => false }`（启用 picker 形式）。
+- **读取**：语义树转换为 `DialogModel`：`picker` → select（项、选中项、可用动作）；`prefs` → settings；卡片 + 列表 → select；表单/输入框 → input；其余 → info（只读文本 + 关闭）。遍历要防循环引用；子节点里不是 `NativeNode` 的对象忽略。
+- **操作**：按钮动作转换为 `NativeUiEvent`（例：选项 → `{ type: "select", key: "picker", item }`，确认 → `{ type: "action", key: "picker", act: "confirm", mods: [] }`，关闭 → `act: "close"`）。文本输入在 T3.2f 验证 `edit` 事件之前，沿用现有输入路径（写入值后提交）。
+- **刷新**：每次操作后重新 `describe()`；终端侧的变化由焦点事件和重绘触发重读。
+- **版本**：见 §4.11.4。
+
+#### 4.11.4 版本约束：不符即失败，不做降级
+
+- collab 与 TSP 都是 OMP 内部接口，结构化通道只支持 OMP `18.12.x`（版本取自 `@oh-my-pi/pi-utils` 的 `VERSION`）。
+- **版本不符或读不到版本：直接失败，不退回任何其他做法**（不读画面、不走镜像、不模拟按键）。插件启动时在状态栏和 Telegram 明确提示"不支持的 OMP 版本 <x>，需要 18.12.x"，OMP 的对话框不桥接到 Telegram（用户 2026-10-24 确定："版本不对直接失败，不要搞多套"）。
+- 支持新版本的方式：拉取对应 tag 的 OMP 源码核对接口，跑通 dialogs 与 commands 套件后再放宽版本范围。
+
+#### 4.11.5 被取代的内容
+
+- §4.6.6 例外二：OMP 的 select、confirm、approve 改走 collab/TSP 之后删除相应代码（`OMP_FRAME_VERSIONS`、OMP 路径上的 `frameRows`/`frameCursor`、approve 读按键说明）。过渡期保留，T3.2g 删除。
+- 决定 18 作废；决定 25、28、35、36 中关于 OMP 按焦点/按画面识别与操作的部分被取代。决定 30、40（progress 与 loader 的区分）不受影响。
+- broker 保留为会话和 Telegram 渲染的唯一中枢；会话来源从"焦点变化"扩展为"焦点变化 + collab 请求"。OMP 上的适配器只剩：collab 模型、`TspAdapter`、`infoPanelAdapter`（无 `describe()` 的仪表盘）和屏幕镜像。
 
 ## 5. 文件改动清单
 
@@ -1061,6 +1102,11 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 38 | 宿主接管提示后,只发通知的命令怎么回到聊天 | **命令上下文的 `ui` 换成路由代理,但只在宿主自己不投聊天时。** `hostOwnsPrompts` 对 OMP 放开后,`runCommandHandler` 把命令上下文原样交给宿主,`ctx.ui` 成了宿主的原始 UI:`notify` 只打在终端,`/changelog`、`/copy`、`/debug` 这类只回一句通知的命令在 Telegram 端变成 30 秒超时。现在 host 模式下也用 `createHostPromptUi(hostUi, telegramUi)` 包住命令上下文:提示仍归宿主(终端能答)。但 pi 交给命令上下文的 `ui` 本来就是插件的路由上下文(带 `__piTelegramPlusRoutedUi` 标记),它的 notify 已经会投给聊天,再复制一份就变成同一条消息发两三遍;`createHostPromptUi` 因此先看这个标记,已投聊天的直接透传,通知每条只发一次。 |
 | 39 | 编辑消息失败要不要顺手摘掉键盘 | **不摘。** `show()` 重绘失败时原先会补一次 `removeInlineKeyboard`,理由是"内容没变或被限流"——可这两种失败都说明不了对话框的死活,问题还开着,却把唯一能作答的按钮撤了,聊天里从此只能干等。现在失败只记日志,下一次重绘自然补上;真正该摘键盘的只有 `publish()`(对话框确实结束)和 `abandonFor`(替用户按了 Esc)。 |
 | 40 | "有 entry 就算对话框"和"是 loader 就算进度"谁先 | **loader 先。** 认出一个没有可读行的对话框,靠的是去认领宿主记下的 entry(`entryFor` 会把它绑到当前组件上),这个动作是有代价的:转圈面板先拿到焦点时,它会带着问题的身份被判成 dialog,还顺手把 entry 用掉,真正的对话框随后到达就变成无名快照(决定 28/30 想防的正是这个)。所以 `classify` 的顺序改成:形状判定 → loader/signal 判定 → 才允许 entry 认领。 |
+| 41 | OMP 对话框通过什么读取和操作 | **collab + TSP，不读画面、不模拟按键**（§4.11，用户 2026-10-24 确定）。依据 OMP 源码与 S20/S21c/S22 实测：扩展 select/editor/ask/approve 走 `mode.collabHost.requestGuestUi`；其余对话框与内置选择器走组件的 `describe()`/`handleNativeEvent()`。取代决定 18，以及决定 25、28、35、36 中关于 OMP 画面读取的部分。 |
+| 42 | 本地发起的对话框会不会经 collab 推到 Telegram | **不会。** 只有存在 Telegram 发起的命令作用域或 Telegram turn 时，桥接才接管；否则返回 `null`，只在终端显示（决定 1）。 |
+| 43 | 用户自己开 `/collab` 时怎么办 | **让位给真实 collab 宿主，不另找路径。** 桥接发现 `mode.collabHost` 被替换就停止接管；期间 Telegram 发起的 select/editor/ask/approve 直接回复"终端正在 /collab 协作，请在终端或协作端处理"；collab 结束后重新挂上。 |
+| 44 | OMP 结构化通道的版本约束 | **绑定 `18.12.x`，不符即失败，不做降级**（用户 2026-10-24 确定："版本不对直接失败，不要搞多套"）。版本不符或读不到版本时插件明确报错，OMP 对话框不桥接；支持新版本须先核对源码并跑通 E2E（§4.11.4）。同理废弃 S8（`558d574`）"版本不符退回快照"的做法，相关代码随 T3.2g 删除。 |
+| 45 | 现有 broker 在 OMP 上怎么调整 | **保留为中枢，适配器换成结构化来源**（用户 2026-10-24 要求现有 broker 也改为新方案）。会话来源增加 collab 请求；OMP 上的焦点 + 画面 + 按键路径在 T3.2g 删除。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 
@@ -1080,6 +1126,10 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 ---
 
 ## 11. 修订说明
+
+### v5（相对 v4，2026-10-24）
+
+依据 OMP 18.12.5 源码（此前误以为 OMP 只有编译后的二进制，未查源码）和三次可行性验证，OMP 一侧改为结构化通道：新增 §4.11 与决定 41–45；§4.6.6 例外二进入过渡期，T3.2g 删除；决定 18 作废。pi 一侧不变。
 
 ### v4（相对 v3）
 
