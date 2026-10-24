@@ -41,7 +41,12 @@ missing or mislabelled cannot be published.
   Affordances the host has no twin for - the nested `menu` keyboard the plugin's management
   screens walk - stay served by the plugin, so `/tg` keeps working while the host owns prompts.
   Hosts whose dialogs the broker cannot read yet — OMP renders its selector, text input and
-  an `ask` dialog into an overlay that never takes focus — keep the plugin's own prompts until those adapters land.
+  an `ask` dialog into an overlay that never takes focus — stay entirely outside the broker:
+  it tracks nothing, posts no dialog message and claims no text there, so the plugin's own
+  prompts answer as before. Handing OMP's prompts back to the plugin was not enough on its
+  own; a broker that watches dialogs it cannot read took answers away from OMP's own menus
+  and lifecycle commands, so the switch that decides who answers a prompt now also gates the
+  broker.
 
 ### Fixed
 

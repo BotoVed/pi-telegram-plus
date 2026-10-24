@@ -1098,9 +1098,11 @@ export function createTelegramController(deps: {
     activeChatId: () => deps.getConfig?.().activeChatId,
     activeTurns: () => deps.getActiveTurns?.() ?? [],
     writeText: (text) => bridge.write(text),
-    // The broker replaces the screen mirror: both only run in `full` mode, and
-    // a host without a usable bridge has no focus to track anyway.
-    enabled: () => getTuiMode() === "full" && bridge.isAvailable(),
+    // One switch for both (§9 决定 27): the broker may only track a host whose
+    // dialogs it can actually read. A host without a usable bridge has no focus to
+    // track anyway, and OMP's components render in an overlay without focus, so
+    // there it must stay completely inert - see hostOwnsPrompts.
+    enabled: () => hostOwnsPrompts(bridge, getTuiMode()),
   });
   dialogBroker.start();
 

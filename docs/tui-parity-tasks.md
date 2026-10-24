@@ -55,9 +55,9 @@
   - 对 OMP，以**入口调用**（UI 上下文的 `select/confirm/input/editor/custom`、工具上下文的 `askDialog/approve`）作为对话框打开的信号，题目和选项取自入口参数（方案 §4.6.5 #1–#4、#10 已经这样设计）；
   - hook `showOverlay`/`hideOverlay`，从 overlay 子树中找到真正接收按键的组件，作为 `act()` 的注入目标；
   - 对话框关闭以入口调用的 Promise 结束为准（不是焦点离开）；
-  - 去掉 `hostOwnsPrompts` 对 OMP 的限制。
+  - 去掉 `hostOwnsPrompts` 对 OMP 的限制——broker 与它是同一个开关（方案 §9 决定 27），去掉后 broker 同时在 OMP 打开。
 - **这是接口变更**（方案 §4.1.3"按焦点识别"的前提不成立），开工前先按规则 5 找架构确认方案，确认后在 §9 记录。
-- **完成标准**：OMP 上扩展 `select/input` 和 `ask` 多问题从 Telegram 作答走 broker 方言（`tgplus:dlg:`），并且终端先作答时 Telegram 键盘被撤销；`npm run test:e2e:dialogs` OMP 部分全绿。
+- **完成标准**：OMP 上扩展 `select/input` 和 `ask` 多问题从 Telegram 作答走 broker 方言（`tgplus:dlg:`），并且终端先作答时 Telegram 键盘被撤销；`npm run test:e2e:dialogs` OMP 部分全绿；打开 OMP 的 broker 后，`run-e2e-commands.mjs --host omp` 不得低于阶段 1 基线 132/132（方案 §9 决定 27）。
 - **不做**：OMP 内置选择器（T3.11）。
 
 ### T3.1 OMP 只读面板截获
@@ -108,9 +108,11 @@
   - 方案 §4.6.5 #7：标签依次取 `label ?? name ?? title ?? id ?? String(x)`；当前值比较组件上的 `current*` 字段；
   - Telegram 翻页：选项超过一屏时分页，翻页按钮的回调数据不超过 64 字节；
   - 搜索：用户发一条文字时，按方案 §4.5.1 的"搜索"类型路由，把文字写入组件的搜索输入，重新读取列表后重绘。
+  - 用 `registerExternalInput` 把"插件原生提示等待文本"与"镜像/broker 对话框等待文本"两张表合成一张（方案 §9 决定 26）：合成后由单表的"最新流优先"给出排序，控制器里 `resolveInput` 先于 broker 的临时排序随之删除。
 - **完成标准**：
   - 单测：翻页回调编码 ≤ 64 字节；搜索后列表变短；选中第 2 页的某一项，`act()` 定位正确；
-  - 契约测试：至少一个真实组件（例如 oauth provider 列表）。
+  - 契约测试：至少一个真实组件（例如 oauth provider 列表）；
+  - 单测：同一个 chat 同时有插件原生提示与镜像对话框在等文本时，答案给最新那条流，且每条流只消费一次（方案 §9 决定 26）。
 - **不做**：模型、会话的专用字段（T3.7、T3.8）。
 
 ### T3.7 pi `/model`、`/scoped-models`
