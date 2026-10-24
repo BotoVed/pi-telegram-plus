@@ -55,6 +55,9 @@ export class OutputCapture {
   private statusDepth = 0;
   private unsubscribe?: () => void;
   private readonly exports = new WeakSet<object>();
+  /** `attached` already holds `mode` from the status-hook loop; report hooks
+   * need their own dedupe set. */
+  private readonly reportHooked = new WeakSet<object>();
 
   constructor(
     private readonly transport: OutputTransport,
@@ -125,6 +128,23 @@ export class OutputCapture {
         });
       }
     }
+    // OMP reports (`/mcp` and friends) draw a titled block on the main screen
+    // instead of opening a dialog: `showCommandReport({ title, body })`. It is
+    // command output (T3.1).
+    const mode = state.mode;
+    if (isHostObject(mode) && !this.reportHooked.has(mode)) {
+      this.reportHooked.add(mode);
+      hookMethod(mode, "showCommandReport", "output-command-report", undefined, (args) => {
+        const report = args[0] as { title?: unknown; body?: unknown } | undefined;
+        const title = typeof report?.title === "string" ? report.title.trim() : "";
+        const body = isHostObject(report?.body)
+          ? renderComponent(report.body, (raw) => this.redact(raw))
+          : undefined;
+        if (!title && !body) return;
+        this.push(title ? `<b>${escapeHtml(this.redact(title))}</b>\n${body ?? ""}` : body!);
+      });
+    }
+
     const chat = state.chat;
     if (isHostObject(chat) && !this.attached.has(chat)) {
       this.attached.add(chat);

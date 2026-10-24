@@ -52,6 +52,7 @@ describe("stage 1 output-only gateway", () => {
     expect(isOutputOnlyCommand("pi", "settings")).toBe(false);
     expect(isOutputOnlyCommand("omp", "status")).toBe(false);
     expect(isOutputOnlyCommand("omp", "settings")).toBe(false);
+    expect(isOutputOnlyCommand("omp", "mcp")).toBe(true);
     expect(isOutputOnlyCommand("unknown", "session")).toBe(false);
   });
 
@@ -182,5 +183,63 @@ describe("stage 1 output-only gateway", () => {
     expect(gateway.handles("settings")).toBe(false);
     expect(await gateway.run({ name: "settings", args: "", origin: { chatId: 1 }, transport })).toBe(false);
     expect(transport.sends).toEqual([]);
+  });
+});
+
+describe("OutputCapture command reports", () => {
+  type ReportMode = { showCommandReport(report: unknown): void };
+  function attached(mode: ReportMode) {
+    const transport = fakeTransport();
+    const origin = new OriginTracker({ isEditorFocused: () => true, readDraft: () => "", writeDraft: () => true });
+    const output = new OutputCapture(transport, origin);
+    // `attach` is private; drive it directly like the `push` cases above.
+    const capture = output as unknown as { attach(state: unknown): void };
+    capture.attach({ host: "omp", mode });
+    return { transport, origin, output };
+  }
+  const report = {
+    title: "MCP Server Management",
+    body: { render: () => ["Commands:", "  /mcp add   Add a new MCP server"] },
+  };
+
+  it("returns a titled report as command output inside the scope", async () => {
+    vi.useFakeTimers();
+    let hostCalls = 0;
+    const mode: ReportMode = { showCommandReport() { hostCalls += 1; } };
+    const { transport, origin, output } = attached(mode);
+    const scope = origin.begin({ chatId: 1 }, "mcp", "/mcp", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ /mcp</b>" });
+    mode.showCommandReport(report);
+    expect(hostCalls).toBe(1);
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    const text = transport.edits.at(-1)?.text ?? "";
+    expect(text).toContain("MCP Server Management");
+    expect(text).toContain("/mcp add");
+    origin.end(scope, "idle");
+  });
+
+  it("drops reports outside a command scope", async () => {
+    vi.useFakeTimers();
+    const mode: ReportMode = { showCommandReport() {} };
+    const { transport, output } = attached(mode);
+    mode.showCommandReport(report);
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits).toEqual([]);
+    expect(transport.sends).toEqual([]);
+  });
+
+  it("drops reports with neither title nor rendered body", async () => {
+    vi.useFakeTimers();
+    const mode: ReportMode = { showCommandReport() {} };
+    const { transport, origin, output } = attached(mode);
+    const scope = origin.begin({ chatId: 1 }, "mcp", "/mcp", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ /mcp</b>" });
+    mode.showCommandReport({ title: "", body: { render: () => [] } });
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.every((edit) => !edit.text.includes("MCP"))).toBe(true);
+    origin.end(scope, "idle");
   });
 });

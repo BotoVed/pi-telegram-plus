@@ -405,6 +405,24 @@ async function runHost(host, label, phase = "main") {
     return { results, ok: results.every((r) => r.ok), session, runDir };
   }
 
+  // ── Stage 3: OMP /mcp report reaches the chat as command output ───────
+  if (host === "omp") {
+    const bodyText = (entry) => String(entry?.body?.text ?? "");
+    const label = "stage3 /mcp report reaches the chat";
+    try {
+      const since = await cursor();
+      await dispatch("/mcp");
+      const body = await waitFor(label, (state) =>
+        state.calls.slice(since).find((entry) =>
+          (entry.method === "sendMessage" || entry.method === "editMessageText")
+          && /MCP Server Management[\s\S]*\/mcp add/.test(bodyText(entry))) ?? false, 15_000).catch(() => undefined);
+      record(label, Boolean(body),
+        bodyText(body).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
+    } catch (error) {
+      record(label, false, String(error.message).slice(0, 200));
+    }
+  }
+
   // ── Scripted `ask` tool round trip ─────────────────────────────────────
   // The mock provider answers the marker message with a real tool_call for the
   // host's `ask` tool, so the model→tool→UI→answer→model loop is exercised.
