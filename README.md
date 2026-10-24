@@ -101,6 +101,17 @@ boots a fresh isolated host for *every* advertised command, records the host scr
 the Telegram surface side by side, and fails when a command opened a host dialog but
 Telegram got neither a mirror nor a native picker. `--host pi|omp|both` and
 `PITG_PARITY_COMMANDS=/model,/settings` narrow the run.
+
+`npm run test:e2e:dialogs` measures dialog ownership rather than response presence: it
+starts each dialog kind (extension `select` / `confirm` / `input` / secret input /
+`custom`, and the agent's `ask` tool, single and multi-question) from a Telegram-issued
+turn, answers it from Telegram, and checks the host really resolved it — plus the race
+where the terminal answers first, a secret that must never be echoed, and a
+multi-question `ask` that only offers Submit once every question is answered. Each step
+prints which surface carried the dialog (`broker`, `mirror`, or the plugin's native
+keyboard), so a silent fallback is visible, and the run reports the effective
+`tuiBridge` mode per host because that mode decides which surface a dialog may use.
+
 E2E and the matrix remain outside the publish gate because each run installs hosts and
 starts isolated `tmux` sessions.
 

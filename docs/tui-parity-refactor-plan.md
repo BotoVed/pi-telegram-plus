@@ -533,6 +533,7 @@ input、editor、搜索、快照"输入文字"都需要接收用户的下一条�
 - 只匹配同一个 thread；其他 thread 的文本不受影响。
 - 插件端不设输入超时；宿主关闭对话框时注销输入。
 - `sensitive` 为真时，消费后立即删除用户的消息（沿用现有 `isSensitiveInput` + `deleteMessage` 的做法）。
+- **实现现状（阶段 2 实测后修正）**：`registerExternalInput` 还没落地，Broker 的等待文本状态与 `waitInput` 仍是两张表。控制器据此排序：先 `deps.ui.resolveInput`（插件在这个 chat 里发起、正等 Telegram 键盘的那条流），再轮到镜像对话框（上表的搜索/输入）。等价于单表模型里"最新流优先"——谁最后问，谁拿答案。不这么排会出实测过的连锁故障：终端里遗留的一个对话框（读不到字段，只有"未适配的对话框"快照镜像）把用户给密钥提示的回答当成搜索词吃掉，那条提示接着把下一条 `/probe-custom` 命令当成自己的回答删掉，两个步骤一起失败。合成一张表（`registerExternalInput`）仍是目标，跟 T3.6 的搜索路由一起做。
 
 ### 4.6 DialogModel 与适配器
 
@@ -917,7 +918,18 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 - **验收**：
   - mock provider 触发 `ask`（现有 E2E 场景）和扩展 `select/confirm/input`：分别从 Telegram 和终端作答，另一端都自动关闭，agent 拿到的答案一致；
   - 从 Telegram 发 `/goals <topic>`，`propose_goal_draft` 的确认出现在 Telegram；
-  - OMP `ask` 多问题从 Telegram 完整作答。
+  - OMP `ask` 多问题从 Telegram 完整作答（走插件原有的 Telegram 作答路径即可，broker 化见 T3.0 与 §9 决定 25）。
+
+
+**实测（2026-10-24，`npm run test:e2e:dialogs`，README 有该套件的说明）**
+
+- pi 全绿：`select`/`confirm`/`input`/secret/`custom` 全部走 broker 方言，Telegram 与终端任一端都能作答，先作答者生效、另一侧键盘被撤销。
+- OMP 此前从来不是 broker 方言，根因与 §4.6 无关：宿主把本包解析成两个模块实例，先打补丁的那份看到 TUI 模式，服务聊天的那份却看到 `host: unknown`，于是 `tuiBridge: full` 对它等于不存在。已修：捕获状态挂到进程级键上共享（`lib/tui-bridge.ts`）。
+- 共享后实测：OMP 的 confirm/custom 变成 broker 方言且"终端先作答"通过；但 select/输入/`ask` 组件渲染进 overlay 且不夺取焦点，FocusTracker 只看到编辑器与 `progress`，适配器读不到条目，Telegram 只剩方向键。因此 `hostOwnsPrompts()` 暂时只对 pi 打开，OMP 的这些对话框继续由插件在 Telegram 作答。
+- 剩余 OMP 缺口 = §4.6 适配器需要认识 OMP 组件：不能只依赖焦点事件，要在 overlay 子树里按 `filtered*`/`askDialog` 一类字段找组件，并补上 OMP 的按键注入路径；完成后删除 `hostOwnsPrompts` 里的主机限制即可切换。
+- 宿主模式下 Telegram 发起的命令拿的是**宿主自己的 context**(`setUIContext` 换的是 runner 的 UI,命令上下文是它的代理)。插件独有的 UI 成员在宿主侧不存在,代理必须回落给插件实现:嵌套 `menu` 键盘(以及它的逆操作 `closeMenu`)是插件控件,`/tg` 的管理界面靠它在宿主模式下逐层展开,否则 `ctx.ui.menu` 是 `undefined`,菜单直接消失。
+- 插件自己的管理命令(`/tg` 系列)背后没有宿主组件,不参与 broker;宿主模式改变的只是宿主组件与扩展对话框由谁作答。
+- 入口 hook 必须打在**宿主的 UI context**上：`attachEntryHooks` 原来只在捕获宿主时跑一次，读的是"当时 runner 里装着的 context"。如果那一刻插件的交换正生效，宿主的真 context 就被跳过了，之后所有对话框都没有 `EntryInfo`，适配器只能给快照（`modelKind:"snapshot"`），输入类对话框变成一堆方向键、按键送不进去。现在代理暴露 `__piTelegramPlusRoutedBaseUi` 供解包，并且 FocusTracker 每秒的 verify tick 重跑一次 hook（`hookEntryMethods` 按对象打标记，重复调用无副作用）。
 
 ### 阶段 3：列表、设置、登录
 
@@ -1019,6 +1031,8 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 22 | `/new` 如何执行 | **调用宿主 `ctx.newSession()`，不提交编辑器。** 编辑器路径走 `handleClearCommand()` → `runtimeHost.newSession()`，同样会绕过 `withSession` 并触发轮询实例交接；命令上下文里的 `ctx.newSession()` 是宿主支持的替换入口。命令 scope 仍需保存/恢复草稿。 |
 | 23 | OMP 何时接入 Gateway | **推迟到阶段 3。** 阶段 0 证明 OMP 的 `/status`、`/usage`、`/stats`、`/context`、`/skills` 等走 `showCommandReport` 全屏面板，面板内容不在 `chatContainer` 的 `addChild` 流里；阶段 1 没有 `InfoPanelAdapter`，接入只会回一条 ack 而没有正文。阶段 3 先做面板截获，再把 OMP 的只有输出命令加入白名单。 |
 | 24 | `session.prompt` 完成信号放在哪一步实现 | 决定 10 和 15 不变，但随 Gateway 接线（§4.2.3、§4.3）一起实现：只对非内置命令登记，内置命令立即置 `promptDone = true`，另有 500ms 安静窗口和 60 秒上限。此前 `origin.ts` 里的半成品对所有命令都等 prompt，而且没有安装 hook，会让每个只输出命令空等到 60 秒上限，因此删除，不留半个机制。 |
+| 25 | OMP 的扩展 `select`/`input`/`ask` 何时走 broker | **移到阶段 3 的 T3.0。** 阶段 2 实测：OMP 把这些组件渲染进 overlay，且不调用 `setFocus`，FocusTracker 只看到编辑器与 `progress`，适配器读不到条目（`lib/tui/focus.ts`）。方案 §4.1.3"按焦点识别对话框"的前提在 OMP 上不成立，修它要改识别接口本身——以入口调用为打开信号、hook `showOverlay`/`hideOverlay` 找真正接收按键的组件、关闭以入口 Promise 结束为准——按任务清单规则 5 属于改接口，需架构先确认再动工。在那之前 `hostOwnsPrompts()` 只对 pi 打开，阶段 2 验收里"OMP `ask` 多问题从 Telegram 完整作答"允许继续由插件在 Telegram 作答；阶段 2 其余验收不变。 |
+| 26 | 插件原生提示和镜像对话框同时在等同一条文本时给谁 | **给插件在这个 chat 里发起的原生提示**：控制器先 `deps.ui.resolveInput`，再问 Broker。与 §4.5.1 单表模型的"最新流优先"一致——谁最后问，谁拿答案。实测故障（合并前）：终端里遗留的快照镜像把密钥提示的回答当搜索词吃掉，那条提示接着把下一条 `/probe-custom` 命令当成自己的回答删掉，两个步骤一起失败。`registerExternalInput` 合并两张表的工作随 T3.6 一起做（§4.5.1 实现现状）。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 

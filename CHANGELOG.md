@@ -31,8 +31,39 @@ missing or mislabelled cannot be published.
   content is saved before submission and restored when the command scope ends;
   text typed while the command runs is never overwritten.
 
+- **Extension dialogs belong to the host, so either end can answer them.** With the
+  TUI bridge in `full` mode, a command started in Telegram no longer answers its own
+  `select` / `confirm` / `input` / `custom` prompts inside the plugin: the host renders
+  the dialog, the DialogBroker shows it in Telegram with real buttons, and the terminal
+  user can answer it too — whoever answers first wins, and the other side's keyboard is
+  withdrawn. The command runs under a scope owned by the issuing chat, so the dialog
+  lands in the chat that asked for it instead of being tracked without a message.
+  Affordances the host has no twin for - the nested `menu` keyboard the plugin's management
+  screens walk - stay served by the plugin, so `/tg` keeps working while the host owns prompts.
+  Hosts whose dialogs the broker cannot read yet — OMP renders its selector, text input and
+  an `ask` dialog into an overlay that never takes focus — keep the plugin's own prompts until those adapters land.
+
 ### Fixed
 
+- **A prompt's answer stays with the prompt.** A dialog still open in the terminal is
+  mirrored into the chat as a screen snapshot, and that mirror claimed every following text
+  message as a search term: the answer typed for a Telegram prompt (a bot token, a secret)
+  disappeared into the snapshot's filter, and the abandoned prompt then consumed the *next*
+  message - even a slash command. A prompt the plugin raised in this chat is answered first;
+  the mirrored dialog only takes text when nothing in the chat is waiting for it.
+- **Host dialogs stay readable while a Telegram command runs.** A command borrows the host's
+  UI context, and the hooks that label a freshly opened dialog (`input`, `select`, `confirm`)
+  were installed once, onto whichever context was installed at that moment. When that happened
+  to be the plugin's own proxy, the host's real context was skipped: every dialog after it read
+  as an unreadable snapshot, so the `/tg` flows that ask for a value (retry count, a bot's name
+  or token) showed a screen of arrow keys and never took the typed answer. The hooks now unwrap
+  the plugin's proxy to the host context underneath and re-check on the focus tracker's tick.
+- **The TUI bridge is visible to every copy of the plugin.** OMP resolves
+  `pi-telegram-plus` under two module paths, so one process holds two copies, and only the
+  copy whose patch landed first was ever told a terminal mode had been captured. The copy
+  serving the chat concluded there was no bridge: it ignored the 88 commands the host
+  advertises and kept dialogs on its own Telegram keyboards, where the terminal user could
+  not answer them. The captured mode is now shared per process.
 - **TUI mirrors keep the dialog header.** Hosts pad a dialog to the terminal
   height with blank rows, and the mirror's byte budget used to be spent on that
   padding: `/setup` lost the OAuth authorization URL, leaving only the local
@@ -59,6 +90,19 @@ missing or mislabelled cannot be published.
   is now committed before any of those host calls, so the replacement runtime
   never re-fetches it.
 
+- **A dialog the terminal owns no longer silences Telegram.** A host dialog that
+  belongs to no chat — opened by typing in the terminal, or by a command whose scope the
+  plugin could not attribute — is tracked without a Telegram message. The screen mirror
+  used to stand down for *any* tracked dialog, so such a dialog swallowed the keyboard and
+  `/settings`, `/login` and `!bash` answered with nothing at all: no message, no buttons.
+  It now stands down only for a dialog that actually drew a message in the chat it serves.
+
+- **A typed Telegram answer reaches the dialog that asked for it.** The answer was
+  written into the terminal's keystroke stream, which the dialog's own input field never
+  received: `ui.input` and `ui.inputSecret` prompts stayed open and the message vanished
+  into them. It is now typed into the component's own field and submitted with Enter, and
+  a secret answer is still deleted from the chat.
+
 ### Testing
 
 - **Per-command parity audit (`npm run test:e2e:parity`).** Boots a fresh isolated host
@@ -74,6 +118,12 @@ missing or mislabelled cannot be published.
   step. `npm run test:e2e:real` additionally round-trips one temporary message through
   api.telegram.org (send → edit → delete) and asserts the real API rejects an unsupported
   tag while the local validator agrees.
+
+- **Dialog round trip (`npm run test:e2e:dialogs`).** Raises `select`, `confirm`, `input`,
+  `inputSecret` and `custom` from an extension, plus the `ask` tool from the mock provider,
+  answers each one from Telegram *and* from the terminal, and asserts the value the
+  extension call actually resolved to (read back from the stage-0 probe document) instead
+  of the shape of the keyboard — including that a secret answer never reaches the Bot API.
 
 ### Added
 
