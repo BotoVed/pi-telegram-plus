@@ -6,20 +6,30 @@
  * prompts through named entry methods, so we wrap those and record an
  * `EntryInfo` before the original runs.
  *
- * Two places get patched, because the same dialog can be opened two ways:
- * the extension/tool UI context (pi's `createExtensionUIContext()` result,
- * OMP's tool UI context) and the host's own `show*` methods that that context
- * delegates to. A nested entry with the same semantic kind merges into the
- * pending one (see `FocusTracker.pushEntry`), so double layers stay one entry.
+ * Two places get patched, because the same dialog can be opened two ways: the
+ * extension/tool UI context (pi's `createExtensionUIContext()` result, OMP's tool
+ * UI context) and the host's own `show*` methods that context delegates to.
+ *
+ * An entry stays recorded for as long as the host's call is pending: the two hosts
+ * differ on whether focus lands inside the call or on a later render tick, and a
+ * dialog whose entry has already been retired reaches the adapters nameless. A
+ * nested call merges into the pending entry, so double layers stay one entry.
  */
 import type { EntryInfo } from "./model.ts";
 
+/** A recorded entry, returned so the hook that pushed it retires its own record. */
+export type EntryToken = object;
+
 /** What the hooks report; implemented by FocusTracker. */
 export type EntrySink = {
-  /** Push before the original runs; returns false when merged into the top. */
-  push(info: EntryInfo): boolean;
-  /** Pop the entry this hook pushed (called even when the host throws). */
-  pop(pushed: boolean): void;
+  /**
+   * Record the entry before the original runs. `nested` is true when this call
+   * happens inside another entry call; a nested entry merges into the pending one
+   * and returns no token.
+   */
+  push(info: EntryInfo, nested: boolean): EntryToken | undefined;
+  /** Retire this hook's entry once the host's dialog has resolved (or thrown). */
+  pop(token: EntryToken | undefined): void;
   /** Bind an entry straight to a component (async `custom` factories). */
   bind(component: object, info: EntryInfo): void;
 };
@@ -160,6 +170,12 @@ export function entryFromCall(spec: EntrySpec, args: unknown[], source: "pi" | "
   return { ...info, source, method: spec.method };
 }
 
+/** How deep inside another entry call the current entry call is running. */
+let entryCallDepth = 0;
+
+const isThenable = (value: unknown): value is PromiseLike<unknown> =>
+  !!value && typeof value === "object" && typeof (value as PromiseLike<unknown>).then === "function";
+
 /**
  * Wrap every listed entry method of one object. `tagged` prevents wrapping the
  * same function twice, which matters because both hosts expose the same dialog
@@ -198,24 +214,30 @@ export function hookEntryMethods(
           return call.apply(this, args);
         }
       : function patchedEntry(this: unknown, ...args: unknown[]): unknown {
-          let pushed = false;
+          let token: EntryToken | undefined;
           let info: EntryInfo | undefined;
           try {
             info = entryFromCall(spec, args, source);
-            if (info) pushed = sink.push(info);
+            if (info) token = sink.push(info, entryCallDepth > 0);
           } catch {
-            pushed = false;
+            token = undefined;
           }
           let result: unknown;
+          entryCallDepth += 1;
           try {
             result = call.apply(this, args);
           } finally {
-            sink.pop(pushed);
+            entryCallDepth -= 1;
           }
+          // The dialog resolves when the user answers, and that is when the entry
+          // stops describing what is on screen. Retiring it at the end of this
+          // call loses every dialog whose focus arrives on a later tick (§4.1.2).
+          const retire = (): void => { sink.pop(token); };
+          if (isThenable(result)) void Promise.resolve(result).then(retire, retire);
+          else retire();
           // The host assigns the component it just built to a field on itself.
           // Binding records the entry on that component, so a dialog keeps its
-          // meaning even when the focus tracker only notices it on a later tick,
-          // after the pending entry has already been popped (§4.1.2).
+          // meaning even when the focus tracker only notices it on a later tick.
           const created = spec.componentField
             ? (this as Record<string, unknown> | undefined)?.[spec.componentField]
             : undefined;

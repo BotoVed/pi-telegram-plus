@@ -13,8 +13,10 @@
 import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
 import { findShape, isEditorShape, isInputShape, isSelectList } from "../find-shape.ts";
 import { setInputValue } from "../keys.ts";
-import { descriptionOf, labelOf, plain, renderText, resolveRowKey, rowKey, selectRow } from "./utils.ts";
+import { log } from "../../logger.ts";
+import { descriptionOf, frameCursor, frameRows, labelOf, plain, renderText, resolveRowKey, rowKey, selectRow } from "./utils.ts";
 
+const adapterLog = log.child("tui-adapter");
 type HostRecord = Record<string, unknown>;
 type Rows = { labels: string[]; descriptions: (string | undefined)[]; cursor: number };
 
@@ -121,9 +123,15 @@ export const extensionSelectAdapter: DialogAdapter = {
       return { kind: "snapshot", title, text: renderText(component) };
     }
 
-    const items = rows
+    const items: DialogItem[] = rows
       ? buildItems(rows)
       : labels.map((label, index) => ({ key: rowKey(index, label), label }));
+    if (!rows) {
+      // The frame is the only place the terminal cursor exists for these dialogs,
+      // and the mirror has to show it (§4.6.4 #2).
+      const cursor = frameCursor(labels, ctx.snapshot?.(80) ?? renderText(component));
+      if (cursor !== undefined) items[cursor] = { ...items[cursor], focused: true };
+    }
     return { kind: "select", title, items, total: labels.length };
   },
 
@@ -131,26 +139,46 @@ export const extensionSelectAdapter: DialogAdapter = {
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "choose" && action.type !== "toggle" && action.type !== "confirm") return false;
 
+    // Labels come from the component when it exposes its rows, and from the entry
+    // call otherwise: OMP keeps them in closures with no readable field.
     const rows = rowsOf(component);
-    if (!rows) return false;
+    const labels = rows?.labels ?? ctx.entry?.options ?? (ctx.entry?.kind === "confirm" ? ["Yes", "No"] : []);
+    if (labels.length === 0) return false;
 
     let target: number | undefined;
     if (action.type === "confirm") {
       // Confirm maps to the Yes/No rows the host actually rendered; a dialog
       // whose labels changed underneath us resolves to nothing.
-      const labels = rows.labels.map((label) => label.toLowerCase());
-      target = labels.includes("yes") || labels.includes("no")
-        ? (action.yes ? labels.indexOf("yes") : labels.indexOf("no"))
+      const lowered = labels.map((label) => label.toLowerCase());
+      target = lowered.includes("yes") || lowered.includes("no")
+        ? (action.yes ? lowered.indexOf("yes") : lowered.indexOf("no"))
         : (action.yes ? 0 : 1);
       if (target !== undefined && target < 0) return false;
     } else {
-      target = resolveRowKey(rows.labels, action.key);
+      target = resolveRowKey(labels, action.key);
     }
     if (target === undefined) return false;
 
-    // Move with arrow keys instead of writing `selectedIndex`: that is the
-    // only path that makes the component redraw its own cursor (§4.1.3).
-    return selectRow(ctx.sendKey, rows.cursor, target);
+    // Move with arrow keys instead of writing `selectedIndex`: that is the only path that
+    // makes the component redraw its own cursor (§4.1.3). With the rows private, the drawn
+    // frame is where the cursor lives: count the steps between the marked row and the target
+    // *within the rows the frame shows*, so a list the terminal has filtered or paged still
+    // lands on the right row - and a target that is not on screen refuses, because guessing
+    // would press Enter on whatever happens to be marked (§4.5 #3).
+    if (rows) return selectRow(ctx.sendKey, rows.cursor, target);
+    const frame = ctx.snapshot?.(80) ?? renderText(component);
+    const seen = frameRows(labels, frame);
+    if (seen.marked === undefined || seen.at === undefined) {
+      adapterLog.debug("frame marks no known row", { labels, visible: seen.visible, frame });
+      return false;
+    }
+    const to = seen.visible.indexOf(target);
+    if (to < 0) {
+      const key = "key" in action ? action.key : undefined;
+      adapterLog.debug("requested row is off screen", { key, onScreen: seen.visible.length, labels: labels.length });
+      return false;
+    }
+    return selectRow(ctx.sendKey, seen.at, to);
   },
 };
 

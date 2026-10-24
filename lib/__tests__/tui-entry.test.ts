@@ -24,8 +24,8 @@ beforeAll(() => {
 /** The sink `FocusTracker.attachEntryHooks` installs, rebuilt to drive one seam. */
 function trackerSink(tracker: FocusTracker) {
   return {
-    push: (info: EntryInfo) => tracker.pushEntry(info),
-    pop: (pushed: boolean) => tracker.popEntry(pushed),
+    push: (info: EntryInfo, nested: boolean) => tracker.pushEntry(info, nested),
+    pop: (token: object | undefined) => tracker.popEntry(token),
     bind: (component: object, info: EntryInfo) => tracker.bindEntry(component, info),
   };
 }
@@ -69,6 +69,58 @@ describe("entry hooks record the dialog on the component (§4.1.2)", () => {
     expect(component).toBeInstanceOf(host.ExtensionInputComponent);
     expect(tracker.entryFor(component)).toMatchObject({ kind: "input", title: "Bot name" });
     expect(pickAdapter(component, context(tracker.entryFor(component)))?.id).toBe("ext-input");
+  });
+});
+
+describe("an entry lives as long as the host's dialog (§4.1.2)", () => {
+  it("stays readable after the call returns and is retired when the dialog resolves", async () => {
+    const tracker = new FocusTracker();
+    let resolve!: (value: string) => void;
+    const mode: Record<string, unknown> = {
+      // OMP's shape: the call returns at once, focus lands on a later tick.
+      showExtensionInput: () => new Promise<string>((done) => { resolve = done; }),
+    };
+    hookEntryMethods(
+      mode,
+      PI_ENTRY_SPECS.filter((spec) => spec.method === "showExtensionInput"),
+      trackerSink(tracker),
+      "pi",
+      new WeakSet<object>(),
+    );
+
+    const dialog = mode.showExtensionInput as () => Promise<string>;
+    const resolving = dialog();
+    const focusedLater = { render: () => "", handleInput: () => {} };
+
+    expect(tracker.entryFor(focusedLater)).toMatchObject({ kind: "input" });
+
+    resolve("done");
+    await resolving;
+
+    expect(tracker.entryFor({ render: () => "", handleInput: () => {} })).toBeUndefined();
+  });
+});
+
+describe("the overlay wrapper holding the dialog answers for it (§4.1.2)", () => {
+  const entry = { kind: "select", title: "Pick env", options: ["dev", "prod"], source: "omp", method: "select" } as EntryInfo;
+
+  it("passes the entry down to a wrapper that takes focus next", () => {
+    const tracker = new FocusTracker();
+    const record = tracker.pushEntry(entry, false);
+    const dialog = { render: () => "", handleInput: () => undefined };
+    expect(tracker.entryFor(dialog)).toMatchObject({ kind: "select" });
+
+    // OMP hands focus to the overlay wrapper a beat after the dialog inside it has
+    // claimed the entry, and the wrapper is what receives the keys from then on.
+    const wrapper = { children: [dialog], render: () => "", handleInput: () => undefined };
+    expect(tracker.entryFor(wrapper)).toMatchObject({ kind: "select" });
+
+    // Something else that takes focus meanwhile - a loader beside the dialog - is not
+    // the thing being asked about, and must not be able to claim it.
+    const loader = { children: [{}, {}], signal: {}, render: () => "", handleInput: () => undefined };
+    expect(tracker.entryFor(loader)).toBeUndefined();
+
+    tracker.popEntry(record);
   });
 });
 

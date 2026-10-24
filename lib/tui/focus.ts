@@ -34,12 +34,16 @@ export type FocusInfo = {
 type FocusListener = (info: FocusInfo) => void;
 type OpenListener = (component: Record<string, unknown>, info: FocusInfo) => void;
 type CloseListener = (component: Record<string, unknown>, info: FocusInfo) => void;
+/** One open dialog's entry, kept until the host's call settles. */
+type PendingEntry = { info: EntryInfo; at: number };
 
 /** How many verification reads must agree before a silent focus change counts. */
 const VERIFY_SAMPLES = 2;
 const VERIFY_MS = 1_000;
 const MAX_PENDING_ENTRIES = 8;
 const ENTRY_TTL_MS = 5_000;
+/** How long focus must stay off a dialog before it counts as closed (§4.1.3). */
+const FOCUS_CLOSE_GRACE_MS = 250;
 
 function ctorName(value: Record<string, unknown>): string {
   try {
@@ -80,7 +84,11 @@ export class FocusTracker {
   private readonly attached = new WeakSet<object>();
   private readonly entryByComponent = new WeakMap<object, EntryInfo>();
   /** Entries recorded by the entry hooks, innermost last (§4.1.2). */
-  private pending: Array<{ info: EntryInfo; at: number }> = [];
+  private pending: PendingEntry[] = [];
+  /** The pending entry a component has already claimed (§4.1.2). */
+  private boundEntry?: PendingEntry;
+  /** A dialog whose close is waiting to be confirmed by the next focus event. */
+  private closeGrace?: { component: Record<string, unknown>; timer: NodeJS.Timeout };
   private readonly localInput = new Map<object, number>();
   private verifyTarget?: Record<string, unknown>;
   private verifyCount = 0;
@@ -100,6 +108,7 @@ export class FocusTracker {
     this.unsubscribe = undefined;
     clearInterval(this.timer);
     this.timer = undefined;
+    this.cancelGrace();
   }
 
   current(): FocusInfo {
@@ -131,39 +140,85 @@ export class FocusTracker {
 
   // --- entry association (§4.1.2) -------------------------------------------
 
-  /** True when the entry was recorded; false when merged into a pending one. */
-  pushEntry(info: EntryInfo): boolean {
+  /**
+   * Record a pending entry. `nested` marks a call running inside another entry
+   * call; a nested entry enriches the top instead of becoming its own record, and
+   * returns nothing so the hook does not retire someone else's entry.
+   */
+  pushEntry(info: EntryInfo, nested = false): PendingEntry | undefined {
     const top = this.pending[this.pending.length - 1];
-    if (top && Date.now() - top.at < ENTRY_TTL_MS) {
-      const nested = info.kind === "select" || info.kind === top.info.kind;
-      if (nested) {
-        // Nested entry (confirm → selector, tool context → mode delegate):
-        // enrich the outer entry, never change its kind.
-        if (info.options && !top.info.options) top.info.options = info.options;
-        if (info.questions && !top.info.questions) top.info.questions = info.questions;
-        if (info.secret) top.info.secret = true;
-        if (info.approval && !top.info.approval) top.info.approval = info.approval;
-        return false;
-      }
+    if (nested && top && Date.now() - top.at < ENTRY_TTL_MS) {
+      // Nested entry (confirm → selector, tool context → mode delegate):
+      // enrich the outer entry, never change its kind.
+      if (info.options && !top.info.options) top.info.options = info.options;
+      if (info.questions && !top.info.questions) top.info.questions = info.questions;
+      if (info.secret) top.info.secret = true;
+      if (info.approval && !top.info.approval) top.info.approval = info.approval;
+      return undefined;
     }
-    this.pending.push({ info, at: Date.now() });
-    while (this.pending.length > MAX_PENDING_ENTRIES) this.pending.shift();
-    return true;
+    const record: PendingEntry = { info, at: Date.now() };
+    this.pending.push(record);
+    // A new question is a new dialog: let its own component claim the entry.
+    this.boundEntry = undefined;
+    while (this.pending.length > MAX_PENDING_ENTRIES) {
+      const dropped = this.pending.shift();
+      if (dropped === this.boundEntry) this.boundEntry = undefined;
+    }
+    return record;
   }
 
-  popEntry(pushed: boolean): void {
-    if (!pushed) return;
-    this.pending.pop();
+  /** Retire one record: the dialog's own promise settles, not the call stack. */
+  popEntry(record: object | undefined): void {
+    if (!record) return;
+    const index = this.pending.indexOf(record as PendingEntry);
+    if (index < 0) return;
+    const [removed] = this.pending.splice(index, 1);
+    if (removed === this.boundEntry) this.boundEntry = undefined;
   }
 
-  /** The semantic entry of a component: recorded first, then stack top. */
+  /**
+   * The semantic entry of a component: recorded first, then the entry whose dialog
+   * is still open. A pending entry lives exactly as long as the host's call, and
+   * only the component that first claimed it - or the wrapper holding that component -
+   * may use it: a loader that takes focus meanwhile is not the thing the user is
+   * being asked about.
+   */
   entryFor(component: Record<string, unknown>): EntryInfo | undefined {
     const recorded = this.entryByComponent.get(component);
     if (recorded) return recorded;
     const top = this.pending[this.pending.length - 1];
-    if (!top || Date.now() - top.at > ENTRY_TTL_MS) return undefined;
+    if (!top) return undefined;
+    if (this.boundEntry === top) {
+      // OMP hands focus to the overlay wrapper a beat after the dialog inside it
+      // claimed the entry, and the wrapper is what receives the keys afterwards: it
+      // answers for the same question, so long as the claimant really sits inside it.
+      return this.holdsClaimant(component, top.info) ? top.info : undefined;
+    }
     this.entryByComponent.set(component, top.info);
+    this.boundEntry = top;
     return top.info;
+  }
+
+  /** True when a component just below `root` already claimed `info`. */
+  private holdsClaimant(root: Record<string, unknown>, info: EntryInfo): boolean {
+    const seen = new Set<unknown>([root]);
+    const stack: { node: Record<string, unknown>; depth: number }[] = [{ node: root, depth: 0 }];
+    while (stack.length > 0) {
+      const { node, depth } = stack.pop() as { node: Record<string, unknown>; depth: number };
+      if (depth > 0 && this.entryByComponent.get(node) === info) return true;
+      // Containers hold their content under one of these; nothing else is walked, so
+      // no host getter runs on the way.
+      if (depth >= 2) continue;
+      for (const key of ["children", "component", "child", "content", "body"]) {
+        const value = node[key];
+        for (const child of Array.isArray(value) ? value : [value]) {
+          if (!isHostObject(child) || seen.has(child)) continue;
+          seen.add(child);
+          stack.push({ node: child, depth: depth + 1 });
+        }
+      }
+    }
+    return false;
   }
 
   /** Records an entry for a component produced outside a focus event. */
@@ -242,8 +297,8 @@ export class FocusTracker {
   /** Install the entry-method hooks for this host (§4.1.2). */
   private attachEntryHooks(state: HostState): void {
     const sink: EntrySink = {
-      push: (info) => { this.pushEntry(info); return true; },
-      pop: (pushed) => this.popEntry(pushed),
+      push: (info, nested) => this.pushEntry(info, nested),
+      pop: (token) => this.popEntry(token),
       bind: (component, info) => this.bindEntry(component, info),
     };
     const ui = state.ui;
@@ -327,6 +382,11 @@ export class FocusTracker {
     const previous = this.info;
     const kind = this.classify(component);
     if (previous.kind === kind && previous.component === component) return;
+    // A host that redraws an open dialog can drop focus to the editor for one
+    // frame and take it back. Retiring on the dip would close the Telegram dialog
+    // and hand its keys to the screen mirror, so a return to the editor is
+    // confirmed over a short window instead (§4.1.3).
+    if (this.closeGrace?.component === component) this.cancelGrace();
     const root = this.findRoot(component);
     this.info = { kind, component, root, source };
     focusLog.debug("focus changed", { kind, source, ctor: ctorName(component) });
@@ -337,8 +397,21 @@ export class FocusTracker {
     // Broker can retire a session even when focus jumps straight to a dialog.
     const previousDialog = previous.component && (previous.kind === "dialog" || previous.kind === "progress") ? previous.component : undefined;
     if (previousDialog && previousDialog !== component) {
-      for (const listener of this.closedListeners) {
-        try { listener(previousDialog, previous); } catch (err) { focusLog.debug("closed listener failed", { err }); }
+      if (kind === "editor") {
+        if (this.closeGrace?.component !== previousDialog) {
+          this.cancelGrace();
+          const closing = previousDialog;
+          const timer = setTimeout(() => {
+            this.closeGrace = undefined;
+            this.reportClosed(closing, previous);
+          }, FOCUS_CLOSE_GRACE_MS);
+          timer.unref?.();
+          this.closeGrace = { component: closing, timer };
+        }
+      } else {
+        // Straight into another dialog: the old one is gone, whatever the frame said.
+        this.cancelGrace();
+        this.reportClosed(previousDialog, previous);
       }
     }
     if (kind === "dialog" || kind === "progress") {
@@ -346,6 +419,18 @@ export class FocusTracker {
         try { listener(component, this.info); } catch (err) { focusLog.debug("opened listener failed", { err }); }
       }
     }
+  }
+
+  private reportClosed(component: Record<string, unknown>, info: FocusInfo): void {
+    for (const listener of this.closedListeners) {
+      try { listener(component, info); } catch (err) { focusLog.debug("closed listener failed", { err }); }
+    }
+  }
+
+  private cancelGrace(): void {
+    if (!this.closeGrace) return;
+    clearTimeout(this.closeGrace.timer);
+    this.closeGrace = undefined;
   }
 
   /** Where the dialog was mounted: editor container, overlay, or chat feed. */
@@ -381,8 +466,16 @@ export class FocusTracker {
       return "dialog";
     }
     const name = ctorName(component);
-    if (name.endsWith("Loader")) return "progress";
-    if (component.signal !== undefined || component.abortController !== undefined) return "progress";
+    if (name.endsWith("Loader") || component.signal !== undefined || component.abortController !== undefined) {
+      return "progress";
+    }
+    // The host asked the user something and this component receives the keys, so it is a
+    // dialog whatever it is shaped like. Hosts that keep a dialog's rows in private fields
+    // match none of the shape checks above and their class names are minified, which used to
+    // land a real dialog on "progress" (§4.6.5). This runs after the loader checks on
+    // purpose: asking costs a claim on the pending entry, and the spinner that merely holds
+    // the keyboard so Esc can interrupt must never take it.
+    if (this.entryFor(component)) return "dialog";
     if (DIALOG_NAME.test(name)) return "dialog";
     if (typeof component.options === "string" || Array.isArray(component.options)) return "dialog";
     if (typeof component.selectedIndex === "number") return "dialog";

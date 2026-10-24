@@ -145,8 +145,20 @@ export type DialogSession = {
   id: string;
   /** +1 on every Telegram-side redraw. */
   generation: number;
+  /**
+   * The buttons of the last draw (labels plus callback keys), so a redraw that changes nothing
+   * the user can press keeps its generation.
+   */
+  surface?: string;
+  /** When the dialog was focused: how a command tells its own dialog from a stale one. */
+  openedAt: number;
   /** The focused component F: the session identity. */
   focus: object;
+  /**
+   * The component that holds the dialog's state. Focus may sit on an overlay wrapper
+   * that only forwards keys; reads, acts and keys all still target this one (§4.1.2).
+   */
+  subject?: object;
   root?: object;
   kind: "dialog" | "progress";
   adapter?: DialogAdapter;
@@ -154,6 +166,8 @@ export type DialogSession = {
   owner?: DialogOrigin;
   /** True when the owner came from a command scope (in-place message reuse). */
   ownerFromScope: boolean;
+  /** The entry that named this dialog, so a wrapper taking focus keeps it (§4.1.2). */
+  entry?: EntryInfo;
   telegram?: { chatId: number; messageThreadId?: number; messageId: number };
   pendingInput?: {
     flowId: string;

@@ -8,8 +8,10 @@
  * the dialog with the keys the terminal legend advertises — Tab between
  * questions, arrows inside one, Enter to advance, Esc to cancel.
  *
- * The tracked cursor is a guess, not a read. Every action therefore ends with a
- * redraw from the model, and a question list that changed underneath us is
+ * The tracked cursor is inferred, not read: it starts on the row the host highlights when it
+ * opens a question - its recommended option, which is why an unseeded guess picked the row after
+ * the one the user tapped - and is then moved by every action this adapter sends. Every action
+ * therefore ends with a redraw from the model, and a question list that changed underneath us is
  * reported rather than acted on.
  */
 import type { AskQuestion, DialogAdapter, DialogModel, Question } from "../model.ts";
@@ -19,7 +21,7 @@ type AskState = {
   /** Signature of the question list, so a reused component starts over. */
   signature: string;
   active: number;
-  /** One cursor per question; a freshly entered question starts at the top. */
+  /** One cursor per question, seeded where the host parks it: the recommended row. */
   cursor: number[];
   answers: Map<string, string[]>;
 };
@@ -32,7 +34,7 @@ function stateFor(component: object, questions: AskQuestion[]): AskState {
   const signature = questions.map((question) => `${question.id}|${question.options.length}|${question.multi === true}`).join(";");
   const existing = states.get(component);
   if (existing && existing.signature === signature) return existing;
-  const fresh: AskState = { signature, active: 0, cursor: questions.map(() => 0), answers: new Map() };
+  const fresh: AskState = { signature, active: 0, cursor: questions.map((question) => question.recommended ?? 0), answers: new Map() };
   states.set(component, fresh);
   return fresh;
 }
@@ -93,7 +95,7 @@ export const askDialogAdapter: DialogAdapter = {
         if (!ctx.sendKey(name)) return false;
       }
       state.active = target;
-      state.cursor[target] = 0;
+      state.cursor[target] = questions[target]?.recommended ?? 0;
       return true;
     }
 
@@ -120,10 +122,10 @@ export const askDialogAdapter: DialogAdapter = {
         state.answers.set(question.id, [...chosen]);
       } else {
         state.answers.set(question.id, [label]);
-        // Enter commits the answer and moves to the next question, where the
-        // host parks the option cursor at the top.
+        // Enter commits the answer and moves to the next question, where the host again
+        // parks the option cursor on that question's recommended row.
         state.active = Math.min(questions.length - 1, questionIndex + 1);
-        state.cursor[state.active] = 0;
+        state.cursor[state.active] = questions[state.active]?.recommended ?? 0;
       }
       return true;
     }
