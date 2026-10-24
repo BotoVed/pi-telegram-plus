@@ -35,8 +35,8 @@
 |---|---|---|---|
 | 3A 清理与对齐 | 删除旧路径；对齐 pi 1.4.0 | 见下方检查点 | 代码里只剩新架构；pi 1.4.0 与 OMP 18.12.x 的 E2E 无回归；"待迁移"清单列全现有缺口 |
 | 3B 扩展对话框 | 扩展 UI 竞答（select、confirm、input、editor、ask、approve）；custom 明确告知，pi-goal 走例外一 | S25 可行性验证及后续任务（取代 T3.2a–T3.2c） | dialogs 套件两个宿主全绿且走竞答路径；对应条目移出清单 |
-| 3C OMP 内置选择器 | TSP 适配器；删除 OMP 画面读取代码 | T3.2d–T3.2g | OMP 的 `/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents` 在 Telegram 显示原生列表并能完成操作，结果与终端一致 |
-| 3D pi 内置选择器 | 读字段的适配器（pi 1.4.0） | T3.3–T3.10，含 1.4 新增 `/thinking`、`/trust` | pi 同组命令达到同样效果 |
+| 3C OMP 内置选择器 | TSP 适配器；删除 OMP 画面读取代码；`/fork`、`/clone` 交给宿主，选择器走 TSP（决定 52） | T3.2d–T3.2g | OMP 的 `/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`、`/fork`、`/clone` 在 Telegram 显示原生列表并能完成操作，结果与终端一致 |
+| 3D pi 内置选择器 | 读字段的适配器（pi 1.4.0）；`/fork`、`/clone` 交给宿主，选择器用 `UserMessageSelectorComponent` 适配器，之后删除插件自带的消息列表（决定 52） | T3.3–T3.10，含 1.4 新增 `/thinking`、`/trust` | pi 同组命令（含 `/fork`、`/clone`）达到同样效果 |
 | 3E 收尾验收 | 只有输出的命令逐个验证；阶段 3 总验收 | T3.2（剩余）、T3.12、T3.13 | 两个宿主全量 E2E 通过；清单中属于阶段 3 的条目清空 |
 
 3A 检查点（用户 2026-10-25：3A 仍太大，再拆）：
@@ -45,7 +45,7 @@
 |---|---|---|
 | 3A-1 只剩新架构 ☑ | 删除 `off`/`tuiBridge`；删除 `/tg-*`（T4.10 提前）；修复宿主模式下的跨聊天通知串台 | D1（`6096014`）、T4.10（`86e3e81`）、串台修复 S26（`c0b3f36`）——2026-10-25 完成，单测 630/630、0 skip；E2E 推迟到 3E |
 | 3A-2 删除旧镜像 | 删除 `runTuiCommand`、`tui-selector.ts`、`tgplus:tui:` 回调；gateway 接管所有宿主命令 | D2 |
-| 3A-3 删除原生实现 | 删除重做宿主功能的原生实现与 `custom-dialogs.ts`；识别不了的对话框明确告知 | D3、D4 |
+| 3A-3 删除原生实现 | 删除重做宿主功能的原生实现与 `custom-dialogs.ts`；识别不了的对话框明确告知；`!` 命令改由宿主执行（决定 51） | D3、D3b、D4 |
 | 3A-4 对齐 pi 1.4.0 | 升级依赖，修正 4 处接口差异，更新文档引用，删除多版本测试矩阵 | A2（A1 已由主控完成） |
 
 **E2E 策略**（用户 2026-10-25："不要每次都跑 e2e，太耗时了"；"整个 3 阶段做完再 e2e，减小时间成本"）：阶段 3 内的任务和检查点只跑 `npm run typecheck` + `npm test`；**整个阶段 3 完成后，在 3E 统一跑一次全量 E2E**；可行性验证需要 E2E 作证据时只跑最小范围。各小阶段和检查点的"验收"中涉及 E2E 的部分，统一推迟到 3E 检查。
@@ -61,6 +61,7 @@
 | D1 | 删除 `off` 模式与 `tuiBridge` 配置项；桥接不可用时启动报错 | D0 | ☑ | `6096014`（跨聊天串台用例 skip，待 3A-1 修复） |
 | D2 | 删除旧屏幕镜像（`runTuiCommand`、`tui-selector.ts`、`tgplus:tui:` 回调） | D1 | ☐ | |
 | D3 | 删除插件重做宿主功能的原生实现（`lib/commands/` 对应部分、`telegram-ui.ts` 对应原生流程、`custom-dialogs.ts`） | D2 | ☐ | |
+| D3b | `!`/`!!` 命令改由宿主执行，保留 `bashConfirm` 确认（决定 51） | D3 | ☐ | |
 | D4 | `SnapshotAdapter` 改为 `UnsupportedAdapter`（明确告知 + 取消） | D2 | ☐ | |
 | A1 | 开发依赖升级到 pi `1.4.0`；按 1.4.0 源码核对剩余代码依赖的宿主接口，输出"需要改"清单 | D1–D4 | ☑（核对部分由主控完成；升级依赖并入 A2） | 4 处需要改：捕获补丁点 `initHooksAndCustomTools` 已改名；入口改挂 `pushExtensionDialog`/`removeExtensionDialog`；命令目录只用 `autocompleteProvider`；内置命令新增 `/bug`、`/thinking`、`/trust` |
 | A2 | 按 A1 清单修正 pi 侧代码（入口改用 1.4.0 的对话框栈 `pushExtensionDialog`/`removeExtensionDialog` 等）；更新方案中的 0.81.1 引用；删除多版本测试矩阵 | A1 | ☐ | |

@@ -1094,7 +1094,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 18 | OMP 内置选择器（model/settings/session/tree/oauth）没有可读字段 | **先降级为快照**，只提供 ↑↓/Enter/Esc；不解析渲染文本伪造原生列表。若后续 OMP 版本暴露字段，再按探测结果升级 |
 | 19 | OMP 的 `mode.editor.onSubmit` 在捕获时不存在 | 交给 §4.1.1 的每秒 tick 安装；捕获只记录字段名，不假设初始化顺序 |
 | 20 | `/export` 的路径来源 | `exportToHtml`/`exportToJsonl` 返回 **Promise**；等待解析后的字符串作为路径。`/share` 内部调用同一方法，按 scope 标签区分（§4.8） |
-| 21 | `/reload`、`/fork`、`/clone`、`/import` 是否提交给宿主编辑器 | **不提交，保留原生处理器。** 提交给编辑器会走 `runtimeHost` 的会话替换路径，绕过 pi 的 `withSession` 顺序；扩展运行时会被重新加载，而旧轮询实例尚未释放，单例协调器会拒绝新实例（"another local pi instance is already polling this bot token"）。原生处理器已经在宿主控制 API 内完成同样的状态变更。 |
+| 21 | `/reload`、`/fork`、`/clone`、`/import` 是否提交给宿主编辑器 | **不提交，保留原生处理器。** 提交给编辑器会走 `runtimeHost` 的会话替换路径，绕过 pi 的 `withSession` 顺序；扩展运行时会被重新加载，而旧轮询实例尚未释放，单例协调器会拒绝新实例（"another local pi instance is already polling this bot token"）。原生处理器已经在宿主控制 API 内完成同样的状态变更。 **（v6 修订：`/fork`、`/clone` 改为交给宿主，见决定 52；`/reload`、`/import` 不变）** |
 | 22 | `/new` 如何执行 | **调用宿主 `ctx.newSession()`，不提交编辑器。** 编辑器路径走 `handleClearCommand()` → `runtimeHost.newSession()`，同样会绕过 `withSession` 并触发轮询实例交接；命令上下文里的 `ctx.newSession()` 是宿主支持的替换入口。命令 scope 仍需保存/恢复草稿。 |
 | 23 | OMP 何时接入 Gateway | **推迟到阶段 3。** 阶段 0 证明 OMP 的 `/status`、`/usage`、`/stats`、`/context`、`/skills` 等走 `showCommandReport` 全屏面板，面板内容不在 `chatContainer` 的 `addChild` 流里；阶段 1 没有 `InfoPanelAdapter`，接入只会回一条 ack 而没有正文。阶段 3 先做面板截获，再把 OMP 的只有输出命令加入白名单。 |
 | 24 | `session.prompt` 完成信号放在哪一步实现 | 决定 10 和 15 不变，但随 Gateway 接线（§4.2.3、§4.3）一起实现：只对非内置命令登记，内置命令立即置 `promptDone = true`，另有 500ms 安静窗口和 60 秒上限。此前 `origin.ts` 里的半成品对所有命令都等 prompt，而且没有安装 hook，会让每个只输出命令空等到 60 秒上限，因此删除，不留半个机制。 |
@@ -1124,6 +1124,8 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 48 | `off` 模式与插件原生实现 | **立即删除**（用户 2026-10-24，推翻决定 2）。桥接不可用时启动报错；`pluginOnly` 管理命令保留。 |
 | 49 | 旧路径什么时候删 | **现在删，先于迁移**（用户 2026-10-24：当前不在使用，删除不影响）。未迁移命令暂无输出，由 E2E"待迁移"清单区分预期失败与回归。 |
 | 50 | 宿主行为以什么为准 | **以宿主源码为准**：先读 pi `1.4.0` / OMP `18.12.5` 源码确定前提，运行时实验只用于验证（此前两次在未读源码的情况下靠运行时实验摸索，浪费多轮）。 |
+| 51 | Telegram 发来的 `!命令` / `!!命令` 由谁执行 | **交给宿主执行，插件只保留危险命令确认**（用户 2026-10-25 同意）。pi 1.4.0 与 OMP 的编辑器都原生支持 `!`/`!!`，宿主执行前会先发 `user_bash` 事件让扩展接管或拒绝（pi `interactive-mode.ts` 的 `handleBashCommand`）；插件直接调用 `session.executeBash` 会**绕过这个扩展钩子**（例如沙箱、权限类扩展）。因此插件不再直接调用 bash 执行器，而是先按 `bashConfirm` 策略在 Telegram 确认（插件自己的远程执行安全闸门，宿主没有对应概念），确认后经 gateway 把原文提交给宿主编辑器，输出照常回传。任务 D3b。 |
+| 52 | `/fork`、`/clone` 交给谁 | **交给宿主执行**（用户 2026-10-25 同意；修订决定 21）。决定 21 的理由（编辑器提交会替换运行时、轮询单例冲突）已被 `e046a98`（同进程锁接管）与 `bf81fd5`（破坏性调用前提交游标）消除。规则统一为：有选择界面的命令（`/fork`、`/clone`）交给宿主，其选择器由适配器接管（pi：`UserMessageSelectorComponent`；OMP：TSP），之后删除插件自带的消息列表；没有界面、只调用控制接口的命令（`/new`、`/reload`、`/import`）继续调用宿主控制 API。分别并入 3C、3D，3E 用 E2E 验证运行时替换。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 
