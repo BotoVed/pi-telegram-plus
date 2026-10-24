@@ -75,6 +75,9 @@ function fakeFocus(entry?: EntryInfo) {
     closeToEditor() {
       emit({ kind: "editor", component: editor, source: "event" });
     },
+    emitProgress(component: Record<string, unknown>) {
+      emit({ kind: "progress", component, source: "event" });
+    },
   };
 }
 
@@ -183,6 +186,88 @@ describe("dialog broker", () => {
     expect(transport.edits[0]?.text).toContain("beta");
     // The summary line keeps no keyboard.
     expect(transport.edits[0]?.rows).toEqual([]);
+  });
+
+  it("keeps the dialog's message when the overlay wrapper takes the focus", async () => {
+    const entry: EntryInfo = {
+      kind: "select",
+      title: "Pick env",
+      options: ["alpha", "beta", "gamma"],
+      source: "pi",
+      method: "select",
+    };
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)], entry });
+    const { component, keys } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    const session = broker.current();
+    const arg = [...(session?.keyMap.get(0) ?? [])].find(([, key]) => key === "1:beta")?.[0];
+    expect(arg).toBeDefined();
+
+    // OMP hands focus to the overlay wrapper that holds the dialog; the wrapper is what
+    // receives keys afterwards, but the user is still being asked the same question.
+    const wrapper = {
+      children: [component],
+      render: () => "",
+      handleInput: (input: string) => { keys.push(input); },
+    };
+    focus.openDialog(wrapper);
+    await settle();
+
+    // One question, one message: the handoff must not draw a second dialog nor retire
+    // the first, or every keyboard already shown becomes a dead button.
+    expect(transport.sent).toHaveLength(1);
+    expect(broker.current()?.focus).toBe(wrapper);
+
+    const result = broker.handleCallback(42, undefined, {
+      sessionId: session?.id ?? "",
+      generation: 0,
+      op: "c",
+      arg,
+    });
+    await settle();
+    expect(result).toEqual({ handled: true });
+    expect(keys).toEqual(["\x1b[B", "\r"]);
+  });
+
+  it("keeps the buttons already shown when only the terminal's cursor moved", async () => {
+    const entry: EntryInfo = {
+      kind: "select",
+      title: "Pick env",
+      options: ["alpha", "beta", "gamma"],
+      source: "pi",
+      method: "select",
+    };
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)], entry });
+    const { component, keys } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    const session = broker.current();
+    const arg = [...(session?.keyMap.get(0) ?? [])].find(([, key]) => key === "1:beta")?.[0];
+    expect(arg).toBeDefined();
+
+    // The local user arrows down to gamma and the host repaints (focus flickers to the
+    // spinner and back). The cursor mark sits inside the button labels, but no button's
+    // meaning changed, so the keyboard the chat is looking at must still work.
+    component.selectedIndex = 2;
+    focus.emitProgress({});
+    focus.openDialog(component);
+    await settle();
+
+    expect(session?.generation).toBe(0);
+    expect(transport.sent).toHaveLength(1);
+
+    const result = broker.handleCallback(42, undefined, {
+      sessionId: session?.id ?? "",
+      generation: 0,
+      op: "c",
+      arg,
+    });
+    await settle();
+
+    expect(result).toEqual({ handled: true });
+    // gamma is marked now, so beta is reached by walking up from it and pressing Enter.
+    expect(keys).toEqual(["\x1b[A", "\r"]);
   });
 
   it("redraws instead of acting when the callback is stale", async () => {
@@ -294,5 +379,129 @@ describe("dialog broker", () => {
     // The scope wins over the chat the user last touched.
     expect(broker.mirrorsFor(7, 3)).toBe(true);
     expect(broker.mirrorsFor(42)).toBe(false);
+  });
+
+  it("leaves a progress panel to the screen mirror", async () => {
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+    // A spinner takes the keyboard only so Esc can interrupt: drawing a keyboard for
+    // it would put a message in the chat before the real dialog has even opened, and
+    // that message then swallows whatever the user types for the dialog.
+    focus.emitProgress({ deps: {}, handleInput: () => undefined });
+    await settle();
+
+    expect(transport.sent).toHaveLength(0);
+    expect(broker.hasActive()).toBe(false);
+    expect(broker.mirrorsFor(42)).toBe(false);
+  });
+
+  it("keeps a dialog answerable while a progress panel holds the keyboard", async () => {
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+    const { component, keys } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    const session = broker.current();
+    const arg = [...(session?.keyMap.get(0) ?? [])].find(([, key]) => key === "1:beta")?.[0];
+    expect(arg).toBeDefined();
+
+    // The host focuses its spinner so Esc can interrupt the turn. The question behind it is
+    // still open, so withdrawing the keyboard here would strand a message the user can no
+    // longer answer - the OMP ask dialog loses exactly this way.
+    focus.emitProgress({ deps: {}, handleInput: () => undefined });
+    await settle();
+
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.edits).toHaveLength(0);
+    expect(broker.current()).toBe(session);
+
+    const result = broker.handleCallback(42, undefined, {
+      sessionId: session?.id ?? "",
+      generation: 0,
+      op: "c",
+      arg,
+    });
+    await settle();
+    expect(result).toEqual({ handled: true });
+    expect(keys).toEqual(["\x1b[B", "\r"]);
+  });
+
+  it("closes the dialog a new command leaves behind", async () => {
+    const entry: EntryInfo = {
+      kind: "select",
+      title: "Pick env",
+      options: ["alpha", "beta", "gamma"],
+      source: "pi",
+      method: "select",
+    };
+    const { broker, transport, focus } = makeBroker({ entry });
+    const { component, keys } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    expect(broker.hasActive()).toBe(true);
+
+    // Nobody was ever shown this question (§4.3 rule 3), yet the host queues every later
+    // command behind it: the command that arrives now is answered with an Esc.
+    expect(broker.abandonFor(42)).toBe("Pick env");
+    await settle();
+
+    expect(keys).toContain("\x1b");
+    expect(broker.current()).toBeUndefined();
+    // Nothing was drawn, so nothing had to be edited away either.
+    expect(transport.sent).toHaveLength(0);
+    expect(broker.abandonFor(42)).toBeUndefined();
+  });
+
+  it("leaves an abandoned message for the command that arrived", async () => {
+    const entry: EntryInfo = {
+      kind: "select",
+      title: "Bot name",
+      options: ["work", "home"],
+      source: "pi",
+      method: "select",
+    };
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)], entry });
+    const { component } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    expect(transport.sent).toHaveLength(1);
+
+    expect(broker.abandonFor(42)).toBe("Bot name");
+    await settle();
+
+    // The command that arrived draws its own answer on this very message (one scope, one
+    // message), so the broker strips the dead keyboard and writes nothing over the text.
+    expect(transport.edits).toHaveLength(0);
+    expect(transport.removed).toEqual([101]);
+    expect(broker.current()).toBeUndefined();
+  });
+
+  it("quietly retires a dialog the host already closed", async () => {
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+    const { component, keys } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    expect(transport.sent).toHaveLength(1);
+
+    // The terminal answered. A command arriving afterwards must not press Esc again or claim
+    // that it closed a question - the notice would land where the command's own answer goes.
+    focus.closeToEditor();
+    await settle();
+    expect(broker.abandonFor(42)).toBeUndefined();
+    await settle();
+
+    expect(keys).toEqual([]);
+    // The only edit is the "answered in the terminal" line the close itself writes.
+    expect(transport.edits).toHaveLength(1);
+    expect(broker.current()).toBeUndefined();
+  });
+
+  it("leaves another chat's dialog alone when this one sends a command", async () => {
+    const { broker, transport, focus } = makeBroker({ turns: [turn(7)] });
+    const { component } = selector(focus);
+    focus.openDialog(component);
+    await settle();
+    expect(transport.sent[0]?.chatId).toBe(7);
+
+    expect(broker.abandonFor(42)).toBeUndefined();
+    expect(broker.hasActive()).toBe(true);
   });
 });

@@ -36,7 +36,7 @@ import type {
 } from "./model.ts";
 import type { OriginTracker } from "./origin.ts";
 import type { SecretStore } from "./secrets.ts";
-import { renderDialog } from "./render-telegram.ts";
+import { renderDialog, type RenderedDialog } from "./render-telegram.ts";
 
 const brokerLog = log.child("tui-broker");
 
@@ -237,6 +237,31 @@ export class DialogBroker {
         this.redraw(session);
         return;
       }
+      // A progress widget - the spinner that holds the keyboard so Esc can interrupt -
+      // is not a question. Drawing it would put a keyboard in the chat before the
+      // dialog anyone asked for has opened, and the screen mirror still shows the
+      // frame (§4.5 rule 1). A component with a recorded entry classifies as
+      // "dialog", so this only skips panels no adapter could answer anyway.
+      if (info.kind === "progress") {
+        // The spinner holds the keyboard so Esc can interrupt the turn; the question behind
+        // it is still open. Retiring here withdraws a keyboard the user is about to press,
+        // so only the *drawing* rule applies: never mirror the spinner itself (§4.5 rule 1).
+        return;
+      }
+      // Same question, different object: the host moved focus from the dialog to the
+      // overlay wrapper that holds it, and the wrapper is what receives keys from then
+      // on. Keep the session - its message, keyboard and pending button taps stay
+      // valid - and re-point it at the component that now owns the keystrokes.
+      const nextEntry = this.deps.focus.entryFor(component);
+      if (session && session.state !== "closed" && nextEntry && session.entry === nextEntry) {
+        session.focus = component;
+        session.root = info.root;
+        // The model is read from the entry, and the cursor lives on the inner component
+        // the wrapper now holds, so re-reading from the wrapper would report a different
+        // (usually empty) dialog. Keep what is on screen; the next real change re-reads.
+        this.show(session);
+        return;
+      }
       const closedBy = this.retire(session, info);
       this.open(component, info, closedBy === "replaced" ? session : undefined);
       return;
@@ -260,7 +285,7 @@ export class DialogBroker {
     // this one, so no summary line — the message keeps being the dialog.
     const owner = this.owner();
     const replaced
-      = isDialogKind(next.kind)
+      = next.kind === "dialog"
       && next.component !== session.focus
       && session.ownerFromScope
       && owner.fromScope
@@ -285,22 +310,41 @@ export class DialogBroker {
     // One adapter for the life of the dialog: the one that read it owns the
     // actions on it (§4.6.1, a dialog is only ever handed to one adapter).
     const adapter = pickAdapterSafely(component, ctx) ?? snapshotAdapter;
+    if (adapter === snapshotAdapter) {
+      // A screen no adapter can model belongs to the screen mirror (§4.4): a snapshot
+      // message can show the frame but cannot answer the question, and claiming the
+      // message would silence the mirror - which can still drive it with real keys.
+      brokerLog.debug("screen left to the mirror", { ctor: ctorName(component) });
+      return;
+    }
     const owner = this.owner();
     const session: DialogSession = {
       id: `${Date.now().toString(36)}.${(this.sequence++).toString(36)}`,
       generation: 0,
+      openedAt: Date.now(),
       focus: component,
+      subject: component,
       root: info.root,
       kind: info.kind === "progress" ? "progress" : "dialog",
       adapter,
       model: this.read(component, ctx, adapter) ?? { kind: "snapshot", text: renderText(component).trim() },
       owner: owner.origin,
       ownerFromScope: owner.fromScope,
+      entry: ctx.entry,
       keyMap: new Map(),
       page: 0,
       state: "open",
     };
     this.session = session;
+    // Whether a dialog reaches the chat at all is decided here, so record what the
+    // ownership rules were handed.
+    brokerLog.debug("dialog owner", {
+      ctor: ctorName(component),
+      adapter: adapter.id,
+      fromScope: owner.fromScope,
+      chatId: owner.origin?.chatId ?? null,
+      reuseMessageId: owner.reuseMessageId ?? null,
+    });
     if (!owner.origin) return; // A local dialog: tracked, never mirrored (§4.3 rule 3).
 
     const purpose = textPurpose(session.model);
@@ -337,29 +381,47 @@ export class DialogBroker {
     { handled: boolean; toast?: string; clear?: boolean } {
     const session = this.session;
     if (!session || session.state === "closed") return { handled: true, toast: "已在终端处理", clear: true };
+    // Every way a tap can be refused is a user-visible dead button, so say which one
+    // fired and what focus looked like at that moment.
+    const refuse = (reason: string, toast: string, clear = true) => {
+      const now = this.deps.focus.current().component;
+      const name = (value: object | undefined) => (value ? ctorName(value as Record<string, unknown>) : null);
+      brokerLog.debug("callback refused", {
+        reason,
+        toast,
+        sessionId: session.id,
+        callbackId: callback.sessionId,
+        generation: session.generation,
+        callbackGeneration: callback.generation,
+        focus: name(now),
+        sessionFocus: name(session.focus),
+        subject: name(session.subject),
+      });
+      return { handled: true, toast, clear };
+    };
     const telegram = session.telegram;
     const wrongTarget = telegram === undefined
       || telegram.chatId !== chatId
       || (telegram.messageThreadId ?? undefined) !== (messageThreadId ?? undefined);
     if (session.id !== callback.sessionId || wrongTarget) {
-      return { handled: true, toast: "这个菜单已经过期", clear: true };
+      return refuse("stale-session", "这个菜单已经过期");
     }
     if (callback.generation !== session.generation) {
       // Rule 3.2: something else moved the list; show the current one.
       this.redraw(session);
-      return { handled: true, toast: "列表已变化，请重新选择" };
+      return refuse("generation", "列表已变化，请重新选择", false);
     }
-    const component = this.deps.focus.current().component;
-    if (!component || component !== session.focus) {
+    if (!this.canDrive(session)) {
       this.retire(session, this.deps.focus.current());
-      return { handled: true, toast: "已在终端处理", clear: true };
+      return refuse("focus-moved", "已在终端处理");
     }
 
-    const ctx = this.context(component, this.deps.focus.current());
-    const model = this.read(component, ctx);
+    const subject = (session.subject ?? session.focus) as Record<string, unknown>;
+    const ctx = this.context(subject, this.deps.focus.current());
+    const model = this.read(subject, ctx);
     if (!model) {
       this.retire(session, this.deps.focus.current());
-      return { handled: true, toast: "已在终端处理", clear: true };
+      return refuse("no-model", "已在终端处理");
     }
     const resolved = this.resolve(session, model, callback);
     if (resolved.kind === "page") {
@@ -384,22 +446,22 @@ export class DialogBroker {
     if (resolved.kind === "none") {
       // Rule 3.4: the row the button was drawn for is gone (or never existed).
       this.redraw(session);
-      return { handled: true, toast: "列表已变化，请重新选择" };
+      return refuse("row-gone", "列表已变化，请重新选择", false);
     }
 
     session.model = model;
     session.state = "resolving";
     session.lastAction = resolved.label;
-    const done = this.act(component, resolved.action, ctx);
+    const done = this.act(subject, resolved.action, ctx);
     if (!done) {
       session.state = "open";
       this.redraw(session);
-      return { handled: true, toast: "这个按钮在这里不起作用" };
+      return refuse("act-refused", "这个按钮在这里不起作用", false);
     }
     // Rule 3.5: the component may already be gone (selectors resolve inline),
     // or it may stay open (multi-select, settings rows).
     if (this.session === session && session.state === "resolving") {
-      if (this.deps.focus.current().component === component) {
+      if (this.canDrive(session)) {
         session.state = "open";
         this.redraw(session);
       } else {
@@ -415,8 +477,7 @@ export class DialogBroker {
    * `messageId` is the incoming message, deleted when it carried a secret.
    */
   handleText(session: DialogSession, text: string, messageId?: number): { handled: boolean; toast?: string } {
-    const component = this.deps.focus.current().component;
-    if (!component || component !== session.focus) {
+    if (!this.canDrive(session)) {
       this.retire(session, this.deps.focus.current());
       return { handled: false };
     }
@@ -430,11 +491,12 @@ export class DialogBroker {
     // undo state coherent and works without a terminal to type into. A raw
     // write is the fallback for dialogs no adapter can drive (a screen
     // snapshot, a search filter that re-filters as it types).
-    const ctx = this.context(component, this.deps.focus.current());
+    const subject = (session.subject ?? session.focus) as Record<string, unknown>;
+    const ctx = this.context(subject, this.deps.focus.current());
     const driven = purpose === "input" || purpose === "editor"
-      ? this.act(component, { type: "submit", text }, ctx)
+      ? this.act(subject, { type: "submit", text }, ctx)
       : purpose === "search"
-        ? this.act(component, { type: "search", query: text }, ctx)
+        ? this.act(subject, { type: "search", query: text }, ctx)
         : false;
     const submitted = purpose === "search" ? text : `${text}\r`;
     const written = driven || this.deps.writeText(submitted);
@@ -447,7 +509,7 @@ export class DialogBroker {
       return { handled: true, toast: "宿主没有接收这段输入" };
     }
     if (this.session === session && session.state !== "closed") {
-      if (this.deps.focus.current().component === component) this.redraw(session);
+      if (this.canDrive(session)) this.redraw(session);
       else this.retire(session, this.deps.focus.current());
     }
     return { handled: true };
@@ -457,34 +519,99 @@ export class DialogBroker {
   cancelFor(chatId: number, messageThreadId?: number): boolean {
     const session = this.sessionFor(chatId, messageThreadId);
     if (!session) return false;
-    const component = this.deps.focus.current().component;
-    if (!component || component !== session.focus) return false;
-    const ctx = this.context(component, this.deps.focus.current());
-    const done = this.act(component, { type: "cancel" }, ctx);
+    if (!this.canDrive(session)) return false;
+    const subject = (session.subject ?? session.focus) as Record<string, unknown>;
+    const ctx = this.context(subject, this.deps.focus.current());
+    const done = this.act(subject, { type: "cancel" }, ctx);
     this.forgetPending(session);
     if (done && this.session === session) this.retire(session, this.deps.focus.current());
     return done;
   }
 
+  /**
+   * A new command from this chat means the remote user abandoned the question it was being
+   * asked: the host queues every later command behind that dialog, so press Esc for them and
+   * report what was closed (§4.5 rule 6). A dialog another chat drew is left alone. Returns
+   * the title when something was abandoned.
+   */
+  abandonFor(chatId: number, messageThreadId?: number): string | undefined {
+    const session = this.session;
+    if (!session || session.state === "closed") return undefined;
+    const telegram = session.telegram;
+    const forThisChat = telegram !== undefined
+      && telegram.chatId === chatId
+      && (telegram.messageThreadId ?? undefined) === (messageThreadId ?? undefined);
+    // Unowned means nobody was ever shown the question (§4.3 rule 3); it still blocks the
+    // host queue, so it becomes this chat's problem the moment it sends a command.
+    if (!forThisChat && session.owner !== undefined) return undefined;
+    const title = (session.model as { title?: string } | undefined)?.title?.trim();
+    const info = this.deps.focus.current();
+    if (!this.canDrive(session) && info.kind === "editor") {
+      // The question is already off screen: the host answered or discarded it, and the session
+      // only still exists because its command scope was holding it. Nothing blocks the queue,
+      // so this command needs no Esc and the chat needs no notice - retire it quietly.
+      this.forgetPending(session);
+      session.telegram = undefined;
+      this.retire(session, info);
+      brokerLog.debug("dialog already closed", { title: title || null, chatId });
+      return undefined;
+    }
+    if (this.canDrive(session)) {
+      const subject = (session.subject ?? session.focus) as Record<string, unknown>;
+      this.act(subject, { type: "cancel" }, this.context(subject, this.deps.focus.current()));
+    }
+    this.forgetPending(session);
+    // The message is left as it stands: the command that just arrived draws its own answer on
+    // it (same scope, same message), so writing "answered in the terminal" over it would
+    // swallow that answer. Only the now-dead keyboard is stripped; the chat is told separately
+    // which question was closed.
+    if (telegram && telegram.messageId > 0) {
+      void this.deps.transport.removeInlineKeyboard(telegram.chatId, telegram.messageId)
+        .catch(() => undefined);
+    }
+    session.telegram = undefined;
+    this.retire(session, this.deps.focus.current());
+    brokerLog.debug("dialog abandoned", { title: title || null, chatId });
+    return title || undefined;
+  }
+
   // --- plumbing --------------------------------------------------------------
+
+  /**
+   * Whether Telegram may still drive this dialog (§4.5 rule 3): either the dialog holds the
+   * keyboard, or the host's progress widget is standing in front of it to catch Esc. The
+   * question is open either way, and keys go to the dialog's own component.
+   */
+  private canDrive(session: DialogSession): boolean {
+    const info = this.deps.focus.current();
+    if (!info.component) return false;
+    return info.component === session.focus || info.kind === "progress";
+  }
 
   /** Re-read the live model and draw it, honouring the per-chat edit cap. */
   private redraw(session: DialogSession): void {
     if (session.state === "closed") return;
-    const component = this.deps.focus.current().component;
-    if (!component || component !== session.focus) return;
-    const ctx = this.context(component, this.deps.focus.current());
-    const model = this.read(component, ctx);
+    if (!this.canDrive(session)) return;
+    const subject = (session.subject ?? session.focus) as Record<string, unknown>;
+    const ctx = this.context(subject, this.deps.focus.current());
+    const model = this.read(subject, ctx);
     if (!model) {
       this.retire(session, this.deps.focus.current());
       return;
     }
+    // The buttons are replaced by this draw, so the previous generation dies with them - but
+    // only when the buttons themselves changed. OMP repaints an unchanged question and moves a
+    // cursor the keyboard never shows, which used to report the keyboard the user is looking at
+    // as stale ("the list changed, choose again") while nothing on screen had moved
+    // (§4.5 rule 3.2).
+    const surface = this.surfaceOf(renderDialog(model, {
+      sessionId: session.id,
+      generation: session.generation,
+      page: session.page,
+      redact: this.deps.secrets ? (text) => this.redact(session, text) : undefined,
+    }));
+    if (surface !== session.surface) session.generation += 1;
     session.model = model;
-    // The buttons are replaced by this draw, so the previous generation dies
-    // with them: bump before rendering, store the new keys under the new
-    // number (§4.5 rule 3.2). A button that is no longer on screen can then
-    // never resolve to a row.
-    session.generation += 1;
     this.show(session);
   }
 
@@ -509,14 +636,38 @@ export class DialogBroker {
     }
   }
 
+  /**
+   * What the user can press in a draw: button labels and callback keys, not their generation.
+   * The terminal's own cursor mark travels inside the button text (`▸ cheese`); moving it
+   * changes no button's meaning - each resolves by its own key against the live model - so it
+   * must not cost the keyboard its generation.
+   */
+  private surfaceOf(rendered: RenderedDialog): string {
+    const plain = (text: string) => text.replace(/[▸❯→]\s*/g, "").trim();
+    return JSON.stringify([
+      rendered.rows.map((row) => row.map((button) => plain(button.text))),
+      [...rendered.keyMap.entries()].sort(),
+    ]);
+  }
+
   private context(component: Record<string, unknown>, info: FocusInfo): AdapterContext {
     const state = currentHostState();
+    const entry = this.deps.focus.entryFor(component);
+    // Whether a dialog models as a list or as a screen of arrow keys depends on
+    // this entry arriving, so record what the hooks actually handed over.
+    brokerLog.debug("adapter context", {
+      ctor: ctorName(component),
+      entry: entry?.kind,
+      method: entry?.method,
+      options: entry?.options?.length ?? 0,
+      questions: entry?.questions?.length ?? 0,
+    });
     return {
       // Adapters only ever run against a known host; "unknown" means no host
       // object was found, in which case no adapter detects anything anyway.
       host: state.host === "omp" ? "omp" : "pi",
       root: info.root,
-      entry: this.deps.focus.entryFor(component),
+      entry,
       sendKey: (name: string) => sendKeyTo(component, name),
       snapshot: (width: number) => renderText(component, width),
       requestRender: () => {
@@ -565,13 +716,13 @@ export class DialogBroker {
   private show(session: DialogSession): void {
     const telegram = session.telegram;
     if (!telegram) return;
-    const ctx = this.context(session.focus as Record<string, unknown>, this.deps.focus.current());
     const rendered = renderDialog(session.model, {
       sessionId: session.id,
       generation: session.generation,
       page: session.page,
       redact: this.deps.secrets ? (text) => this.redact(session, text) : undefined,
     });
+    session.surface = this.surfaceOf(rendered);
     this.rememberKeys(session, rendered.keyMap);
     const signature = `${session.page}|${rendered.text}|${JSON.stringify(rendered.rows)}`;
     const fresh = telegram.messageId <= 0;
@@ -593,9 +744,11 @@ export class DialogBroker {
       void this.deps.transport
         .editButtons(telegram.chatId, telegram.messageId, rendered.text, rendered.rows)
         .catch((err) => {
+          // Do not shed the keyboard here: an edit can fail for a reason that says nothing
+          // about the dialog - flood control, or identical content - and the question behind
+          // it is still open. The next repaint redraws it; a closed dialog loses its
+          // keyboard through publish(), which is the only place a strip is justified.
           brokerLog.debug("editButtons failed", { err });
-          // An unchanged or rate-limited edit still has to shed a dead keyboard.
-          void this.deps.transport.removeInlineKeyboard(telegram.chatId, telegram.messageId).catch(() => undefined);
         });
     });
   }
