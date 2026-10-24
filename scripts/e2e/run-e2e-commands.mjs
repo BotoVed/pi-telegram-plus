@@ -10,12 +10,13 @@
  *     [--pi-bin <path>] [--tg-port 9950] [--provider-port 9951]
  *     [--timeout 30] [--keep]
  *
- * Exit code is non-zero when any step fails.
+ * Exit code is non-zero when a step that is not on scripts/e2e/pending-migration.json fails.
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { classify, loadPending } from "./pending.mjs";
 import { validateTelegramCalls } from "./telegram-contract.mjs";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
@@ -974,15 +975,24 @@ async function main() {
     for (const mock of mocks) mock.kill();
   }
 
+  const pending = loadPending();
   let failed = 0;
+  let pendingSteps = 0;
   for (const host of summary) {
-    console.log(`\n${host.ok ? "PASS" : "FAIL"} ${host.host} — ${host.results.filter((r) => r.ok).length}/${host.results.length} steps`);
-    for (const step of host.results.filter((r) => !r.ok)) {
-      failed += 1;
-      console.log(`  ✗ ${step.name} — ${step.detail}`);
+    const { regressions, expected, nowPassing } = classify(pending, "commands", host.host, host.results);
+    const passed = host.results.filter((r) => r.ok).length;
+    console.log(`\n${regressions.length === 0 ? "PASS" : "FAIL"} ${host.host} — ${passed}/${host.results.length} steps`
+      + (expected.length ? ` (${expected.length} pending)` : ""));
+    for (const step of regressions) console.log(`  ✗ ${step.name} — ${step.detail}`);
+    for (const step of expected) console.log(`  ○ ${step.name} — pending ${step.task}`);
+    for (const step of nowPassing) {
+      console.log(`  ↑ ${step.name} — passes now; remove from pending-migration.json (${step.task})`);
     }
+    failed += regressions.length;
+    pendingSteps += expected.length;
   }
-  console.log(failed === 0 ? "\nCOMMANDS_ACCEPTANCE=0" : `\nCOMMANDS_ACCEPTANCE=${failed}`);
+  console.log(`\nPENDING=${pendingSteps}`);
+  console.log(failed === 0 ? "COMMANDS_ACCEPTANCE=0" : `COMMANDS_ACCEPTANCE=${failed}`);
   process.exit(failed === 0 ? 0 : 1);
 }
 

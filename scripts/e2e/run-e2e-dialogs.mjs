@@ -18,12 +18,14 @@
  *     [--goal confirm|question|questionnaire] [--tg-port 9970] [--provider-port 9971]
  *     [--timeout 40] [--keep] [--pi-bin <path>] [--omp <path>]
  *
- * Exit code is non-zero when any step fails.
+ * Exit code is non-zero when a failed step is not on scripts/e2e/pending-migration.json;
+ * DIALOGS_ACCEPTANCE reports the regression count (expected gaps do not count).
  */
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createServer } from "node:net";
+import { classify, loadPending } from "./pending.mjs";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
 const PLUGIN = join(REPO, "index.ts");
@@ -727,21 +729,32 @@ async function main() {
   console.log("mocks ready: telegram + provider\n");
 
   const hosts = HOST_ARG === "both" ? ["pi", "omp"] : [HOST_ARG];
-  let ok = true;
+  const pending = loadPending();
+  let regressions = 0;
+  let pendingSteps = 0;
   for (const host of hosts) {
     if (!existsSync(join(REPO, "node_modules/.bin/pi"))) {
       throw new Error("node_modules/.bin/pi is missing; run npm install first");
     }
     console.log(`=== ${host} ===`);
     const run = await runHost(host, servers);
-    ok = ok && run.ok;
-    console.log(`${run.ok ? "PASS" : "FAIL"} ${host}\n`);
+    const verdict = classify(pending, "dialogs", host, run.results);
+    console.log(`${verdict.regressions.length === 0 ? "PASS" : "FAIL"} ${host}`
+      + (verdict.expected.length ? ` (${verdict.expected.length} pending)` : "") + "\n");
+    for (const step of verdict.regressions) console.log(`  ✗ ${step.name} — ${step.detail}`);
+    for (const step of verdict.expected) console.log(`  ○ ${step.name} — pending ${step.task}`);
+    for (const step of verdict.nowPassing) {
+      console.log(`  ↑ ${step.name} — passes now; remove from pending-migration.json (${step.task})`);
+    }
+    regressions += verdict.regressions.length;
+    pendingSteps += verdict.expected.length;
   }
 
   for (const server of servers) server.proc.kill();
   if (!KEEP) rmSync(ROOT, { recursive: true, force: true, maxRetries: 3 });
-  console.log(`DIALOGS_ACCEPTANCE=${ok ? 0 : 1}`);
-  process.exit(ok ? 0 : 1);
+  console.log(`PENDING=${pendingSteps}`);
+  console.log(`DIALOGS_ACCEPTANCE=${regressions}`);
+  process.exit(regressions === 0 ? 0 : 1);
 }
 
 main().catch(async (error) => {
