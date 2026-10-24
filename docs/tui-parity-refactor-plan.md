@@ -712,10 +712,11 @@ ctx.requestRender();
 使用条件（全部满足才使用，否则退回 `SnapshotAdapter`）：
 
 - 只用于有入口记录（`EntryInfo`）的 OMP 对话框。题目、标题、选项文字**一律取自入口参数**。
-- 渲染帧（`render(80)` 去色）只用于两件事：确定当前高亮行、确定屏幕上可见的行。**不得**从帧里读取选项文字或任何状态值。
+- 渲染帧（`render(80)` 去色）只用于两件事：确定当前高亮行、确定屏幕上可见的行。**不得**从帧里读取选项文字或任何状态值（下面 `approve` 的按键说明除外）。
 - 操作全部通过 `F.handleInput` 发按键。按键前重新渲染，确认目标行仍在可见行里，步数按可见行计算；对不上就拒绝操作并重绘 Telegram 消息。
 - 绑定 OMP 版本范围 `18.12.x`（写在适配器常量里）；版本不在范围内或无法确定版本时退回快照。
 - 契约测试固定使用 OMP 18.12.5 的真实帧（`docs/host-probe/omp-18.12.5.json` 的 `conclusions.dialogFrames`）；OMP 升级导致帧格式变化时测试先失败。
+- 唯一允许从帧里读取的文字：OMP `approve` 对话框页脚的按键说明（§4.6.5 #10），用来确定有哪些可按的选项；同样受上面的版本限制。
 - **不得**用于 OMP 内置选择器（`/model`、`/settings`、`/resume`、`/tree`、`/login` 等 `show*Selector` 打开的组件），它们仍按 §9 决定 18 走快照。插件自己通过 `ui.select` 弹出的列表（例如 OMP 上 Telegram 的 `/model`，由 `lib/commands/model.ts` 处理）属于入口对话框，适用本例外。
 
 ### 4.7 TelegramDialogRenderer
@@ -1072,6 +1073,9 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
   - Telegram 原生实现（`lib/commands/model.ts`、`session.ts`、`settings.ts`、`auth.ts`，`lib/telegram-ui.ts` 中的 `select/confirm/input/editor/inputSecret` 流程，`lib/custom-dialogs.ts`）是整体删除，还是只保留宿主没有交互界面时（RPC/print 模式、hook 失败）的自动兜底部分；
   - §4.2.2 第 4 步兜底分支如何收敛；
   - 相关测试和 README 中 off 模式的说明一并处理。
+
+- [ ] **E2E：`settings mirror matches the host screen`（OMP）偶发失败。** 2026-10-24 在 5 轮干净运行中失败 1 次（失败时 pane 里只有 "Select provider to login"），其余步骤稳定。需要查清是时序问题还是镜像取屏的时机问题。
+- [ ] **运行时被替换时，队列里未发出的 Telegram 调用被静默丢弃。** `lib/active-transport.ts` 在 `isActive()` / lease 不匹配时直接返回兜底结果（`sendButtons` 返回 `message_id: 0`），调用方拿不到错误，看起来像"菜单没发出去"。2026-10-24 S5 测量时每个阶段结束的最后一秒都有几条。应改为显式失败或在新运行时补发。
 
 ---
 

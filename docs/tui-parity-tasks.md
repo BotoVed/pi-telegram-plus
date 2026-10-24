@@ -33,7 +33,7 @@
 
 | # | 任务 | 依赖 | 状态 | 提交 |
 |---|---|---|---|---|
-| T3.0 | OMP 对话框分类与读取（条件任务） | — | ☑ | 本提交，见下方完成记录 |
+| T3.0 | OMP 对话框分类与读取（条件任务） | — | ☑ | `558d574`（版本限制）及之前各提交，见下方完成记录 |
 | T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☐ | |
 | T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
@@ -71,6 +71,8 @@
   - 验收：`npm run test:e2e:dialogs -- --host omp` 全绿（`DIALOGS_ACCEPTANCE=0`，含 select/confirm/input/secret/custom、`ask` 单题与多题、终端先作答撤销键盘）；`run-e2e-commands.mjs --host omp --phase main` 139/139（`COMMANDS_ACCEPTANCE=0`），高于阶段 1 基线 132。
   - 键盘与重绘：重绘失败不再顺手摘键盘（决定 39）；`classify` 先判 loader/signal 再认 entry，转圈面板不会带走问题的身份（决定 40）。
   - 测试基础设施：五个 e2e 套件启动前都先探测 mock Bot API / provider 端口，被占用就直接报错退出。此前 `--keep` 留下的旧宿主继续轮询同一端口，后跑的套件读到的是**前一个宿主**的聊天，制造过两轮假失败（`Bot not found: e2e-extra`、"This prompt is no longer active"、`/copy` 的回执显示上一条命令）；`run-e2e-omp.mjs` 的默认端口也从 9950/9951 挪到 9980/9981，不再与 commands 套件撞端口。命令步骤 `dispatch` 支持按内容匹配自己的回执，免得把"已关闭未回答的对话框"这类善后通知当成命令答复。
+  - 版本限制（`558d574`）：按帧读取只在 OMP `18.12.x` 上启用（`lib/tui/adapters/utils.ts` 的 `OMP_FRAME_VERSIONS`，版本取自 `@oh-my-pi/pi-utils` 的 `VERSION`），其他版本或读不到版本时 select/confirm 退回快照、`approve` 不识别；方案 §4.6.6 例外二。
+  - 稳定性复核（2026-10-24）：`run-e2e-commands.mjs --host omp` 连续 5 轮干净运行，main 阶段 4 轮全过、1 轮仅 `settings mirror` 失败（已记入方案 §10）；`test:e2e:dialogs --host omp` 11/11。
 
 ### T3.1 OMP 只读面板截获
 
