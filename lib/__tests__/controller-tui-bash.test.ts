@@ -74,6 +74,8 @@ function createHarness(options: {
   telegramCommands?: Map<string, any>;
   confirm?: ReturnType<typeof vi.fn>;
   isOmpHost?: () => boolean;
+  /** Mirror the plugin UI's `notify` into the recorded Bot API calls, as the real runtime does. */
+  notifySendsToChat?: boolean;
 } = {}) {
   const calls: Call[] = [];
   const transport = createTransport(calls);
@@ -86,7 +88,9 @@ function createHarness(options: {
     transport,
     ui: {
       create: () => ({
-        notify: async () => undefined,
+        notify: async (message: string) => {
+          if (options.notifySendsToChat) calls.push({ method: "text", text: String(message) });
+        },
         confirm,
       }) as never,
       resolveInput: () => ({ handled: false }),
@@ -618,13 +622,58 @@ describe("Host capability routing", () => {
     },
   });
 
-  it("hands prompts to the host only where the broker can read its dialogs", () => {
+  it("hands prompts to the host whenever the bridge serves them", () => {
     const adapter = (host: string, available = true) => ({ isAvailable: () => available, getHost: () => host });
     const asBridge = (value: unknown) => value as unknown as TuiBridgeAdapter; // only the two probed members matter
+    // Both hosts: a dialog is recognised from the entry the host asked about, and
+    // read from the frame it draws, whatever its fields look like (§4.6.5).
     expect(hostOwnsPrompts(asBridge(adapter("pi")), "full")).toBe(true);
-    expect(hostOwnsPrompts(asBridge(adapter("omp")), "full")).toBe(false);
+    expect(hostOwnsPrompts(asBridge(adapter("omp")), "full")).toBe(true);
     expect(hostOwnsPrompts(asBridge(adapter("pi")), "commands")).toBe(false);
     expect(hostOwnsPrompts(asBridge(adapter("pi", false)), "full")).toBe(false);
+  });
+
+  it("still reports to the chat for a command that only notifies while the host owns prompts", async () => {
+    // /changelog, /copy and /debug answer with a single notify and no dialog. With the host
+    // owning prompts the command context used to carry the host's raw ui, whose notify only
+    // prints in the terminal - so the remote user got nothing at all and the command looked
+    // like a hang.
+    const terminalPrints: string[] = [];
+    const hostUi = {
+      notify: vi.fn(async (message: string) => { terminalPrints.push(message); }),
+      select: vi.fn(async () => "host_choice"),
+    };
+    const session = createSession({
+      extensionRunner: {
+        getUIContext: () => hostUi,
+        setUIContext: () => undefined,
+        getCommand: () => undefined,
+        createCommandContext: () => ({
+          isIdle: () => true,
+          waitForIdle: async () => undefined,
+          ui: hostUi,
+        }),
+      },
+    });
+    const harness = createHarness({
+      session,
+      bridge: createBridge(),
+      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      notifySendsToChat: true,
+      telegramCommands: new Map<string, any>([
+        ["changelog", async (_args: string, ctx: any) => {
+          await ctx.ui.notify("Changelog: https://example.test/releases", "info");
+        }],
+      ]),
+    });
+
+    await send(harness, "/changelog");
+
+    await vi.waitFor(() => {
+      expect(harness.calls.some((call) => call.text?.includes("Changelog: https://example.test"))).toBe(true);
+    });
+    // The terminal user still sees the notification the host printed.
+    expect(terminalPrints).toContain("Changelog: https://example.test/releases");
   });
 
   const send = async (harness: { controller: { handleMessage(m: unknown): Promise<void> } }, text: string) => {

@@ -607,12 +607,11 @@ export const tuiBridge: TuiBridgeAdapter = {
  * Whether the host's own components may serve prompts raised by Telegram work
  * (§4.9). Handing a prompt to the host only helps where the DialogBroker can read
  * the component afterwards: otherwise Telegram keeps a screen of arrow keys and no
- * way to answer. OMP's confirm and custom components are readable, but its select
- * list, text input and `ask` dialog render into an overlay without taking focus and
- * have no adapters yet (§4.6), so OMP keeps the plugin's own prompts for now.
+ * way to answer. Both hosts qualify: a focused component the host asked a question
+ * about is a dialog whatever it is shaped like (§4.1.3), and a dialog that keeps
+ * its rows private is read from the frame it draws and answered with the keystrokes
+ * its own legend advertises (§4.6.5).
  */
 export function hostOwnsPrompts(bridge: TuiBridgeAdapter, configuredMode: string): boolean {
-  return configuredMode === "full"
-    && bridge.isAvailable()
-    && bridge.getHost() === "pi";
+  return configuredMode === "full" && bridge.isAvailable();
 }
