@@ -998,6 +998,8 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 ### 阶段 3：列表、设置、登录
 
+**v6 拆分**：阶段 3 拆为 3A 清理与对齐 → 3B 扩展对话框 → 3C OMP 内置选择器 → 3D pi 内置选择器 → 3E 收尾验收，3A 再拆为 4 个检查点，详见任务清单"阶段 3 拆分"。下面的原始描述保留作背景。
+
 - 适配器 5-9；所有命令切换到 Gateway；删除三个命令集合常量。
 - **OMP 只有输出的命令接入 Gateway**：先实现 `InfoPanelAdapter`/快照面板截获，覆盖 `showCommandReport`、`showDebugSelector`、`showUsageDashboard`、`showExtensionsDashboard`、`showAgentsDashboard` 等全屏报告；再把 `/status`、`/usage`、`/stats`、`/context`、`/changelog`、`/help`、`/skills`、`/plugins`、`/extensions`、`/tools`、`/agents`、`/mcp`、`/plan`、`/jobs`、`/todo`、`/memory` 加入 OMP 白名单。面板必须能在 Telegram 看到正文，不能只回 ack。
 - **验收**：`/model`（含搜索、翻页、当前值）、`/resume`、`/settings`（含切换值、子菜单）、`/login`（多步，含 API key 输入且 Telegram 上不出现明文）、`/logout`、`/scoped-models`、`/tree`、`/fork`（编辑器文本发到 Telegram，本地草稿恢复）在 pi 和 OMP 上可用，结果状态与终端一致；**OMP 的只有输出命令从 Gateway 执行且面板正文被截获**。
