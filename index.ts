@@ -913,7 +913,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     // Bridge may capture host TUI after initial sync; refresh menu with dynamic host commands.
     scheduleTelegramCommandRefresh(config.botToken, pi, config.apiBase, 300);
     scheduleTelegramCommandRefresh(config.botToken, pi, config.apiBase, 1000);
-    lastStatusError = undefined;
+    lastStatusError = tuiBridge.isAvailable() ? undefined : `TUI bridge unavailable: ${tuiBridge.getHost()}`;
     heartbeat.startStatusHeartbeat(refreshStatus);
     refreshStatus();
   });

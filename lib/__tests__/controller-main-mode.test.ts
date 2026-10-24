@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTelegramController } from "../controller.ts";
+import type * as tuiBridgeModule from "../tui-bridge.ts";
+
+// v6: the host bridge is the only path for host commands - run these with the bridge up.
+vi.mock("../tui-bridge.ts", async (importOriginal) => {
+  const mod = await importOriginal<typeof tuiBridgeModule>();
+  return { ...mod, tuiBridge: { ...mod.tuiBridge, isAvailable: () => true, getHost: () => "pi" as const } };
+});
 
 // ── TUI parity (fixed behavior, no modes) ────────────────────────────────
 // Telegram messages behave exactly like typing in the pi terminal:

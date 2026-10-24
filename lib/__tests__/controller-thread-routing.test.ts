@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTelegramController } from "../controller.ts";
 import type { TelegramTransport, TelegramTurn } from "../types.ts";
+import type * as tuiBridgeModule from "../tui-bridge.ts";
+
+// v6: the host bridge is the only path for host commands - run these with the bridge up.
+vi.mock("../tui-bridge.ts", async (importOriginal) => {
+  const mod = await importOriginal<typeof tuiBridgeModule>();
+  return { ...mod, tuiBridge: { ...mod.tuiBridge, isAvailable: () => true, getHost: () => "pi" as const } };
+});
 
 function defer() {
   let resolve!: () => void;

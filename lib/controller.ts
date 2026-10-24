@@ -629,6 +629,11 @@ const MIRROR_FIRST_COMMANDS = new Set(["login", "logout"]);
 // with an actionable message — never left to crash inside the handler.
 const HOST_CAPABILITY_COMMANDS = new Set(["login", "logout", "fork", "clone"]);
 
+/** Plugin-owned bot-management commands: reachable even when the host bridge is down (v6 决定 48). */
+const PLUGIN_LOCAL_COMMANDS: Record<string, true> = {
+  tg: true, stop: true, cwd: true, cd: true, status: true, debug: true, pair: true, more: true,
+};
+
 const nativeHandlerAvailable = (
   name: string,
   session: CapturedAgentSession,
@@ -1042,7 +1047,6 @@ export function createTelegramController(deps: {
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
   const hostIsOmp = deps.isOmpHost ?? isOmpHost;
   const tuiMirrors = new Map<string, TuiMirror>();
-  const getTuiMode = () => deps.getConfig?.().tuiBridge ?? "commands";
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
   const focusTracker = new FocusTracker();
@@ -1067,7 +1071,7 @@ export function createTelegramController(deps: {
     origin: originTracker,
     output: outputCapture,
     focus: focusTracker,
-    isEnabled: () => getTuiMode() !== "off",
+    isEnabled: () => true,
     readDraft: () => {
       const reader = bridge.readEditorText;
       return reader ? reader.call(bridge) : readHostEditorText();
@@ -1107,7 +1111,7 @@ export function createTelegramController(deps: {
     // dialogs it can actually read. A host without a usable bridge has no focus to
     // track anyway, and OMP's components render in an overlay without focus, so
     // there it must stay completely inert - see hostOwnsPrompts.
-    enabled: () => hostOwnsPrompts(bridge, getTuiMode()),
+    enabled: () => hostOwnsPrompts(bridge),
   });
   dialogBroker.start();
 
@@ -1143,7 +1147,7 @@ export function createTelegramController(deps: {
     const brokerSession = dialogBroker.sessionFor(mirror.chatId, mirror.messageThreadId);
     const brokerOwnsDialog = dialogBroker.mirrorsFor(mirror.chatId, mirror.messageThreadId);
     if (brokerSession?.telegram?.messageId === mirror.messageId) return;
-    const canControl = snapshot.interactive && getTuiMode() === "full" && !mirror.pendingText && !brokerOwnsDialog;
+    const canControl = snapshot.interactive && !mirror.pendingText && !brokerOwnsDialog;
     const selectorKeyboard = canControl && selector
       ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true }, snapshot.text ?? "")
       : undefined;
@@ -1155,16 +1159,12 @@ export function createTelegramController(deps: {
       : snapshot.interactive
         ? (selector?.title ?? dialogTitle ?? (selector ? "TUI selector" : "TUI screen"))
         : (dialogTitle ?? "TUI");
-    const inputHint = snapshot.interactive && !selector && getTuiMode() === "full"
-      && hasInputPrompt(snapshot.text ?? "")
+    const inputHint = snapshot.interactive && !selector && hasInputPrompt(snapshot.text ?? "")
       ? "\n\n<i>⌨️ This dialog expects typed input: tap ⌨️ Type, send the text as the next message, then tap ⏎ Enter.</i>"
       : "";
-    const hint = snapshot.interactive && getTuiMode() !== "full"
-      ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
-      : inputHint;
     const text = selectorKeyboard && selector
       ? formatSelectorMessage(selector)
-      : `${formatTuiSnapshot(snapshot, title, selector)}${hint}`;
+      : `${formatTuiSnapshot(snapshot, title, selector)}${inputHint}`;
     const rows: TelegramButton[][] | undefined = mirror.pendingText
       ? [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]
       : canControl
@@ -1192,7 +1192,6 @@ export function createTelegramController(deps: {
    * exactly what someone at the terminal would do.
    */
   const startPromptMirror = (turn: TelegramTurn): void => {
-    if (getTuiMode() !== "full") return;
     const chatId = turn.chatId;
     const messageThreadId = turn.messageThreadId;
     const key = targetKey(chatId, messageThreadId);
@@ -1249,7 +1248,7 @@ export function createTelegramController(deps: {
     // message the Broker draws (see refreshTuiMirror) rather than standing down for the
     // whole chat (§4.4): a dialog left open by an earlier step must not silence every
     // command that comes after it.
-    if (getTuiMode() !== "full" || !bridge.isAvailable()) return undefined;
+    if (!bridge.isAvailable()) return undefined;
     return () => startPromptMirror(turn);
   };
 
@@ -1261,7 +1260,7 @@ export function createTelegramController(deps: {
    * them in Telegram. See hostOwnsPrompts for the full condition.
    */
   const promptUiMode = (): "telegram-native" | "host" =>
-    (hostOwnsPrompts(bridge, getTuiMode()) ? "host" : "telegram-native");
+    (hostOwnsPrompts(bridge) ? "host" : "telegram-native");
 
   const runTuiCommand = async (
     name: string,
@@ -1284,7 +1283,6 @@ export function createTelegramController(deps: {
     messageThreadId?: number,
     sourceMessageId?: number,
   ): Promise<void> => {
-    if (getTuiMode() === "off") return;
     await bridge.ready().catch(ctrlLog.swallow("debug", "TUI bridge readiness failed"));
     if (!bridge.isAvailable()) {
       await deps.transport.sendText(
@@ -1332,7 +1330,7 @@ export function createTelegramController(deps: {
       return;
     }
 
-    if (snapshot.interactive && getTuiMode() === "full") {
+    if (snapshot.interactive) {
       // Give the broker a beat: a dialog this command opened belongs to it, and two
       // mirrors of one dialog would fight over the same keystrokes.
       await sleep(TUI_PROMPT_POLL_MS * 2);
@@ -1656,7 +1654,7 @@ export function createTelegramController(deps: {
   };
 
   const unsubscribeLocalTui = bridge.onLocalSubmit((text) => {
-    if (getTuiMode() === "off" || deps.isTelegramActive?.() === false) return;
+    if (deps.isTelegramActive?.() === false) return;
     const command = text.trim();
     if (!command.startsWith("/") && !command.startsWith("!")) return;
     if (/^\/?tg(?:-|$)/.test(command)) return;
@@ -2023,6 +2021,14 @@ export function createTelegramController(deps: {
     messageThreadId?: number,
     sourceMessageId?: number,
   ): Promise<boolean> => {
+    // v6 (决定 48): no bridge, no path to the host. Host-facing commands answer
+    // with the fixed outage notice instead of silently falling back; plugin-owned
+    // bot management stays available.
+    if (!bridge.isAvailable() && !PLUGIN_LOCAL_COMMANDS[name] && !name.startsWith("tg-")) {
+      await deps.transport.sendText(chatId, `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`, messageThreadId, sourceMessageId)
+        .catch(ctrlLog.swallow("warn", "sendText bridge outage notice failed", { chatId }));
+      return true;
+    }
     // /more opens the overflow keyboard for this bot's menu. Only claimed when
     // an overflow exists, so a user-registered /more keeps working otherwise.
     if (name === "more" && menuOverflow().length > 0) {
@@ -2033,7 +2039,7 @@ export function createTelegramController(deps: {
 
     // Stage 1 gateway: output-only commands go straight to the host editor.
     // Native handlers and the screen mirror must not also run for these.
-    if (getTuiMode() !== "off" && bridge.isAvailable() && commandGateway.couldHandle(name)) {
+    if (bridge.isAvailable() && commandGateway.couldHandle(name)) {
       if (commandGateway.handles(name)) {
         const handled = await commandGateway.run({
           name,
@@ -2052,7 +2058,7 @@ export function createTelegramController(deps: {
     // These commands deliberately use the host selector/confirmation UI when
     // the bridge is enabled. Telegram-native handlers remain the fallback when
     // the host catalog does not expose the command.
-    if (getTuiMode() !== "off" && TUI_NATIVE_SELECTOR_COMMANDS.has(name)) {
+    if (TUI_NATIVE_SELECTOR_COMMANDS.has(name)) {
       const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
       const catalog = await bridge.getCommands().catch(() => []);
       const known = catalog.some((command) => candidates.has(command.name)
@@ -2075,7 +2081,7 @@ export function createTelegramController(deps: {
     // native re-implementation (labels, ordering, status markers and paging
     // stay identical to the terminal). Applies to every host that serves the
     // command; the branches below remain as the fallback.
-    if (getTuiMode() === "full" && MIRROR_FIRST_COMMANDS.has(name)) {
+    if (MIRROR_FIRST_COMMANDS.has(name)) {
       const mirrorCandidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
       const mirrorCatalog = await bridge.getCommands().catch(() => []);
       const served = mirrorCatalog.some((command) => mirrorCandidates.has(command.name)
@@ -2091,12 +2097,10 @@ export function createTelegramController(deps: {
     if (handler && HOST_CAPABILITY_COMMANDS.has(name) && !nativeHandlerAvailable(name, session, hostIsOmp())) {
       ctrlLog.debug("command route", { name, route: "capability-missing", hostPrompts: promptUiMode() === "host" });
       recordCommandUsage(name);
-      if (getTuiMode() !== "off") {
-        const catalog = await bridge.getCommands().catch(() => []);
-        if (catalog.some((command) => command.name === name || (command.aliases ?? []).includes(name))) {
-          void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
-          return true;
-        }
+      const catalog = await bridge.getCommands().catch(() => []);
+      if (catalog.some((command) => command.name === name || (command.aliases ?? []).includes(name))) {
+        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
+        return true;
       }
       await deps.transport.sendText(chatId, hostCommandUnavailableNotice(name), messageThreadId, sourceMessageId);
       return true;
@@ -2118,17 +2122,15 @@ export function createTelegramController(deps: {
       return true;
     }
 
-    if (getTuiMode() !== "off") {
-      const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
-      const catalog = await bridge.getCommands().catch(() => []);
-      const known = catalog.some((command) => candidates.has(command.name)
-        || (command.aliases ?? []).some((alias) => candidates.has(alias)));
-      if (known) {
-        ctrlLog.debug("command route", { name, route: "host-catalog" });
-        recordCommandUsage(name);
-        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
-        return true;
-      }
+    const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
+    const catalog = await bridge.getCommands().catch(() => []);
+    const known = catalog.some((command) => candidates.has(command.name)
+      || (command.aliases ?? []).some((alias) => candidates.has(alias)));
+    if (known) {
+      ctrlLog.debug("command route", { name, route: "host-catalog" });
+      recordCommandUsage(name);
+      void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
+      return true;
     }
     return false;
   };
@@ -2403,6 +2405,11 @@ export function createTelegramController(deps: {
         })();
         const handled = trimmed ? await tryHandleSlashCommand(text, chatId, messageThreadId, sourceMessageId) : false;
         if (!handled) {
+          if (!bridge.isAvailable()) {
+            await deps.transport.sendText(chatId, `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`, messageThreadId, sourceMessageId)
+              .catch(ctrlLog.swallow("warn", "sendText bridge outage notice failed", { chatId }));
+            return;
+          }
           const parsed = parseLeadingCommand(text);
           const basePrompt = parsed
             ? `/${parsed.name.replace(/_/g, "-")}${parsed.args ? ` ${parsed.args}` : ""}`

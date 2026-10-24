@@ -1,13 +1,12 @@
 import type { TgConfigDeps } from "./register.ts";
-import type { TelegramBashConfirm, TelegramConfig, TelegramRenderLevel, TelegramTuiBridgeMode } from "../types.ts";
-import { BASH_CONFIRM_MODES, RENDER_LEVELS, TUI_BRIDGE_MODES } from "../types.ts";
+import type { TelegramBashConfirm, TelegramConfig, TelegramRenderLevel } from "../types.ts";
+import { BASH_CONFIRM_MODES, RENDER_LEVELS } from "../types.ts";
 import type { MenuUi } from "./telegram-commands.ts";
 
 const KEY_LABELS: Record<string, string> = {
   tool: "🔧 Tool rendering",
   thinking: "💭 Thinking rendering",
   retry: "🔄 Retry count",
-  tui: "🖥 TUI bridge",
   bash: "🐚 Shell confirm",
 };
 
@@ -77,33 +76,6 @@ export async function configRetryFlow(
   deps.setConfig(next);
   await deps.persistConfig(next);
   ui.notify(`${KEY_LABELS.retry} set to ${n}`, "info");
-}
-
-export async function configTuiFlow(
-  ui: MenuUi,
-  deps: TgConfigDeps,
-  value?: string,
-): Promise<void> {
-  const config = deps.getConfig();
-  const current = config.tuiBridge ?? "commands";
-  let selected: TelegramTuiBridgeMode | undefined;
-  if (value && (TUI_BRIDGE_MODES as readonly string[]).includes(value)) {
-    selected = value as TelegramTuiBridgeMode;
-  } else if (!value) {
-    const labels = [...TUI_BRIDGE_MODES].map((mode) => (mode === current ? `● ${mode}` : `  ${mode}`));
-    const choice = await ui.select(KEY_LABELS.tui, labels);
-    if (!choice) return;
-    const index = labels.indexOf(choice);
-    if (index >= 0) selected = TUI_BRIDGE_MODES[index];
-  } else {
-    ui.notify("Invalid. Use: off, commands, or full", "error");
-    return;
-  }
-  if (!selected) return;
-  const next: TelegramConfig = { ...config, tuiBridge: selected };
-  deps.setConfig(next);
-  await deps.persistConfig(next);
-  ui.notify(`${KEY_LABELS.tui} set to ${selected}`, "info");
 }
 
 export async function configBashFlow(

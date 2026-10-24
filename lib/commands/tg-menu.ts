@@ -7,7 +7,7 @@ import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
 import type { MenuUi, TelegramCommandDeps } from "./telegram-commands.ts";
 import type { TgConfigDeps, SessionDeps } from "./register.ts";
 import type { BotRecord, BotRegistry } from "../types.ts";
-import { configToolFlow, configThinkingFlow, configRetryFlow, configTuiFlow, configBashFlow } from "./tg-config.ts";
+import { configToolFlow, configThinkingFlow, configRetryFlow, configBashFlow } from "./tg-config.ts";
 import {
   addBotFlow,
   clearBotDefaultFlow,
@@ -322,7 +322,6 @@ async function configMenu(ui: MenuUi, configDeps: TgConfigDeps, sessionDeps?: Se
     const currentTool = config.tool ?? "brief";
     const currentThinking = config.thinking ?? "brief";
     const currentRetry = config.retryCount ?? 3;
-    const currentTui = config.tuiBridge ?? "commands";
     const currentBash = config.bashConfirm ?? "dangerous";
     // Model thinking level lives on the session, not the bridge config; the
     // flat /tg-thinking command was removed, so this menu is its Telegram-side
@@ -336,7 +335,6 @@ async function configMenu(ui: MenuUi, configDeps: TgConfigDeps, sessionDeps?: Se
       `💭 Thinking: ${currentThinking}`,
       ...(thinkingLevels.length > 0 ? [`🧠 Thinking level: ${session?.thinkingLevel ?? "off"}`] : []),
       `🔄 Retry: ${currentRetry}`,
-      `🖥 TUI bridge: ${currentTui}`,
       `🐚 Shell confirm: ${currentBash}`,
       BACK_LABEL,
     ]);
@@ -358,8 +356,6 @@ async function configMenu(ui: MenuUi, configDeps: TgConfigDeps, sessionDeps?: Se
       }
     } else if (choice.startsWith("🔄 Retry:")) {
       await configRetryFlow(ui, configDeps);
-    } else if (choice.startsWith("🖥 TUI bridge:")) {
-      await configTuiFlow(ui, configDeps);
     } else if (choice.startsWith("🐚 Shell confirm:")) {
       await configBashFlow(ui, configDeps);
     }

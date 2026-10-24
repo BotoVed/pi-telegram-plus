@@ -632,6 +632,6 @@ export const tuiBridge: TuiBridgeAdapter = {
  * its rows private is read from the frame it draws and answered with the keystrokes
  * its own legend advertises (§4.6.5).
  */
-export function hostOwnsPrompts(bridge: TuiBridgeAdapter, configuredMode: string): boolean {
-  return configuredMode === "full" && bridge.isAvailable();
+export function hostOwnsPrompts(bridge: TuiBridgeAdapter): boolean {
+  return bridge.isAvailable();
 }

@@ -8,6 +8,13 @@ import {
   scheduleTelegramCommandRefresh,
   syncTelegramCommands,
 } from "../menu-commands.ts";
+import type * as tuiBridgeModule from "../tui-bridge.ts";
+
+// v6: the host bridge is the only path for host commands - run these with the bridge up.
+vi.mock("../tui-bridge.ts", async (importOriginal) => {
+  const mod = await importOriginal<typeof tuiBridgeModule>();
+  return { ...mod, tuiBridge: { ...mod.tuiBridge, isAvailable: () => true, getHost: () => "pi" as const } };
+});
 
 const hostCommand = (name: string, description: string): SlashCommandInfo => ({
   name,

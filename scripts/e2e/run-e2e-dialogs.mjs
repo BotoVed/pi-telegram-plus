@@ -412,7 +412,8 @@ async function runHost(host, servers) {
       request ? `${(request.tools ?? []).length} tools advertised` : "no provider request");
   }
 
-  // ── the mode in effect decides which dialect a dialog may use ──────────
+  // ── the plugin is authenticated and the host bridge is up (v6: the bridge
+  //    is the only path, so there is no configured mode to read back) ──────
   {
     const since = await cursor();
     await injectText("/tg");
@@ -420,18 +421,22 @@ async function runHost(host, servers) {
       state.calls.slice(since).find((entry) =>
         String(entry.body?.text ?? "").includes("Telegram Management")) ?? false, { timeoutMs: 25_000 })
       .catch(() => undefined);
-    let mode;
+    let configShown;
     if (menu) {
       const config = buttonsOf(menu).find((b) => /Config/i.test(String(b.text ?? "")));
       if (config) await clickButton(config, menu.body?.message_id ?? menu.message_id);
-      const modeLine = (entry) =>
+      const configLine = (entry) =>
         `${String(entry?.body?.text ?? "")} ${buttonsOf(entry ?? {}).map((b) => String(b.text ?? "")).join(" ")}`;
-      const shown = await waitFor("config screen", (state) =>
-        state.calls.slice(since).find((entry) => /TUI bridge: \w+/.test(modeLine(entry))) ?? false,
+      configShown = await waitFor("config screen", (state) =>
+        state.calls.slice(since).find((entry) => /🔧 Tool: \w+/.test(configLine(entry))) ?? false,
         { timeoutMs: 25_000 }).catch(() => undefined);
-      mode = /TUI bridge: (\w+)/.exec(modeLine(shown))?.[1];
     }
-    record("project config in effect", mode === "full", `tuiBridge: ${mode ?? "unknown"}`);
+    const outage = await waitFor("outage notice scan", (state) =>
+      state.calls.find((entry) => /TUI bridge unavailable|宿主桥接不可用/.test(String(entry?.body?.text ?? ""))) ?? false,
+      { timeoutMs: 1 }).catch(() => undefined);
+    record("plugin authenticated and bridge available", Boolean(configShown) && outage === undefined,
+      outage ? `outage notice: ${String(outage.body?.text ?? "").slice(0, 60)}`
+        : (configShown ? "config rendered, no outage notice" : "config screen not shown"));
   }
 
   // A host that greets the session with a dialog of its own (OMP's update

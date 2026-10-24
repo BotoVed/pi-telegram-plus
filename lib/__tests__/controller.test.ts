@@ -3,6 +3,13 @@ import { encodeUiCallback } from "../callback-protocol.ts";
 import { createTelegramUiRuntime } from "../telegram-ui.ts";
 import { parseLeadingCommand, normalizeLeadingCommand } from "../command-parser.ts";
 import { createTelegramController } from "../controller.ts";
+import type * as tuiBridgeModule from "../tui-bridge.ts";
+
+// v6: the host bridge is the only path for host commands - run these with the bridge up.
+vi.mock("../tui-bridge.ts", async (importOriginal) => {
+  const mod = await importOriginal<typeof tuiBridgeModule>();
+  return { ...mod, tuiBridge: { ...mod.tuiBridge, isAvailable: () => true, getHost: () => "pi" as const } };
+});
 
 describe("parseLeadingCommand", () => {
   it("parses simple slash command", () => {

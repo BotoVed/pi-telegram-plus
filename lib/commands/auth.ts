@@ -297,7 +297,7 @@ function requireLegacyAuthStorage(
 ): PiLegacyAuthStorage | undefined {
   const authStorage = getLegacyAuthStorage(ctx, session);
   if (!authStorage) {
-    ui.notify("This host does not expose a compatible authentication API to Telegram. Use the local TUI /login, or enable the TUI bridge (tuiBridge: commands) to route /login to the host.", "error");
+    ui.notify("This host does not expose a compatible authentication API to Telegram. Use the local TUI /login.", "error");
     return undefined;
   }
   return authStorage;
@@ -471,7 +471,7 @@ async function runLegacyApiKeyLogin(
   const registry = requireLegacyRegistry(ctx, session);
   if (!authStorage || !registry) return false;
   if (typeof authStorage.set !== "function") {
-    ui.notify("This host does not expose a compatible authentication API to Telegram. Use the local TUI /login, or enable the TUI bridge (tuiBridge: commands) to route /login to the host.", "error");
+    ui.notify("This host does not expose a compatible authentication API to Telegram. Use the local TUI /login.", "error");
     return false;
   }
 

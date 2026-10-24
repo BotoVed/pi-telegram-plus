@@ -67,7 +67,6 @@ function createBridge(overrides: Partial<TuiBridgeAdapter> = {}): TuiBridgeAdapt
 }
 
 function createHarness(options: {
-  mode?: "off" | "commands" | "full";
   session?: CapturedAgentSession;
   bridge?: TuiBridgeAdapter;
 } = {}) {
@@ -95,7 +94,7 @@ function createHarness(options: {
       queuedAttachments: [],
     }),
     endTelegramTurn: () => undefined,
-    getConfig: () => ({ tuiBridge: options.mode ?? "full", bashConfirm: "dangerous", activeChatId: 42 }),
+    getConfig: () => ({ bashConfirm: "dangerous", activeChatId: 42 }),
     tuiBridge: options.bridge ?? createBridge(),
   });
   return { controller, calls, session };
@@ -104,31 +103,29 @@ function createHarness(options: {
 describe("dialog callback dispatch", () => {
   // A dialog payload is a key sequence for the focused component. Submitted as
   // text it would run as a prompt (or worse, as a shell line), so the dialog
-  // branch has to swallow it in every bridge mode.
-  for (const mode of ["off", "commands", "full"] as const) {
-    it(`never submits a dialog callback as a prompt in ${mode} mode`, async () => {
-      const harness = createHarness({ mode });
+  // branch has to swallow it.
+  it("never submits a dialog callback as a prompt", async () => {
+    const harness = createHarness();
 
-      await harness.controller.handleCallbackQuery({
-        id: "cb-9",
-        data: "tgplus:dlg:s1:0:c:0.1",
-        message: { message_id: 55, chat: { id: 42, type: "private" } },
-        from: { id: 7 },
-      });
-
-      expect(harness.session.prompt).not.toHaveBeenCalled();
-      expect(harness.calls.some((call) => call.method === "text"
-        && String(call.text).includes("tgplus:dlg:"))).toBe(false);
-      // Nothing is focused, so the answer is "handled in the terminal" and the
-      // dead keyboard has to come off the message.
-      expect(harness.calls.some((call) => call.method === "answer"
-        && call.text === "已在终端处理")).toBe(true);
-      expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 55)).toBe(true);
+    await harness.controller.handleCallbackQuery({
+      id: "cb-9",
+      data: "tgplus:dlg:s1:0:c:0.1",
+      message: { message_id: 55, chat: { id: 42, type: "private" } },
+      from: { id: 7 },
     });
-  }
+
+    expect(harness.session.prompt).not.toHaveBeenCalled();
+    expect(harness.calls.some((call) => call.method === "text"
+      && String(call.text).includes("tgplus:dlg:"))).toBe(false);
+    // Nothing is focused, so the answer is "handled in the terminal" and the
+    // dead keyboard has to come off the message.
+    expect(harness.calls.some((call) => call.method === "answer"
+      && call.text === "已在终端处理")).toBe(true);
+    expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 55)).toBe(true);
+  });
 
   it("swallows a dialog payload that no longer decodes", async () => {
-    const harness = createHarness({ mode: "full" });
+    const harness = createHarness();
 
     await harness.controller.handleCallbackQuery({
       id: "cb-10",
@@ -143,8 +140,8 @@ describe("dialog callback dispatch", () => {
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 56)).toBe(true);
   });
 
-  it("keeps plain chat text on the prompt path in full mode", async () => {
-    const harness = createHarness({ mode: "full" });
+  it("keeps plain chat text on the prompt path", async () => {
+    const harness = createHarness();
 
     await harness.controller.handleMessage({
       message_id: 60,
@@ -159,8 +156,8 @@ describe("dialog callback dispatch", () => {
     ));
   });
 
-  it("keeps shell input on the bash path in full mode", async () => {
-    const harness = createHarness({ mode: "full" });
+  it("keeps shell input on the bash path", async () => {
+    const harness = createHarness();
 
     await harness.controller.handleMessage({
       message_id: 61,

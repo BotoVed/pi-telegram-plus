@@ -69,7 +69,7 @@ function createBridge(overrides: Partial<TuiBridgeAdapter> = {}): TuiBridgeAdapt
 function createHarness(options: {
   session?: CapturedAgentSession;
   bridge?: TuiBridgeAdapter;
-  config?: { tuiBridge?: "off" | "commands" | "full"; bashConfirm?: "always" | "dangerous" | "never"; activeChatId?: number };
+  config?: { bashConfirm?: "always" | "dangerous" | "never"; activeChatId?: number };
   confirmResult?: boolean;
   telegramCommands?: Map<string, any>;
   confirm?: ReturnType<typeof vi.fn>;
@@ -82,7 +82,7 @@ function createHarness(options: {
   const session = options.session ?? createSession();
   const bridge = options.bridge ?? createBridge();
   const confirm = options.confirm ?? vi.fn(async () => options.confirmResult ?? true);
-  const config = options.config ?? { tuiBridge: "commands", bashConfirm: "dangerous", activeChatId: 42 };
+  const config = options.config ?? { bashConfirm: "dangerous", activeChatId: 42 };
   const controller = createTelegramController({
     getSession: () => session,
     transport,
@@ -184,7 +184,7 @@ describe("Telegram shell commands", () => {
 
   it("always asks before a safe command", async () => {
     const harness = createHarness({
-      config: { tuiBridge: "commands", bashConfirm: "always", activeChatId: 42 },
+      config: { bashConfirm: "always", activeChatId: 42 },
       confirmResult: false,
     });
     await harness.controller.handleMessage({
@@ -200,7 +200,7 @@ describe("Telegram shell commands", () => {
 
   it("never asks before a dangerous command", async () => {
     const harness = createHarness({
-      config: { tuiBridge: "commands", bashConfirm: "never", activeChatId: 42 },
+      config: { bashConfirm: "never", activeChatId: 42 },
     });
     await harness.controller.handleMessage({
       message_id: 15,
@@ -269,7 +269,7 @@ describe("TUI command bridge routing", () => {
     expect(edit.text).not.toContain("row 40 ");
   });
 
-  it("renders an interactive selector and routes callback keys in full mode", async () => {
+  it("renders an interactive selector and routes callback keys", async () => {
     const key = vi.fn(() => true);
     const bridge = createBridge({
       getCommands: async () => [{ name: "settings", description: "Open settings", source: "builtin" }],
@@ -278,7 +278,7 @@ describe("TUI command bridge routing", () => {
     });
     const harness = createHarness({
       bridge,
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -311,7 +311,7 @@ describe("TUI command bridge routing", () => {
     });
     const harness = createHarness({
       bridge,
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
       telegramCommands: new Map([["settings", nativeSettings]]),
     });
 
@@ -336,7 +336,7 @@ describe("TUI command bridge routing", () => {
     });
     const harness = createHarness({
       bridge,
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -374,7 +374,7 @@ describe("TUI command bridge routing", () => {
       });
       const harness = createHarness({
         bridge,
-        config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+        config: { bashConfirm: "dangerous", activeChatId: 42 },
       });
 
       await harness.controller.handleMessage({
@@ -406,7 +406,7 @@ describe("TUI command bridge routing", () => {
       .mockReturnValueOnce(closed);
     const harness = createHarness({
       bridge: createBridge({ snapshot, key }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -442,7 +442,7 @@ describe("TUI command bridge routing", () => {
     });
     const harness = createHarness({
       bridge,
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -482,7 +482,7 @@ describe("TUI command bridge routing", () => {
         snapshot: vi.fn(() => ({ text: "Login\n> ", interactive: true, host: "pi" as const, width: 100 })),
         key,
       }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -517,7 +517,7 @@ describe("TUI command bridge routing", () => {
         snapshot: vi.fn(() => ({ text: screen, interactive: true, host: "omp" as const, width: 100 })),
         key,
       }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -550,7 +550,7 @@ describe("TUI command bridge routing", () => {
         snapshot: vi.fn(() => ({ text: "Path\n> ", interactive: true, host: "pi" as const, width: 100 })),
         write,
       }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -627,10 +627,9 @@ describe("Host capability routing", () => {
     const asBridge = (value: unknown) => value as unknown as TuiBridgeAdapter; // only the two probed members matter
     // Both hosts: a dialog is recognised from the entry the host asked about, and
     // read from the frame it draws, whatever its fields look like (§4.6.5).
-    expect(hostOwnsPrompts(asBridge(adapter("pi")), "full")).toBe(true);
-    expect(hostOwnsPrompts(asBridge(adapter("omp")), "full")).toBe(true);
-    expect(hostOwnsPrompts(asBridge(adapter("pi")), "commands")).toBe(false);
-    expect(hostOwnsPrompts(asBridge(adapter("pi", false)), "full")).toBe(false);
+    expect(hostOwnsPrompts(asBridge(adapter("pi")))).toBe(true);
+    expect(hostOwnsPrompts(asBridge(adapter("omp")))).toBe(true);
+    expect(hostOwnsPrompts(asBridge(adapter("pi", false)))).toBe(false);
   });
 
   it("still reports to the chat for a command that only notifies while the host owns prompts", async () => {
@@ -658,7 +657,7 @@ describe("Host capability routing", () => {
     const harness = createHarness({
       session,
       bridge: createBridge(),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
       notifySendsToChat: true,
       telegramCommands: new Map<string, any>([
         ["changelog", async (_args: string, ctx: any) => {
@@ -708,7 +707,7 @@ describe("Host capability routing", () => {
     const harness = createHarness({
       session: ompLikeSession(),
       bridge: createBridge({ getCommands: async () => [] }),
-      config: { tuiBridge: "commands", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
       telegramCommands: new Map([["login", login]]),
     });
 
@@ -730,7 +729,7 @@ describe("Host capability routing", () => {
     await vi.waitFor(() => expect(login).toHaveBeenCalled());
   });
 
-  it("mirrors /login from the host TUI in full mode even when native auth exists", async () => {
+  it("mirrors /login from the host TUI even when native auth exists", async () => {
     const submit = vi.fn(() => true);
     const login = vi.fn();
     const harness = createHarness({
@@ -739,7 +738,7 @@ describe("Host capability routing", () => {
         submit,
         getCommands: async () => [{ name: "login", description: "Log in", source: "builtin" as const }],
       }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
       telegramCommands: new Map([["login", login]]),
     });
 
@@ -749,31 +748,13 @@ describe("Host capability routing", () => {
     expect(login).not.toHaveBeenCalled();
   });
 
-  it("keeps the native /login handler outside full mode", async () => {
-    const submit = vi.fn(() => true);
-    const login = vi.fn(async () => undefined);
-    const harness = createHarness({
-      session: piLikeSession(),
-      bridge: createBridge({
-        submit,
-        getCommands: async () => [{ name: "login", description: "Log in", source: "builtin" as const }],
-      }),
-      telegramCommands: new Map([["login", login]]),
-    });
-
-    await send(harness, "/login");
-
-    await vi.waitFor(() => expect(login).toHaveBeenCalled());
-    expect(submit).not.toHaveBeenCalled();
-  });
-
   it("keeps the native /login handler when the host catalog lacks the command", async () => {
     const submit = vi.fn(() => true);
     const login = vi.fn(async () => undefined);
     const harness = createHarness({
       session: piLikeSession(),
       bridge: createBridge({ submit, getCommands: async () => [] }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
       telegramCommands: new Map([["login", login]]),
     });
 
@@ -815,7 +796,7 @@ describe("Host capability routing", () => {
     await vi.waitFor(() => expect(fork).toHaveBeenCalled());
   });
 
-  it("lets the host render prompts and mirrors them in full mode", async () => {
+  it("lets the host render prompts and mirrors them", async () => {
     const selectorScreen = [
       "╭─ Pick one ──────────────────────╮",
       "│ ❯ alpha                        │",
@@ -842,7 +823,7 @@ describe("Host capability routing", () => {
       bridge: createBridge({
         snapshot: vi.fn(() => ({ text: selectorScreen, interactive: true, host: "pi" as const, width: 100 })),
       }),
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
 
     await harness.controller.handleMessage({
@@ -919,7 +900,7 @@ describe("Selector option buttons and pick routing", () => {
     });
     const harness = createHarness({
       bridge,
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
     return { harness, state, keys };
   }
@@ -1106,7 +1087,7 @@ describe("Selector option buttons and pick routing", () => {
     });
     const harness = createHarness({
       bridge,
-      config: { tuiBridge: "full", bashConfirm: "dangerous", activeChatId: 42 },
+      config: { bashConfirm: "dangerous", activeChatId: 42 },
     });
     return { harness, keys, cursor };
   };
