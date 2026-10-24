@@ -178,8 +178,10 @@
 | T4.5 | OMP 确认类与网络类命令 | — | ☐ | |
 | T4.6 | 未知 custom 组件走快照 | — | ☐ | |
 | T4.7 | 密钥脱敏覆盖三个发送源 | — | ☐ | |
-| T4.8 | 删除 `/tg-*` 命令，只保留 `/tg` 入口 | — | ☐ | |
-| T4.9 | 阶段 4 验收 | T4.1–T4.8 | ☐ | |
+| T4.8 | Project 连接/断开：修复不生效，改为显示真实状态 | — | ☐ | |
+| T4.9 | `/tg` 菜单按附录 M 重整 | T4.8 | ☐ | |
+| T4.10 | 删除 `/tg-*` 命令，只保留 `/tg` 入口 | T4.9 | ☐ | |
+| T4.11 | 阶段 4 验收 | T4.1–T4.10 | ☐ | |
 
 ### T4.1 `/copy`
 
@@ -218,9 +220,39 @@
 - **背景**：方案 §4.7.4 要求在 OutputCapture、Broker、`lib/renderer.ts` 三个发送源转换成 HTML 之前替换。阶段 2 可能已经完成一部分，本任务负责核对并补齐。
 - **完成标准**：单测覆盖方案 §7.1"密钥"一条的全部用例：三个来源都被脱敏；含 `& < >` 的密钥替换后 HTML 结构完好；短于 8 个字符的不登记；`/new` 后清空；Telegram turn 中输入的密钥同样生效。已有的测试直接引用，不用重写。
 
-### T4.8 删除 `/tg-*` 命令，只保留 `/tg` 入口
+### T4.8 Project 连接/断开：修复不生效，改为显示真实状态
 
-- **背景**（用户决定，2026-10-24）：插件自身的管理功能只通过 `/tg` 菜单进入。`/tg` 菜单（`lib/commands/tg-menu.ts`）已覆盖全部 `/tg-*` 功能：Bots（添加、列表、设为默认/清除默认、更新、删除）、Project（绑定/解绑、Enabled 开关即连接/断开）。
+- **背景**：现在 `/tg → Project → Enabled` 切换后，轮询和状态栏都没有真正改变。已核实的两个原因：
+  1. **项目没有单独绑定、使用全局默认 Bot 时，"关闭"会被立刻撤销。** `disableProjectFlow`（`lib/commands/telegram-commands.ts`）先把内存配置设为 `telegramEnabled: false`，紧接着 `switchResolvedConfig(readResolvedTelegramConfig(...))` 重读配置；没有绑定文件时 `materializeTelegramConfig`（`lib/config.ts`）一律给出 `telegramEnabled = true`。读回来又是开启，后台每 2 秒一次的 `reconcileCoordinator` 随即重启轮询。菜单重新显示 `● on`，状态栏不变。
+  2. **启动时强制改回开启。** `enableConfiguredTelegramOnStartup`（`lib/config.ts`，`index.ts` 启动流程调用）在有 Bot 时把 `telegramEnabled` 强制设为 `true` 并写回文件，断开状态在重启后丢失。
+- **要做**（语义见附录 M.2）：
+  - "断开"必须能持久记录，**包括没有单独绑定、使用全局默认 Bot 的项目**。做法：断开时写入项目绑定记录 `{ enabled: false }`，不写 `botId`，表示"仍用默认 Bot，但已断开"；`materializeTelegramConfig` 读到 `enabled: false` 时，不论有没有 `botId` 都给出 `telegramEnabled: false`。"连接"时如果该记录只有 `enabled` 这一项，就删除它，恢复成"没有绑定"；
+  - 启动时不再覆盖用户的断开：`enableConfiguredTelegramOnStartup` 只在**没有显式断开记录**时补 `true`；
+  - 连接、断开的结果以**实际运行状态**为准：操作后等待一次 `reconcileCoordinator` 完成，再刷新菜单和状态栏；
+  - 断开时这个实例如果是当前活跃实例，要释放活跃记录，让同一个 Bot 的其他 pi 实例可以接管（不要等记录过期）。
+- **完成标准**：
+  - 单测：有绑定、无绑定两种项目，分别"断开 → 重读配置 → 模拟重启"，三步之后都还是断开；"连接"后无绑定项目恢复成没有绑定记录；
+  - E2E（pi）：断开后 5 秒内，mock Telegram 不再收到 `getUpdates` 请求，状态栏显示 `disconnected`；在终端 `/tg` 中连接后，轮询恢复，状态栏恢复为已连接；重启 pi 后保持上一次的状态；
+  - 从 Telegram 断开：先出现二次确认，确认后 Telegram 收到"已断开，只能在终端重新连接"的提示，之后不再响应。
+- **不做**：菜单结构调整（T4.9）。
+
+### T4.9 `/tg` 菜单按附录 M 重整
+
+- **文件**：`lib/commands/tg-menu.ts`，必要时 `lib/commands/telegram-commands.ts`、`lib/pairing.ts`。
+- **要做**：按附录 M.1 的结构调整 Bots 和 Project 两个子菜单：
+  - Bots：全局默认 Bot 从单个 Bot 的详情页提出来，成为 Bots 下的独立一项；新增配对入口；
+  - Project：`Enabled: ● on / ○ off` 改为连接状态加操作按钮（附录 M.2）；
+  - 复用现有业务函数（`addBotFlow`、`updateBotFlow`、`removeBotFlow`、`setBotDefaultFlow`、`clearBotDefaultFlow`、`bindProjectFlow`、`unbindProjectFlow`），只改菜单层；T4.8 改过的连接/断开函数直接调用。
+- **完成标准**：
+  - 单测：菜单每一层的选项文字和顺序与附录 M.1 一致；
+  - 单测：配对页在"未配对""已配对"两种状态下显示正确；解除配对后 `allowedUserId` 被清除，并生成新的配对码；
+  - 单测：Project 页的连接状态来自运行状态（轮询是否运行、是否为活跃实例），不是配置字段；其他实例正在使用同一个 Bot 时显示"其他实例使用中"；
+  - E2E（pi）：从 Telegram 走一遍"Bots → 全局默认 Bot → 设置"和"Project → 绑定 Bot → 选择"，配置文件结果正确。
+- **不做**：删除 `/tg-*`（T4.10）。
+
+### T4.10 删除 `/tg-*` 命令，只保留 `/tg` 入口
+
+- **背景**（用户决定，2026-10-24）：插件自身的管理功能只通过 `/tg` 菜单进入。T4.9 完成后，`/tg` 菜单覆盖全部 `/tg-*` 功能。
 - **要删除的命令**：`/tg-bot-add`、`/tg-bot-list`、`/tg-bot-update`、`/tg-bot-remove`、`/tg-bot-default`、`/tg-bind-cwd`、`/tg-unbind-cwd`、`/tg-cwd-connect`、`/tg-cwd-disconnect`。
 - **要做**：
   - 删除 `lib/commands/telegram-commands.ts` 中这些命令的 `registerCommand` 注册；菜单调用的业务函数保留（菜单靠它们工作）；
@@ -236,9 +268,9 @@
   - 终端里 `/tg` 仍然可用（项目断开 Telegram 后只能从终端重新连接）。
 - **不做**：`/status`、`/debug` 与宿主命令重名的问题、`/tg` 菜单里仿造宿主功能的 Thinking level 选项（另行处理，需在方案 §10 待办中补记，本任务不动）。
 
-### T4.9 阶段 4 验收
+### T4.11 阶段 4 验收
 
-- 按方案 §6 阶段 4 的验收标准逐条报告，加上 T4.8 的完成标准。
+- 按方案 §6 阶段 4 的验收标准逐条报告，加上 T4.8–T4.10 的完成标准。
 
 ---
 
@@ -302,3 +334,59 @@
 
 - 方案 §6 阶段 5 的验收标准：§7.2 的状态等价测试在 `npm run test:pi-versions` 覆盖的全部 pi 版本和 OMP 上通过。
 - 汇报：每个版本的结果；不通过的版本单独列出原因，并说明是修复还是在兼容性矩阵中标为不支持（后者属于改验收标准，按规则 5 先问）。
+
+---
+
+## 附录 M：`/tg` 菜单方案（2026-10-24 用户确定，T4.8–T4.10 实施）
+
+### M.1 菜单结构
+
+原则：**Bots 管 Bot 本身（全局）**，**Project 管当前目录（本地）**。两边不交叉：全局默认 Bot 只在 Bots 里设置，连接/断开只在 Project 里操作。
+
+```
+/tg
+├─ 🤖 Bots                          全局，影响所有目录
+│   ├─ ➕ 添加 Bot
+│   ├─ Bot 列表 → 选一个 Bot
+│   │    ├─ 更新（名称、token）
+│   │    ├─ 配对 → 见 M.3
+│   │    └─ 删除
+│   ├─ ⭐ 全局默认 Bot：<名称 或 未设置>
+│   │    └─ 选择一个 Bot 设为默认 / 清除默认
+│   └─ ⬅️ 返回
+│
+├─ 📁 Project                       只影响当前目录
+│   ├─ 绑定 Bot：<名称> 或 <名称>（全局默认）
+│   │    └─ 选择一个 Bot 绑定 / 解绑（改用全局默认）
+│   ├─ 🟢 已连接 → [断开]          或   ⚪ 已断开 → [连接]
+│   └─ ⬅️ 返回
+│
+├─ ⌨️ Commands、⚙️ Config、Switch instance    本次不动
+└─ ⬅️ 返回
+```
+
+- Bot 列表中，每项标出"⭐ 默认"和配对状态（"已配对"/"未配对"）。
+- 当前目录没有任何可用 Bot（没有绑定，也没有全局默认）时，Project 页只显示"绑定 Bot：未设置"，不显示连接按钮。
+
+### M.2 连接 / 断开
+
+| 项目 | 规定 |
+|---|---|
+| 含义 | 当前目录的 pi 是否通过 Telegram 收发消息。只影响当前目录，不影响 Bot 本身，也不影响其他目录 |
+| 显示 | 按**实际运行状态**显示，不按配置字段：🟢 已连接（本实例正在轮询）；🟡 其他实例使用中（同一个 Bot 正由另一个 pi 实例服务）；⚪ 已断开（用户手动断开） |
+| 持久化 | **断开在重启后保持**，需要手动连接才恢复。没有单独绑定、用全局默认 Bot 的目录同样可以断开（T4.8 的记录方式） |
+| 从 Telegram 断开 | **允许**，必须二次确认，确认框写明"断开后 Telegram 将不再响应，只能在终端用 /tg 重新连接" |
+| 从 Telegram 连接 | 不可能（已断开时 Telegram 收不到消息），菜单里不需要处理 |
+| 操作之后 | 等实际状态切换完成，再刷新菜单和状态栏；状态栏与菜单显示必须一致 |
+| 旧命名 | `Enabled: ● on / ○ off` 不再使用；配置文件中的 `enabled` 字段名可以保留，只改菜单显示和语义 |
+
+以上"持久化"和"从 Telegram 断开"两条，是在用户未明确选择时按建议默认值写入的，用户改变决定时只需改这两行和 T4.8 的对应完成标准。
+
+### M.3 配对
+
+| 状态 | 显示 | 操作 |
+|---|---|---|
+| 未配对 | 配对码和步骤（复用 `formatPairingInstructions`） | 重新生成配对码 |
+| 已配对 | 已配对的 Telegram 用户（`allowedUserId`，有用户名时一并显示） | 解除配对：二次确认后清除 `allowedUserId` 并生成新的配对码；如果是在 Telegram 上操作，提示"解除后当前聊天将无法继续使用，需要重新配对" |
+
+- 配对本身仍由 Telegram 侧的 `/pair <配对码>` 完成，菜单只负责显示和重置。
