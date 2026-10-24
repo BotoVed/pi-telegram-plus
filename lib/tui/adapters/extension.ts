@@ -162,9 +162,11 @@ export const extensionInputAdapter: DialogAdapter = {
   id: "ext-input",
 
   detect(component, ctx) {
-    if (ctx.entry?.kind !== "input") return false;
-    // Secret or plain, the component is either an `Input` or wraps one.
-    return isInputShape(component) || findShape(component, isInputShape, 2) !== undefined;
+    // The entry call is the authority: `ui.input` / `showExtensionInput` promises a
+    // one-line answer. pi wraps its `Input` in a container and other hosts build the
+    // field later, so requiring the shape lost dialogs that are perfectly answerable -
+    // `read` and `act` already fall back to the component itself.
+    return ctx.entry?.kind === "input";
   },
 
   read(component, ctx): DialogModel {

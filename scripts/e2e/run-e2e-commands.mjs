@@ -626,11 +626,16 @@ async function runHost(host, label, phase = "main") {
       try {
         const step3 = await click(entry, target);
         if (/Retry/.test(pending)) {
+          // Regression: the number is answered by the host's own input dialog
+          // (§4.5) from plain Telegram text, so type a value that differs from
+          // the current one and require the notice to come back.
           const since = await cursor();
-          await injectMessage(current.replace(/\D+/g, "") || "3");
+          const typed = String((Number(current.replace(/\D+/g, "")) || 3) + 1);
+          await injectMessage(typed);
           const done = await waitFor(`config ${pending} applied`, (state) =>
             state.calls.slice(since).find((c) => RESPONSE_METHODS.has(c.method) && /set to/.test(String(c.body?.text ?? ""))) ?? false);
-          record(`config ${pending}`, true, String(done.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
+          record(`config ${pending} answered by typing ${typed}`, Boolean(done),
+            String(done.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
         } else {
           const option = buttonsOf(step3).find((b) => String(b.text ?? "").replace(/^● /, "").trim() === current);
           if (!option) {
@@ -790,8 +795,18 @@ async function runHost(host, label, phase = "main") {
   }
 
   // ── Management mutations (isolated dirs; exercises the real flows) ────
+  // Adding a bot goes through the /tg menu: the `/tg-bot-*` commands are slated
+  // for removal (T4.10) and the menu is what users actually have. The name is
+  // asked by the host's own input dialog (brokered), the token by the plugin's
+  // secret prompt, so this exercises both answer paths.
   try {
-    await dispatch("/tg-bot-add");
+    const mainForAdd = await openMain();
+    const botsMenu = await menuStep("Bots (add flow)", mainForAdd, /🤖 Bots/, [/🤖 Bots/, "➕ Add bot"]);
+    const add = findButton(botsMenu, /^➕ Add bot$/);
+    if (!add) throw new Error(`no ➕ Add bot entry: ${buttonsOf(botsMenu).map((b) => b.text).join(" / ")}`);
+    await click(add, botsMenu.body?.message_id ?? botsMenu.message_id);
+    await waitFor("bot name prompt", (state) =>
+      state.calls.findLast((c) => RESPONSE_METHODS.has(c.method) && /Bot name/i.test(String(c.body?.text ?? ""))) ?? false);
     await injectMessage("e2e-extra");
     await waitFor("bot token prompt", (state) =>
       state.calls.findLast((c) => RESPONSE_METHODS.has(c.method) && /token/i.test(String(c.body?.text ?? ""))) ?? false);
@@ -799,7 +814,7 @@ async function runHost(host, label, phase = "main") {
     await injectMessage("555555:E2E_TOKEN");
     const added = await waitFor("bot added", (state) =>
       state.calls.slice(since).findLast((c) => RESPONSE_METHODS.has(c.method) && /Bot added/i.test(String(c.body?.text ?? ""))) ?? false);
-    record("management /tg-bot-add", true, String(added.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
+    record("menu Bots → Add bot answered from Telegram", true, String(added.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
 
     const removed = await dispatch("/tg-bot-remove e2e-extra");
     record("management /tg-bot-remove", /Removed|removed/i.test(String(removed.body?.text ?? "")),

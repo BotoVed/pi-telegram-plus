@@ -26,7 +26,14 @@ export type EntrySink = {
 
 type EntryKindLiteral = "select" | "confirm" | "input" | "editor" | "custom" | "ask" | "approval";
 
-export type EntrySpec = { method: string; kind: EntryKindLiteral; factory?: boolean; extract: Extract };
+export type EntrySpec = {
+  method: string;
+  kind: EntryKindLiteral;
+  factory?: boolean;
+  extract: Extract;
+  /** Field the host assigns its freshly built component to, for `bindEntry`. */
+  componentField?: string;
+};
 
 type Extract = (args: unknown[]) => EntryInfo | undefined;
 
@@ -115,10 +122,10 @@ const approvalFrom: Extract = (args) => {
 
 /** pi 0.81.1 `InteractiveMode` entry methods. */
 export const PI_ENTRY_SPECS: EntrySpec[] = [
-  { method: "showExtensionSelector", kind: "select", extract: selectFrom },
-  { method: "showExtensionConfirm", kind: "confirm", extract: confirmFrom },
-  { method: "showExtensionInput", kind: "input", extract: inputFrom(false) },
-  { method: "showExtensionEditor", kind: "editor", extract: editorFrom },
+  { method: "showExtensionSelector", kind: "select", extract: selectFrom, componentField: "extensionSelector" },
+  { method: "showExtensionConfirm", kind: "confirm", extract: confirmFrom, componentField: "extensionSelector" },
+  { method: "showExtensionInput", kind: "input", extract: inputFrom(false), componentField: "extensionInput" },
+  { method: "showExtensionEditor", kind: "editor", extract: editorFrom, componentField: "extensionEditor" },
   { method: "showExtensionCustom", kind: "custom", factory: true, extract: customFrom },
 ];
 
@@ -192,17 +199,28 @@ export function hookEntryMethods(
         }
       : function patchedEntry(this: unknown, ...args: unknown[]): unknown {
           let pushed = false;
+          let info: EntryInfo | undefined;
           try {
-            const info = entryFromCall(spec, args, source);
+            info = entryFromCall(spec, args, source);
             if (info) pushed = sink.push(info);
           } catch {
             pushed = false;
           }
+          let result: unknown;
           try {
-            return call.apply(this, args);
+            result = call.apply(this, args);
           } finally {
             sink.pop(pushed);
           }
+          // The host assigns the component it just built to a field on itself.
+          // Binding records the entry on that component, so a dialog keeps its
+          // meaning even when the focus tracker only notices it on a later tick,
+          // after the pending entry has already been popped (§4.1.2).
+          const created = spec.componentField
+            ? (this as Record<string, unknown> | undefined)?.[spec.componentField]
+            : undefined;
+          if (info && created && typeof created === "object") sink.bind(created as object, info);
+          return result;
         };
     Object.defineProperty(wrapped, "name", { value: `ptp:${spec.method}` });
     tagged.add(original as object);
