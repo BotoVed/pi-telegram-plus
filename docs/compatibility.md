@@ -56,6 +56,14 @@ custom root `agentId`. The ref's session is re-attached on `/new` and session sw
 detached to `null` on dispose, and resolution happens per call rather than once at load —
 so capture also works when the extension loads after the session already exists (`/reload`).
 
+OMP also resolves the package under two module paths, so one process holds two copies of
+this extension, each with its own module state. Only the copy whose prototype patch landed
+first is ever told about a captured TUI mode; the other one has to be able to see that
+answer, which is why the bridge state hangs off a process-wide key in `lib/tui-bridge.ts`.
+Without the shared key the copy serving the chat concluded there was no bridge at all: it
+ignored the 88 commands the host advertises and kept every dialog on its own Telegram
+keyboard.
+
 Measured on OMP `18.12.2` (bun-installed, `omp --print`, isolated project plugin root):
 
 - inside an extension, `import("@earendil-works/pi-coding-agent")` is aliased to the host
@@ -189,13 +197,14 @@ install. That asymmetry is why the matrix keeps a mode that exposes it.
 | Suite | What it does | Command |
 |---|---|---|
 | `typecheck` | `tsc --noEmit` over the package | `npm run typecheck` |
-| Unit / regression | 38 files, 543 tests | `npm test` |
+| Unit / regression | 42 files, 577 tests | `npm test` |
 | Version matrix | Installs each pi version into a fresh temp tree, runs `typecheck` + tests | `npm run test:pi-versions` |
 | E2E acceptance | Real pi in `tmux` + mock Telegram Bot API + mock OpenAI provider | `npm run test:e2e` |
 | TUI bridge E2E matrix | Every pi version recorded E2E-passed plus OMP; local mirror, dynamic menu, selector mirrors incl. per-option buttons and Prev/Next paging, all key/type callbacks, bash streaming/exit/context policy | `npm run test:e2e:tui-bridge` |
 | OMP E2E acceptance | Real OMP `18.12.x` in `tmux` + the same mocks; asserts round trip, `/new` Telegram confirmation, post-`/new` capture, cursor rewind | `npm run test:e2e:omp` |
 | Command acceptance | Real pi + OMP in isolated `tmux` with the same mocks: dispatches every command the bot advertises (plus the hidden `/tg-*` management commands), walks `/tg` levels 1-4 (Bots → list → detail, Project → bind, Config → every flow, Commands → entry, Switch instance), covers `/model`, `/scoped-models`, `/login`, `/logout`, `/settings`, `/reload`, `/quit`, `/exit`, `/tg-cwd-disconnect`, and drives a real `ask` tool call end-to-end (mock provider emits the tool_call; the prompt is mirrored and answered through Telegram). The mock Bot API enforces the real payload contract (400 on violations), every recorded call is re-validated independently, and TUI mirrors are cross-checked against the host's `tmux` pane | `npm run test:e2e:commands` |
 | Interaction parity | Boots a fresh isolated host for *every* advertised command (OMP 92, pi 28), records the host screen and the Telegram surface side by side, and fails when a host dialog reached Telegram as plain text or dead buttons. Re-run with `npm run test:e2e:parity` (`--host pi|omp|both`, `PITG_PARITY_COMMANDS=/model,/settings`) | `npm run test:e2e:parity` |
+| Dialog round trip | Real pi / OMP with the same mocks plus the stage-0 probe extension: raises `select`, `confirm`, `input`, `inputSecret` and `custom` from an extension (and the `ask` tool from the mock provider), answers each one from Telegram *and* from the terminal, and asserts the value the extension call actually resolved to — not how the keyboard was drawn. Also asserts a secret answer never appears in a Bot API call. Re-run with `--host pi|omp|both`, `--goal confirm|question|questionnaire` | `npm run test:e2e:dialogs` |
 | Real Bot API smoke | Round-trips one temporary message through api.telegram.org (send → edit → delete) with the configured bot, and asserts the real API rejects an unsupported HTML tag while the local validator agrees | `npm run test:e2e:real` |
 
 The **E2E run asserts the whole round trip, not just startup**: the plugin authenticates

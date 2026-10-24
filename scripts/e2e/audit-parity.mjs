@@ -34,6 +34,12 @@ const rowsOf = (call) => call?.body?.reply_markup?.inline_keyboard;
 const buttonsOf = (call) => (rowsOf(call) ?? []).flat();
 const hasTui = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:tui:"));
 const hasUi = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:ui:"));
+// The DialogBroker answers a dialog with `tgplus:dlg:` buttons; item rows carry
+// a `c`/`t`/`m` op, so "has item buttons" is what makes a keyboard a real
+// selector rather than a wall of raw keys.
+const DIALOG_PICK = /^tgplus:dlg:[^:]+:\d+:[ctm](?::|$)/;
+const hasDialog = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:"));
+const isPickData = (data) => /^tgplus:tui:pick:/.test(data) || DIALOG_PICK.test(data);
 
 async function control(path, init) {
   const res = await fetch(`http://127.0.0.1:${TG_PORT}${path}`, { ...init, headers: { connection: "close", ...(init?.headers ?? {}) } });
@@ -102,16 +108,19 @@ function classify(call) {
   const text = String(call?.body?.text ?? "");
   const buttons = buttonsOf(call);
   const pickCount = buttons.filter((b) => /^tgplus:tui:pick:/.test(String(b.callback_data ?? ""))).length;
+  const dialogPickCount = buttons.filter((b) => DIALOG_PICK.test(String(b.callback_data ?? ""))).length;
   const kind = pickCount > 0 ? "tui-selector"
+    : dialogPickCount > 0 ? "dialog"
     : hasTui(call) ? "tui-mirror"
     : hasUi(call) ? "native-ui"
+    : hasDialog(call) ? "dialog"
     : buttons.length > 0 ? "menu"
     : "text";
   const title = (text.match(/^\s*<b>([\s\S]*?)<\/b>/) ?? [])[1]?.replace(/<[^>]+>/g, "") ?? "";
   return {
     kind,
     title: title.slice(0, 80),
-    options: pickCount || buttons.length,
+    options: pickCount || dialogPickCount || buttons.length,
     buttons: buttons.map((b) => String(b.text ?? "").slice(0, 20)).slice(0, 12),
     hasInputHint: /typed input/i.test(text),
     chars: text.length,
@@ -202,7 +211,7 @@ async function auditCommand(host, command, outFile) {
       const stateBefore = await controlGet();
       const kb = stateBefore.calls.slice(cursor).filter((entry) => Array.isArray(rowsOf(entry))).at(-1);
       const flat = (rowsOf(kb) ?? []).flat();
-      const picks = flat.filter((b) => String(b.callback_data ?? "").startsWith("tgplus:tui:pick:"));
+      const picks = flat.filter((b) => isPickData(String(b.callback_data ?? "")));
       const target = picks[tapIndex];
       if (target) {
         await injectCallback(String(target.callback_data), kb?.body?.message_id ?? kb?.message_id);
@@ -257,11 +266,11 @@ function reportGaps(outFile) {
   const soft = [];
   for (const row of rows) {
     const kind = row.telegram.kind;
-    if (row.pane.dialog && !["tui-mirror", "tui-selector", "native-ui"].includes(kind)) {
+    if (row.pane.dialog && !["tui-mirror", "tui-selector", "dialog", "native-ui"].includes(kind)) {
       hard.push(`${row.command}: host dialog but Telegram got ${kind} ("${row.telegram.title}")`);
     }
-    if (kind === "tui-selector") {
-      const picks = (row.buttons ?? []).filter((b) => String(b.data ?? "").startsWith("tgplus:tui:pick:"));
+    if (kind === "tui-selector" || kind === "dialog") {
+      const picks = (row.buttons ?? []).filter((b) => isPickData(String(b.data ?? "")));
       const junky = picks.filter((b) => /[│…]$/.test(String(b.text ?? "").trim()));
       if (junky.length > 0) soft.push(`${row.command}: ${junky.length} suspicious option label(s)`);
     }

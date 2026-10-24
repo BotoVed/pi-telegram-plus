@@ -151,6 +151,11 @@ function startHost(host, projectDir, agentDir, paneLog, session) {
 const rowsOf = (call) => call?.body?.reply_markup?.inline_keyboard;
 const buttonsOf = (call) => (rowsOf(call) ?? []).flat();
 const hasTui = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:tui:"));
+// Full bridge mode brokers dialogs: the keyboard carries `tgplus:dlg:` buttons
+// whose `c/t/v/m` ops are list rows and whose `x` op cancels.
+const DIALOG_CANCEL = /^tgplus:dlg:[^:]+:\d+:x$/;
+const hasDialog = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:"));
+const isControllable = (call) => hasTui(call) || hasDialog(call);
 const hasUi = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:ui:"));
 const lastKeyboardCall = (state, since = 0) => state.calls.slice(since).findLast((c) => Array.isArray(rowsOf(c)));
 const signature = (call) => `${String(call?.body?.text ?? "").slice(0, 200)}|${buttonsOf(call).map((b) => `${b.text}:${b.callback_data}`).join(",")}`;
@@ -271,6 +276,12 @@ async function runHost(host, label, phase = "main") {
       const call = lastKeyboardCall(state);
       if (!call) return;
       const target = call.body?.message_id ?? call.message_id;
+      if (hasDialog(call)) {
+        const cancel = buttonsOf(call).find((b) => DIALOG_CANCEL.test(String(b.callback_data ?? "")));
+        if (!cancel) return;
+        await click(cancel, target).catch(() => undefined);
+        continue;
+      }
       if (hasTui(call)) {
         const close = findButton(call, /^(Close|✖|❌|Esc)$/);
         if (!close) return;
@@ -395,7 +406,8 @@ async function runHost(host, label, phase = "main") {
     const since = await cursor();
     await injectMessage("please run the ask probe ASK_TOOL_PROBE");
     const mirror = await waitFor("ask prompt mirrored", (state) =>
-      state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && hasTui(entry)), 25_000)
+      state.calls.slice(since).findLast((entry) =>
+        Array.isArray(rowsOf(entry)) && (isControllable(entry) || hasUi(entry))), 25_000)
       .catch(() => undefined);
     if (!mirror) {
       const providerLog = join(ROOT, "provider.jsonl");
@@ -403,10 +415,11 @@ async function runHost(host, label, phase = "main") {
         && readFileSync(providerLog, "utf8").split("\n").filter(Boolean)
           .map((line) => { try { return JSON.parse(line); } catch { return {}; } })
           .some((entry) => (entry.tools ?? []).includes("ask"));
-      record("ask tool prompt mirrored", !askedTool, askedTool ? "tool offered but no mirror" : "skipped: host offers no ask tool");
+      record("ask tool prompt reaches Telegram", !askedTool,
+        askedTool ? "tool offered but nothing reached the chat" : "skipped: host offers no ask tool");
     } else {
       const labels = buttonsOf(mirror).map((b) => String(b.text ?? ""));
-      record("ask tool prompt mirrored", /red|green|blue/.test(labels.join(" ")),
+      record("ask tool prompt reaches Telegram", /red|green|blue/.test(labels.join(" ")),
         String(mirror.body?.text ?? "").replace(/<[^>]+>/g, "") + " · " + labels.slice(0, 4).join(" / "));
       const green = buttonsOf(mirror).find((b) => /green/.test(String(b.text ?? ""))) ?? buttonsOf(mirror)[0];
       const mirrorId = mirror.body?.message_id ?? mirror.message_id;
@@ -416,7 +429,8 @@ async function runHost(host, label, phase = "main") {
         const reply = await waitFor("ask answer reaches the model", (state) =>
           state.calls.slice(pickSince).findLast((c) => c.method === "sendMessage" && /MOCK_OK/i.test(String(c.body?.text ?? ""))) ?? false,
           30_000).catch(() => undefined);
-        record("ask answered through the mirror", Boolean(reply), reply ? "turn completed" : "no follow-up reply");
+        record("ask answered from Telegram", Boolean(reply),
+          `${isControllable(mirror) ? (hasDialog(mirror) ? "broker" : "mirror") : "native"} · ${reply ? "turn completed" : "no follow-up reply"}`);
       }
     }
     await settle();
@@ -717,9 +731,10 @@ async function runHost(host, label, phase = "main") {
   try {
     const call = await dispatch("/login");
     const isTui = hasTui(call);
+    const isDialog = hasDialog(call);
     const isNative = hasUi(call);
-    record("menu /login opens", isTui || isNative || /login|provider/i.test(String(call.body?.text ?? "")),
-      `${isTui ? "tui" : isNative ? "native" : "text"} · ${buttonsOf(call).map((b) => b.text).join(" / ").slice(0, 90)}`);
+    record("menu /login opens", isTui || isDialog || isNative || /login|provider/i.test(String(call.body?.text ?? "")),
+      `${isTui ? "tui" : isDialog ? "dialog" : isNative ? "native" : "text"} · ${buttonsOf(call).map((b) => b.text).join(" / ").slice(0, 90)}`);
     await settle();
   } catch (error) {
     record("menu /login opens", false, String(error.message).slice(0, 200));
@@ -739,16 +754,27 @@ async function runHost(host, label, phase = "main") {
     const first = await dispatch("/settings");
     // The command first acknowledges itself ("TUI command"); the interactive
     // mirror then arrives as an edit carrying tgplus:tui: controls.
-    const mirror = hasTui(first) ? first : await waitFor("settings mirror", (state) => {
-      const hit = state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && hasTui(entry));
+    const mirror = isControllable(first) ? first : await waitFor("settings mirror", (state) => {
+      const hit = state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry));
       return hit ?? false;
     }, 15_000).catch(() => undefined);
     const native = buttonsOf(first).length > 0;
-    record("menu /settings opens", (Boolean(mirror) && hasTui(mirror)) || native,
+    record("menu /settings opens", (Boolean(mirror) && isControllable(mirror)) || native,
       mirror ? `tui mirror · ${buttonsOf(mirror).slice(0, 4).map((b) => b.text).join(" / ")}` : String(first.body?.text ?? "").replace(/<[^>]+>/g, "").slice(0, 60));
     // Cross-check the mirror against the host's real terminal, so this step
     // cannot pass on a fabricated screen.
-    if (mirror && hasTui(mirror)) {
+    if (mirror && hasDialog(mirror)) {
+      // A brokered dialog is built from the host component's own labels, so every
+      // button label has to exist verbatim in the terminal - a fabricated mirror
+      // cannot pass.
+      const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+      const words = [...new Set(buttonsOf(mirror)
+        .map((b) => String(b.text ?? "").replace(/^[^A-Za-z]+/, "").slice(0, 12))
+        .filter((word) => word.length >= 5))];
+      const hits = words.filter((word) => pane.includes(word));
+      record("settings mirror matches the host screen", hits.length >= 3,
+        `${hits.length}/${words.length} dialog labels found in pane · ${hits.slice(0, 3).join(" / ")}`);
+    } else if (mirror && hasTui(mirror)) {
       const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
       const plain = String(mirror.body?.text ?? "").replace(/<[^>]+>/g, " ");
       const phrases = (plain.match(/[A-Za-z][A-Za-z0-9 ._-]{7,30}/g) ?? [])

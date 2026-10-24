@@ -79,12 +79,19 @@ const server = createServer(async (req, res) => {
   const toolNames = (parsed.tools ?? [])
     .map((tool) => tool?.function?.name ?? tool?.name ?? "")
     .filter(Boolean);
+  const lastMessage = (parsed.messages ?? []).at(-1);
   record({
     ts: Date.now(),
     direction: "in",
     model: parsed.model,
     prompt: promptText.slice(0, 4000),
     userText: userText.slice(0, 4000),
+    // OMP's system prompt alone overflows the slice above, so a driver that must
+    // see what the host just sent - a tool result, the latest user text - reads
+    // the final message instead.
+    lastRole: typeof lastMessage?.role === "string" ? lastMessage.role : undefined,
+    lastText: lastMessage === undefined ? undefined
+      : JSON.stringify(lastMessage.content ?? lastMessage.text ?? "").slice(0, 2000),
     tools: toolNames,
   });
 
@@ -95,8 +102,12 @@ const server = createServer(async (req, res) => {
   // and falls through to the normal text reply.
   const hasToolResult = (parsed.messages ?? []).some((message) =>
     message?.role === "tool" || message?.role === "toolResult");
+  // Only the request that immediately follows a tool result is the echo of an
+  // answer. A tool result somewhere in the history must not rule out a later ask:
+  // a driver raises the single-question ask and then the multi-question one.
+  const justAnswered = lastMessage?.role === "tool" || lastMessage?.role === "toolResult";
   const askTool = toolNames.find((name) => name === "ask");
-  const triggerAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE")
+  const triggerAsk = Boolean(askTool) && !justAnswered && userText.includes("ASK_TOOL_PROBE")
     && !userText.includes("ASK_TOOL_PROBE_MULTI") && !userText.includes("ASK_TOOL_PROBE_CHECK");
   const askArguments = JSON.stringify({
     questions: [{
@@ -111,8 +122,8 @@ const server = createServer(async (req, res) => {
   // Multi-question / multi-select variant for the parity suite: the first
   // question is a checkbox group, the second a single choice, so the mirror
   // must toggle instead of submitting on the first pick.
-  const triggerMultiAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE_MULTI");
-  const triggerCheckAsk = Boolean(askTool) && !hasToolResult && userText.includes("ASK_TOOL_PROBE_CHECK");
+  const triggerMultiAsk = Boolean(askTool) && !justAnswered && userText.includes("ASK_TOOL_PROBE_MULTI");
+  const triggerCheckAsk = Boolean(askTool) && !justAnswered && userText.includes("ASK_TOOL_PROBE_CHECK");
   const checkAskArguments = JSON.stringify({
     questions: [{
       id: "e2e-toppings",

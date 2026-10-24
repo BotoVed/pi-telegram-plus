@@ -8,9 +8,10 @@
  *
  *   1. BotMenu includes commands discovered from the live host catalog.
  *   2. A local TUI command is mirrored to Telegram without opening a selector.
- *   3. Telegram `/settings` opens the real selector with `tgplus:tui:` controls.
- *   4. up/down/left/right/enter/esc/space/tab/refresh/close/type/cancel-type all
- *      traverse the real host input path and mirror their lifecycle.
+ *   3. Telegram `/settings` opens the real dialog with either keyboard dialect:
+ *      `tgplus:tui:` raw keys (mirror) or `tgplus:dlg:` semantic rows (broker).
+ *   4. Rows/keys/cancel reach the real host input path and mirror their
+ *      lifecycle; text typed while a dialog owns the input never becomes a prompt.
  *   5. `!cmd` streams output and exit status; dangerous commands can be rejected.
  *   6. `!!cmd` reports nonzero exits and its output is absent from the next real
  *      provider request.
@@ -195,6 +196,17 @@ function startServer(name, script, args) {
 function messages(state) {
   return state.calls.filter((call) => call.method === "sendMessage" || call.method === "editMessageText");
 }
+
+// Keyboard dialects. `commands` mode mirrors the terminal screen and forwards
+// raw keys (`tgplus:tui:`); `full` mode brokers the dialog itself
+// (`tgplus:dlg:<session>:<generation>:<op>[:<arg>]`), where `c/t/v/m` are rows,
+// `k` is a key name and `x` is cancel.
+const DIALOG_PREFIX = "tgplus:dlg:";
+const DIALOG_ROW = /^tgplus:dlg:[^:]+:\d+:(?:[ctvm])(?::|$)/;
+const DIALOG_KEY = /^tgplus:dlg:[^:]+:\d+:k:/;
+const DIALOG_CANCEL = /^tgplus:dlg:[^:]+:\d+:x$/;
+const isControllable = (data) => String(data ?? "").startsWith("tgplus:tui:")
+  || String(data ?? "").startsWith(DIALOG_PREFIX);
 
 function seedEnvironment(host, runDir) {
   const agentDir = join(runDir, "agent");
@@ -393,7 +405,7 @@ async function runHost(host, piCli, label) {
       const call = messages(state).find((entry) => {
         const rows = entry.body?.reply_markup?.inline_keyboard;
         return Array.isArray(rows)
-          && rows.flat().some((button) => String(button.callback_data ?? "").startsWith("tgplus:tui:"));
+          && rows.flat().some((button) => isControllable(button.callback_data));
       });
       return call ?? false;
     });
@@ -405,8 +417,22 @@ async function runHost(host, piCli, label) {
     record("Telegram command opens a remotely controllable TUI selector", false, String(error.message).slice(0, 400));
   }
 
-  try {
-    if (mirrorMessageId === undefined) throw new Error("no mirror message");
+  const keyboardOf = async () => {
+    const state = await controlGet("/_control/log");
+    const call = state.calls
+      .filter((entry) => Array.isArray(entry.body?.reply_markup?.inline_keyboard))
+      .filter((entry) => (entry.body?.message_id ?? entry.message_id) === mirrorMessageId)
+      .at(-1);
+    return (call?.body?.reply_markup?.inline_keyboard ?? []).flat();
+  };
+
+  const callbackAnswered = async (callbackId) => {
+    await waitFor(`${callbackId} answered`, (state) => state.calls.some((entry) =>
+      entry.method === "answerCallbackQuery" && entry.body?.callback_query_id === callbackId));
+  };
+
+  // Legacy keyboard (`tuiBridge: "commands"`): raw keys replayed into the mirror.
+  const runRawKeyExercise = async () => {
     const exerciseCallback = async (action) => {
       const before = await controlGet("/_control/log");
       const editsBefore = before.calls.filter((call) =>
@@ -444,7 +470,47 @@ async function runHost(host, piCli, label) {
     }
     await waitFor("Esc callback releases the selector", (state) => state.calls.some((call) =>
       call.method === "editMessageReplyMarkup" && call.body?.message_id === mirrorMessageId));
-    record("all TUI key/type/refresh callbacks reach the selector", true);
+  };
+
+  try {
+    if (mirrorMessageId === undefined) throw new Error("no mirror message");
+    const buttons = await keyboardOf();
+    if (!buttons.some((button) => String(button.callback_data ?? "").startsWith(DIALOG_PREFIX))) {
+      await runRawKeyExercise();
+      record("all TUI key/type/refresh callbacks reach the selector", true);
+    } else {
+      // `full` mode: the keyboard carries semantic buttons resolved against the
+      // live component, so the proof is that the terminal reacts to them. The
+      // keyboard is re-read before each tap because a brokered action republishes
+      // the message with a fresh generation.
+      const paneBefore = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+      const tapped = [];
+      for (const pattern of [DIALOG_ROW, DIALOG_ROW, DIALOG_KEY]) {
+        const button = (await keyboardOf()).find((entry) => {
+          const data = String(entry.callback_data ?? "");
+          return pattern.test(data) && !tapped.includes(data);
+        });
+        if (!button) continue;
+        tapped.push(String(button.callback_data));
+        await callbackAnswered(await injectCallback(String(button.callback_data), mirrorMessageId));
+      }
+      if (tapped.length < 2) throw new Error(`dialog keyboard is not driveable: ${buttons.length} buttons`);
+      if (String(tmux("capture-pane", "-p", "-t", session).stdout ?? "") === paneBefore) {
+        throw new Error(`the terminal ignored ${tapped.join(", ")}`);
+      }
+      // §4.5.1: a message that arrives while a dialog owns the terminal input is
+      // a dialog action, not a prompt - it must never start a model turn.
+      const providerFile = join(ROOT, "provider.jsonl");
+      const providerBefore = existsSync(providerFile) ? readFileSync(providerFile, "utf8").length : 0;
+      await injectMessage("theme", 7202);
+      await sleep(4_000);
+      const providerAfter = existsSync(providerFile) ? readFileSync(providerFile, "utf8").length : 0;
+      if (providerAfter !== providerBefore) {
+        throw new Error("text typed during a dialog was submitted as a prompt");
+      }
+      record("all TUI key/type/refresh callbacks reach the selector", true,
+        `dialog buttons tapped: ${tapped.length}; dialog text kept out of the prompt path`);
+    }
   } catch (error) {
     record("all TUI key/type/refresh callbacks reach the selector", false, String(error.message).slice(0, 400));
   }
@@ -453,25 +519,26 @@ async function runHost(host, piCli, label) {
     const before = await controlGet("/_control/log");
     const callOffset = before.calls.length;
     await injectMessage("/settings", 7203);
+    const findClose = (buttons) => buttons.find((button) => {
+      const data = String(button.callback_data ?? "");
+      return data === "tgplus:tui:close" || DIALOG_CANCEL.test(data);
+    });
     const reopened = await waitFor("selector reopened for close callback", (state) => {
       const call = state.calls.slice(callOffset).find((entry) => {
         const rows = entry.body?.reply_markup?.inline_keyboard;
-        return entry.method === "editMessageText"
-          && Array.isArray(rows)
-          && rows.flat().some((button) => button.callback_data === "tgplus:tui:close");
+        return Array.isArray(rows) && Boolean(findClose(rows.flat()));
       });
       return call ?? false;
     });
     const reopenedMessageId = reopened.body?.message_id ?? reopened.message_id;
-    const callbackId = await injectCallback("tgplus:tui:close", reopenedMessageId);
-    await waitFor("close callback removes mirror", (state) =>
+    const closeButton = findClose(reopened.body.reply_markup.inline_keyboard.flat());
+    // The invariant shared by both keyboard dialects: cancelling retires the
+    // dialog and strips the keyboard, so a stale menu can never be tapped again.
+    await injectCallback(String(closeButton.callback_data), reopenedMessageId);
+    await waitFor("close callback removes the keyboard", (state) =>
       state.calls.some((call) =>
-        call.method === "answerCallbackQuery" && call.body?.callback_query_id === callbackId)
-      && state.calls.some((call) =>
-        call.method === "editMessageText"
-        && call.body?.message_id === reopenedMessageId
-        && String(call.body?.text ?? "").includes("TUI mirror closed")));
-    record("TUI close callback closes the mirror", true);
+        call.method === "editMessageReplyMarkup" && call.body?.message_id === reopenedMessageId));
+    record("TUI close callback closes the mirror", true, String(closeButton.callback_data));
   } catch (error) {
     record("TUI close callback closes the mirror", false, String(error.message).slice(0, 400));
   }
@@ -535,10 +602,11 @@ async function runHost(host, piCli, label) {
     record("Telegram !!bash output is excluded from provider context", false, String(error.message).slice(0, 400));
   }
 
-  // ── /login capability routing ──────────────────────────────────────────
-  const loginStep = host === "omp"
-    ? "OMP /login routes to the host TUI login dialog"
-    : "pi /login opens the native Telegram auth menu";
+  // ── /login: the host's own login dialog, drivable from Telegram ────────
+  // Both hosts can serve /login with their own UI (pi whenever the bridge runs
+  // in `full`/`on` mode, OMP always), so this step accepts either keyboard
+  // dialect and proves a Telegram callback reaches the host input path.
+  const loginStep = "login opens a remotely controllable host dialog";
   try {
     const before = await controlGet("/_control/log");
     const callOffset = before.calls.length;
@@ -548,46 +616,46 @@ async function runHost(host, piCli, label) {
         state.calls.slice(callOffset).some((call) =>
           String(call.body?.text ?? "").includes("TUI command")
           && String(call.body?.text ?? "").includes("/login")));
-      await sleep(900);
-      const pane = tmux("capture-pane", "-p", "-t", session);
-      const paneText = String(pane.stdout ?? "");
-      const hit = paneText.split("\n").find((line) => /login|oauth|auth|provider|credential/i.test(line));
-      if (!hit) throw new Error(`host pane shows no login UI: ${paneText.slice(-200)}`);
-      const loginMirror = await waitFor("login mirror keyboard", (state) =>
-        messages({ calls: state.calls.slice(callOffset) }).find((call) =>
-          Array.isArray(call.body?.reply_markup?.inline_keyboard)
-          && call.body.reply_markup.inline_keyboard.flat()
-            .some((button) => String(button.callback_data ?? "").startsWith("tgplus:tui:"))) ?? false);
-      const loginMirrorMessageId = loginMirror.body?.message_id ?? loginMirror.message_id;
-      const loginRows = loginMirror.body.reply_markup.inline_keyboard;
-      const loginButtons = loginRows.flat();
-      // Selector keyboards carry per-item pick buttons; prefer clicking a
-      // non-selected item (proves the pick path), else fall back to arrows.
-      const probeButton = loginButtons.find((button) =>
-        String(button.callback_data ?? "").startsWith("tgplus:tui:pick:")
-        && !String(button.text ?? "").startsWith("▸"));
-      const probeData = probeButton ? String(probeButton.callback_data) : "tgplus:tui:down";
-      const callbackId = await injectCallback(probeData, loginMirrorMessageId);
-      await waitFor("probe callback answered on login mirror", (state) =>
-        state.calls.some((call) =>
-          call.method === "answerCallbackQuery" && call.body?.callback_query_id === callbackId));
-      const paneAfter = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
-      if (paneAfter === paneText) {
-        throw new Error(`login dialog did not react to ${probeData}`);
-      }
-      record(loginStep, true,
-        `${loginButtons.length} buttons + ${probeButton ? "pick" : "down"} callback routed`);
-    } else {
-      await waitFor("native Telegram auth menu", (state) => {
-        const call = state.calls.slice(callOffset).find((entry) => {
-          const rows = entry.body?.reply_markup?.inline_keyboard;
-          return Array.isArray(rows)
-            && rows.flat().some((button) => String(button.callback_data ?? "").startsWith("tgplus:ui:"));
-        });
-        return call ?? false;
-      });
-      record(loginStep, true);
     }
+    await sleep(900);
+    const pane = tmux("capture-pane", "-p", "-t", session);
+    const paneText = String(pane.stdout ?? "");
+    const hit = paneText.split("\n").find((line) => /login|oauth|auth|provider|credential/i.test(line));
+    if (!hit) throw new Error(`host pane shows no login UI: ${paneText.slice(-200)}`);
+    const loginMirror = await waitFor("login mirror keyboard", (state) =>
+      messages({ calls: state.calls.slice(callOffset) }).find((call) =>
+        Array.isArray(call.body?.reply_markup?.inline_keyboard)
+        && call.body.reply_markup.inline_keyboard.flat()
+          .some((button) => isControllable(button.callback_data))) ?? false);
+    const loginMirrorMessageId = loginMirror.body?.message_id ?? loginMirror.message_id;
+    const loginButtons = (loginMirror.body?.reply_markup?.inline_keyboard ?? []).flat();
+    // Selector keyboards carry per-item buttons: a raw pick in mirror mode, a
+    // `c`/`t` row when the dialog is brokered. Prefer a non-selected item (that
+    // proves the pick path), else fall back to an advertised key.
+    const probeButton = loginButtons.find((button) => {
+      const data = String(button.callback_data ?? "");
+      return (data.startsWith("tgplus:tui:pick:") || DIALOG_ROW.test(data))
+        && !String(button.text ?? "").startsWith("▸");
+    });
+    const fallbackButton = probeButton ? undefined : loginButtons.find((button) => {
+      const data = String(button.callback_data ?? "");
+      return data === "tgplus:tui:down" || DIALOG_KEY.test(data);
+    });
+    const probeData = probeButton ? String(probeButton.callback_data)
+      : fallbackButton ? String(fallbackButton.callback_data) : undefined;
+    if (!probeData) {
+      throw new Error(`login keyboard has no driveable button: ${loginButtons.map((button) => button.text).join(" / ").slice(0, 200)}`);
+    }
+    const callbackId = await injectCallback(probeData, loginMirrorMessageId);
+    await waitFor("probe callback answered on login mirror", (state) =>
+      state.calls.some((call) =>
+        call.method === "answerCallbackQuery" && call.body?.callback_query_id === callbackId));
+    const paneAfter = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+    if (paneAfter === paneText) {
+      throw new Error(`login dialog did not react to ${probeData}`);
+    }
+    record(loginStep, true,
+      `${loginButtons.length} buttons + ${probeButton ? "pick" : "key"} callback routed`);
   } catch (error) {
     record(loginStep, false, String(error.message).slice(0, 400));
   }
