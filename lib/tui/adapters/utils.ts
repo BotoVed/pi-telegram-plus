@@ -9,6 +9,17 @@
  *   only where the component exposes a setter for exactly that purpose.
  */
 
+/** OMP versions whose dialog frames the frame-reading adapters were verified against (§4.6.6 exception 2). */
+export const OMP_FRAME_VERSIONS = /^18\.12\./;
+let ompVersion: string | undefined;
+export function setOmpVersion(version: string | undefined): void {
+  ompVersion = version;
+}
+/** True when frame reading may be used: not OMP, or an OMP version in the verified range. */
+export function ompFrameSupported(host: "pi" | "omp"): boolean {
+  return host !== "omp" || (ompVersion !== undefined && OMP_FRAME_VERSIONS.test(ompVersion));
+}
+
 /** CSI sequences, OSC strings and stray control bytes that colour the render. */
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|[\x07\x08]/g;
 

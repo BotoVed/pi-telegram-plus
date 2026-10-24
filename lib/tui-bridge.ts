@@ -1,6 +1,7 @@
 import { stripAnsi } from "./custom-dialogs.ts";
 import { log } from "./logger.ts";
 import { probeCapture } from "./tui/probe.ts";
+import { setOmpVersion } from "./tui/adapters/utils.ts";
 
 const bridgeLog = log.child("tui-bridge");
 
@@ -100,6 +101,23 @@ async function loadOmpMode(): Promise<HostObject | undefined> {
   try {
     const mod: unknown = await import("@oh-my-pi/pi-coding-agent/modes/interactive-mode");
     return asHostObject(mod);
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadOmpVersion(): Promise<string | undefined> {
+  try {
+    // @oh-my-pi/pi-utils only exists when running under OMP: a static import
+    // would break the pi-only install (§4.6.6 exception 2 version gate).
+    const mod: unknown = await import("@oh-my-pi/pi-utils");
+    const version = (mod as HostObject | undefined)?.VERSION;
+    if (typeof version === "string") return version;
+    if (typeof version === "function") {
+      const value = (version as () => unknown)();
+      return typeof value === "string" ? value : undefined;
+    }
+    return undefined;
   } catch {
     return undefined;
   }
@@ -236,11 +254,13 @@ export function writeEditorText(text: string): boolean {
 export function installTuiBridge(): Promise<void> {
   if (installPromise) return installPromise;
   installPromise = (async () => {
-    const [omp, ompCommands, pi] = await Promise.all([
+    const [omp, ompCommands, pi, ompVersion] = await Promise.all([
       loadOmpMode(),
       loadOmpCommands(),
       loadPiMode(),
+      loadOmpVersion(),
     ]);
+    setOmpVersion(ompVersion);
     state.hostCommands = ompCommands;
     const ompProto = asHostConstructor(omp?.InteractiveMode);
     if (ompProto) {

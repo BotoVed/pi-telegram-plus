@@ -14,7 +14,7 @@ import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
 import { findShape, isEditorShape, isInputShape, isSelectList } from "../find-shape.ts";
 import { setInputValue } from "../keys.ts";
 import { log } from "../../logger.ts";
-import { descriptionOf, frameCursor, frameRows, labelOf, plain, renderText, resolveRowKey, rowKey, selectRow } from "./utils.ts";
+import { descriptionOf, frameCursor, frameRows, labelOf, ompFrameSupported, plain, renderText, resolveRowKey, rowKey, selectRow } from "./utils.ts";
 
 const adapterLog = log.child("tui-adapter");
 type HostRecord = Record<string, unknown>;
@@ -107,6 +107,13 @@ export const extensionSelectAdapter: DialogAdapter = {
     const rawTitle = (component as HostRecord).baseTitle;
     const title = typeof rawTitle === "string" && rawTitle.length > 0 ? plain(rawTitle) : (entry?.title ?? "Choose");
 
+    // Frame-position reading is bound to the OMP versions it was verified
+    // against (§4.6.6 exception 2): outside that range the adapter mirrors the
+    // screen instead of guessing rows out of the frame.
+    if (!ompFrameSupported(ctx.host)) {
+      return { kind: "snapshot", title, text: renderText(component) };
+    }
+
     // A two-option Yes/No list is a confirmation, whichever way it arrived:
     // pi's `showExtensionConfirm` draws it through the selector, and its title
     // carries the message after a newline.
@@ -138,6 +145,8 @@ export const extensionSelectAdapter: DialogAdapter = {
   act(component, action, ctx) {
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "choose" && action.type !== "toggle" && action.type !== "confirm") return false;
+
+    if (!ompFrameSupported(ctx.host)) return false;
 
     // Labels come from the component when it exposes its rows, and from the entry
     // call otherwise: OMP keeps them in closures with no readable field.

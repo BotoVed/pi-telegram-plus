@@ -1,3 +1,7 @@
+declare module "@oh-my-pi/pi-utils" {
+  export const VERSION: unknown;
+}
+
 declare module "@oh-my-pi/pi-coding-agent/modes/interactive-mode" {
   export const InteractiveMode: unknown;
 }

@@ -12,7 +12,7 @@
  * over — which still leaves the terminal's own keys and the escape hatch.
  */
 import type { DialogAdapter, DialogModel } from "../model.ts";
-import { plain, renderText } from "./utils.ts";
+import { ompFrameSupported, plain, renderText } from "./utils.ts";
 
 /** `y approve  n deny  s always` / `[y] approve` style legends. */
 const LEGEND = /(?:^|\s)(?:\[?)(ctrl\+[a-z]|shift+[a-z]|alt\+[a-z]|[a-z])(?:\]?)\s+([A-Za-z][^\n]{2,48})/g;
@@ -53,6 +53,9 @@ export const approvalAdapter: DialogAdapter = {
 
   detect(component, ctx) {
     if (ctx.entry?.kind !== "approval") return false;
+    // The legend comes out of the drawn frame: bound to the verified OMP
+    // versions (§4.6.6 exception 2), snapshot takes over otherwise.
+    if (!ompFrameSupported(ctx.host)) return false;
     return parseLegend(renderText(component)).length > 0;
   },
 

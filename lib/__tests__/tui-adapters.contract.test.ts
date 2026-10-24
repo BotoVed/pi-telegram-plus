@@ -11,10 +11,10 @@
  * *render*, to pin the decoder, never a fake dialog.
  */
 import { readFileSync } from "node:fs";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import * as host from "@earendil-works/pi-coding-agent";
 import { pickAdapter } from "../tui/adapters/index.ts";
-import { renderText } from "../tui/adapters/utils.ts";
+import { renderText, setOmpVersion } from "../tui/adapters/utils.ts";
 import { sendKeyTo } from "../tui/keys.ts";
 import type { AdapterContext, DialogModel, EntryInfo } from "../tui/model.ts";
 
@@ -22,6 +22,9 @@ import type { AdapterContext, DialogModel, EntryInfo } from "../tui/model.ts";
 // pi-tui's own theme singleton. Both are undefined until the theme is seeded.
 beforeAll(() => {
   host.initTheme("dark");
+  // The frame-reading adapters are gated to the OMP version this capture came
+  // from (§4.6.6 exception 2); the suite below runs as that verified version.
+  setOmpVersion("18.12.5");
 });
 
 type KeyLog = { target: string; data: string }[];
@@ -386,5 +389,58 @@ describe("a dialog whose rows live in private fields", () => {
 
     expect(adapter.act(component, { type: "choose", key: `1:${options[1]}` }, ctx)).toBe(true);
     expect(picked).toEqual([options[1]]);
+  });
+});
+
+describe("OMP frame version gate", () => {
+  const gateLabels = ["alpha", "beta", "gamma"];
+  const gateEntry: EntryInfo = { kind: "select", title: "PROBE_SELECT_TITLE", options: gateLabels, source: "omp" };
+
+  afterEach(() => {
+    setOmpVersion("18.12.5");
+  });
+
+  function gatedOmpDialog() {
+    const dialog = framedDialog(capturedFrame("PROBE_SELECT_TITLE"), gateLabels);
+    return { ...dialog, ...harness(dialog.component, gateEntry, "omp") };
+  }
+
+  it("models the frame rows on a verified OMP version", () => {
+    setOmpVersion("18.12.5");
+    const { component, ctx } = gatedOmpDialog();
+    const adapter = pickAdapter(component, ctx)!;
+
+    const model = expectSelect(adapter.read(component, ctx));
+
+    expect(model.items.map((item) => item.label)).toEqual(gateLabels);
+  });
+
+  it("mirrors the screen instead of the frame on an unverified OMP version", () => {
+    setOmpVersion("18.13.0");
+    const { component, ctx, picked } = gatedOmpDialog();
+    const adapter = pickAdapter(component, ctx)!;
+
+    expect(adapter.read(component, ctx).kind).toBe("snapshot");
+    expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(false);
+    expect(picked).toEqual([]);
+  });
+
+  it("mirrors the screen when the OMP version cannot be determined", () => {
+    setOmpVersion(undefined);
+    const { component, ctx, picked } = gatedOmpDialog();
+    const adapter = pickAdapter(component, ctx)!;
+
+    expect(adapter.read(component, ctx).kind).toBe("snapshot");
+    expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(false);
+    expect(picked).toEqual([]);
+  });
+
+  it("leaves pi dialogs unaffected by the OMP version", () => {
+    setOmpVersion("18.13.0");
+    const component = new host.ExtensionSelectorComponent("Pick env", ["dev", "staging"], () => {}, () => {});
+    const { ctx } = harness(component);
+    const adapter = pickAdapter(component, ctx)!;
+
+    expect(expectSelect(adapter.read(component, ctx)).items.map((item) => item.label)).toEqual(["dev", "staging"]);
   });
 });
