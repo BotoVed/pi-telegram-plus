@@ -18169,8 +18169,7 @@
           "name": "patchedHandleInput",
           "length": 0
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n                                                                                \n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "Object|component,overlayFocusRestore": {
       "type": "object",
@@ -18872,8 +18871,7 @@
           "name": "onToggleToolsExpanded",
           "length": 0
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_SELECT_TITLE                                                             \n\n → alpha                                                                        \n   beta                                                                         \n   gamma                                                                        \n\n ↑↓ navigate  enter select  escape/ctrl+c cancel                                \n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "ExtensionInputComponent|children,input,onSubmitCallback,onCancelCallback,titleText,baseTitle,countdown,_focused": {
       "type": "object",
@@ -19164,8 +19162,7 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_INPUT_TITLE                                                              \n\n>                                                                               \n\n enter submit  escape/ctrl+c cancel                                             \n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "ExtensionEditorComponent|children,editor,onSubmitCallback,onCancelCallback,tui,keybindings,externalEditorCommand,_focused": {
       "type": "object",
@@ -19619,8 +19616,7 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_EDITOR_TITLE                                                             \n\n────────────────────────────────────────────────────────────────────────────────\nPROBE_EDITOR_PREFILL                                                            \n────────────────────────────────────────────────────────────────────────────────\n\n enter submit  shift+enter/ctrl+j newline  escape/ctrl+c cancel  ctrl+g         \n external editor                                                                \n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "Object|render,invalidate,handleInput": {
       "type": "object",
@@ -19646,8 +19642,7 @@
           "name": "handleInput",
           "length": 1
         }
-      },
-      "rendered": "PROBE CUSTOM DIALOG\nstate: options selected=0 answers=0 text=\n> 1. alpha\n  2. beta\n  3. gamma\nEnter select • Tab input • Esc cancel"
+      }
     },
     "ModelSelectorComponent|children,searchInput,_focused,listContainer,allModels,scopedModelItems,activeModels,filteredModels,selectedIndex,currentModel,settingsManager,modelRuntime,onSelectCallback,onCancelCallback,errorMessage,refreshStatusMessage,refreshStatusSuccess,tui,scopedModels,scope,scopeText,scopeHintText,refreshAbortController,refreshTimeout,closed": {
       "type": "object",
@@ -20397,8 +20392,7 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\nOnly showing models from configured providers. Use /login to add providers.     \n\n>                                                                               \n\n→ mock-model [mock] ✓                                                           \n\n  Model Name: mock-model                                                        \n\n  Refreshing model catalogs…                                                    \n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "SettingsList|items,filteredItems,theme,selectedIndex,maxVisible,onChange,onCancel,searchInput,searchEnabled,submenuComponent,submenuItemIndex": {
       "type": "object",
@@ -21112,8 +21106,7 @@
           "type": "null",
           "value": null
         }
-      },
-      "rendered": ">                                                                               \n\n→ Auto-compact            true\n  Auto-resize images      true\n  Block images            false\n  Skill commands          true\n  Show hardware cursor    false\n  Editor padding          0\n  Output padding          1\n  Autocomplete max items  5\n  Clear on shrink         false\n  Terminal progress       false\n  (1/25)\n\n  Automatically compact context when it gets too large\n\n  Type to search · Enter/Space to change · Esc to cancel"
+      }
     },
     "SessionSelectorComponent|children,canRename,sessionList,header,keybindings,scope,sortMode,nameFilter,currentSessions,allSessions,currentSessionsLoader,allSessionsLoader,requestRender,renameSession,currentLoading,allLoading,allLoadSeq,mode,renameInput,renameTargetPath,_focused": {
       "type": "object",
@@ -21585,8 +21578,7 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "\n────────────────────────────────────────────────────────────────────────────────\n\nResume Session (Curren ○ Current Folder | Loading ...  Name: All  Sort: Threaded\ntab scope · re:<pattern> regex · \"phrase\" exact\nctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename\n\n>                                                                               \n\n  No sessions in current folder. Press Tab to view all.\n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "TreeSelectorComponent|children,treeList,labelInput,labelInputContainer,treeContainer,onLabelChangeCallback,onCopy,_focused": {
       "type": "object",
@@ -22158,8 +22150,7 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "\n────────────────────────────────────────────────────────────────────────────────\n   Session Tree                                                                 \n  ↑/↓ move · ←/→ page · option+←/→ branch · ctrl+x copy · shift+l label\n  shift+t label time · filters ctrl+d/t/u/l/a · cycle ctrl+o/shift+ctrl+o\n  Type to search:\n────────────────────────────────────────────────────────────────────────────────\n\n  • user: /help\n› • assistant: PROBE_OK\n  (2/2)\n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "UserMessageList|messages,selectedIndex,onSelect,onCancel,maxVisible": {
       "type": "object",
@@ -22215,8 +22206,7 @@
           "type": "number",
           "value": 10
         }
-      },
-      "rendered": "› /help\n  Message 1 of 1\n"
+      }
     },
     "ScopedModelsSelectorComponent|children,modelsById,allIds,enabledIds,filteredItems,selectedIndex,searchInput,_focused,listContainer,footerText,callbacks,maxVisible,isDirty": {
       "type": "object",
@@ -22712,10 +22702,279 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\nModel Configuration                                                             \nSession-only. ctrl+s to save to settings.                                       \n\n>                                                                               \n\n→ mock-model [mock]                                                             \n\n  Model Name: mock-model                                                        \n\n  enter toggle · ctrl+a all · ctrl+x clear · ctrl+p provider ·                  \noption+up/option+down reorder · ctrl+s save · all enabled                       \n────────────────────────────────────────────────────────────────────────────────"
+      }
     }
   },
+  "frameSamples": [
+    {
+      "ctor": "CustomEditor",
+      "keys": [
+        "state",
+        "focused",
+        "tui",
+        "theme",
+        "paddingX",
+        "lastWidth",
+        "scrollOffset",
+        "borderColor",
+        "autocompleteProvider",
+        "autocompleteTriggerCharacters",
+        "autocompleteTriggerPattern",
+        "autocompleteDebouncePattern",
+        "autocompleteList",
+        "autocompleteState",
+        "autocompletePrefix",
+        "autocompleteMaxVisible",
+        "autocompleteAbort",
+        "autocompleteDebounceTimer",
+        "autocompleteRequestTask",
+        "autocompleteStartToken",
+        "autocompleteRequestId",
+        "pastes",
+        "pasteCounter",
+        "pasteBuffer",
+        "isInPaste",
+        "history",
+        "historyIndex",
+        "historyDraft",
+        "killRing",
+        "lastAction",
+        "jumpMode",
+        "preferredVisualCol",
+        "snappedFromCursorCol",
+        "undoStack",
+        "onSubmit",
+        "onChange",
+        "disableSubmit",
+        "keybindings",
+        "actionHandlers",
+        "onEscape",
+        "onCtrlD",
+        "onPasteImage",
+        "onExtensionShortcut",
+        "handleInput"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n                                                                                \n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "ExtensionSelectorComponent",
+      "keys": [
+        "children",
+        "options",
+        "selectedIndex",
+        "listContainer",
+        "onSelectCallback",
+        "onCancelCallback",
+        "titleText",
+        "baseTitle",
+        "countdown",
+        "onToggleToolsExpanded"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_SELECT_TITLE                                                             \n\n → alpha                                                                        \n   beta                                                                         \n   gamma                                                                        \n\n ↑↓ navigate  enter select  escape/ctrl+c cancel                                \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "ExtensionSelectorComponent",
+      "keys": [
+        "children",
+        "options",
+        "selectedIndex",
+        "listContainer",
+        "onSelectCallback",
+        "onCancelCallback",
+        "titleText",
+        "baseTitle",
+        "countdown",
+        "onToggleToolsExpanded"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_CONFIRM_TITLE                                                            \n PROBE_CONFIRM_MESSAGE                                                          \n\n → Yes                                                                          \n   No                                                                           \n\n ↑↓ navigate  enter select  escape/ctrl+c cancel                                \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "ExtensionInputComponent",
+      "keys": [
+        "children",
+        "input",
+        "onSubmitCallback",
+        "onCancelCallback",
+        "titleText",
+        "baseTitle",
+        "countdown",
+        "_focused"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_INPUT_TITLE                                                              \n\n>                                                                               \n\n enter submit  escape/ctrl+c cancel                                             \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "ExtensionInputComponent",
+      "keys": [
+        "children",
+        "input",
+        "onSubmitCallback",
+        "onCancelCallback",
+        "titleText",
+        "baseTitle",
+        "countdown",
+        "_focused"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_SECRET_TITLE                                                             \n\n>                                                                               \n\n enter submit  escape/ctrl+c cancel                                             \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "ExtensionEditorComponent",
+      "keys": [
+        "children",
+        "editor",
+        "onSubmitCallback",
+        "onCancelCallback",
+        "tui",
+        "keybindings",
+        "externalEditorCommand",
+        "_focused"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n PROBE_EDITOR_TITLE                                                             \n\n────────────────────────────────────────────────────────────────────────────────\nPROBE_EDITOR_PREFILL                                                            \n────────────────────────────────────────────────────────────────────────────────\n\n enter submit  shift+enter/ctrl+j newline  escape/ctrl+c cancel  ctrl+g         \n external editor                                                                \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "Object",
+      "keys": [
+        "render",
+        "invalidate",
+        "handleInput"
+      ],
+      "rendered": "PROBE CUSTOM DIALOG\nstate: options selected=0 answers=0 text=\n> 1. alpha\n  2. beta\n  3. gamma\nEnter select • Tab input • Esc cancel"
+    },
+    {
+      "ctor": "ModelSelectorComponent",
+      "keys": [
+        "children",
+        "searchInput",
+        "_focused",
+        "listContainer",
+        "allModels",
+        "scopedModelItems",
+        "activeModels",
+        "filteredModels",
+        "selectedIndex",
+        "currentModel",
+        "settingsManager",
+        "modelRuntime",
+        "onSelectCallback",
+        "onCancelCallback",
+        "errorMessage",
+        "refreshStatusMessage",
+        "refreshStatusSuccess",
+        "tui",
+        "scopedModels",
+        "scope",
+        "scopeText",
+        "scopeHintText",
+        "refreshAbortController",
+        "refreshTimeout",
+        "closed"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\nOnly showing models from configured providers. Use /login to add providers.     \n\n>                                                                               \n\n→ mock-model [mock] ✓                                                           \n\n  Model Name: mock-model                                                        \n\n  Refreshing model catalogs…                                                    \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "SettingsList",
+      "keys": [
+        "items",
+        "filteredItems",
+        "theme",
+        "selectedIndex",
+        "maxVisible",
+        "onChange",
+        "onCancel",
+        "searchInput",
+        "searchEnabled",
+        "submenuComponent",
+        "submenuItemIndex"
+      ],
+      "rendered": ">                                                                               \n\n→ Auto-compact            true\n  Auto-resize images      true\n  Block images            false\n  Skill commands          true\n  Show hardware cursor    false\n  Editor padding          0\n  Output padding          1\n  Autocomplete max items  5\n  Clear on shrink         false\n  Terminal progress       false\n  (1/25)\n\n  Automatically compact context when it gets too large\n\n  Type to search · Enter/Space to change · Esc to cancel"
+    },
+    {
+      "ctor": "SessionSelectorComponent",
+      "keys": [
+        "children",
+        "canRename",
+        "sessionList",
+        "header",
+        "keybindings",
+        "scope",
+        "sortMode",
+        "nameFilter",
+        "currentSessions",
+        "allSessions",
+        "currentSessionsLoader",
+        "allSessionsLoader",
+        "requestRender",
+        "renameSession",
+        "currentLoading",
+        "allLoading",
+        "allLoadSeq",
+        "mode",
+        "renameInput",
+        "renameTargetPath",
+        "_focused"
+      ],
+      "rendered": "\n────────────────────────────────────────────────────────────────────────────────\n\nResume Session (Curren ○ Current Folder | Loading ...  Name: All  Sort: Threaded\ntab scope · re:<pattern> regex · \"phrase\" exact\nctrl+s sort · ctrl+n named · ctrl+d delete · ctrl+p path (off) · ctrl+r rename\n\n>                                                                               \n\n  No sessions in current folder. Press Tab to view all.\n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "TreeSelectorComponent",
+      "keys": [
+        "children",
+        "treeList",
+        "labelInput",
+        "labelInputContainer",
+        "treeContainer",
+        "onLabelChangeCallback",
+        "onCopy",
+        "_focused"
+      ],
+      "rendered": "\n────────────────────────────────────────────────────────────────────────────────\n   Session Tree                                                                 \n  ↑/↓ move · ←/→ page · option+←/→ branch · ctrl+x copy · shift+l label\n  shift+t label time · filters ctrl+d/t/u/l/a · cycle ctrl+o/shift+ctrl+o\n  Type to search:\n────────────────────────────────────────────────────────────────────────────────\n\n  • user: /help\n› • assistant: PROBE_OK\n  (2/2)\n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "UserMessageList",
+      "keys": [
+        "messages",
+        "selectedIndex",
+        "onSelect",
+        "onCancel",
+        "maxVisible"
+      ],
+      "rendered": "› /help\n  Message 1 of 1\n"
+    },
+    {
+      "ctor": "ExtensionSelectorComponent",
+      "keys": [
+        "children",
+        "options",
+        "selectedIndex",
+        "listContainer",
+        "onSelectCallback",
+        "onCancelCallback",
+        "titleText",
+        "baseTitle",
+        "countdown",
+        "onToggleToolsExpanded"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n Select authentication method:                                                  \n\n → Sign in with an account                                                      \n   Sign in with an API key                                                      \n\n ↑↓ navigate  enter select  escape/ctrl+c cancel                                \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "ScopedModelsSelectorComponent",
+      "keys": [
+        "children",
+        "modelsById",
+        "allIds",
+        "enabledIds",
+        "filteredItems",
+        "selectedIndex",
+        "searchInput",
+        "_focused",
+        "listContainer",
+        "footerText",
+        "callbacks",
+        "maxVisible",
+        "isDirty"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\nModel Configuration                                                             \nSession-only. ctrl+s to save to settings.                                       \n\n>                                                                               \n\n→ mock-model [mock]                                                             \n\n  Model Name: mock-model                                                        \n\n  enter toggle · ctrl+a all · ctrl+x clear · ctrl+p provider ·                  \noption+up/option+down reorder · ctrl+s save · all enabled                       \n────────────────────────────────────────────────────────────────────────────────"
+    }
+  ],
   "conclusions": {
     "host": "pi",
     "hostVersion": "0.81.1",
@@ -22860,7 +23119,6 @@
     },
     "dialogFrames": [
       {
-        "key": "CustomEditor|state,focused,tui,theme,paddingX,lastWidth,scrollOffset,borderColor,autocompleteProvider,autocompleteTriggerCharacters,autocompleteTriggerPattern,autocompleteDebouncePattern,autocompleteList,autocompleteState,autocompletePrefix,autocompleteMaxVisible,autocompleteAbort,autocompleteDebounceTimer,autocompleteRequestTask,autocompleteStartToken,autocompleteRequestId,pastes,pasteCounter,pasteBuffer,isInPaste,history,historyIndex,historyDraft,killRing,lastAction,jumpMode,preferredVisualCol,snappedFromCursorCol,undoStack,onSubmit,onChange,disableSubmit,keybindings,actionHandlers,onEscape,onCtrlD,onPasteImage,onExtensionShortcut,handleInput",
         "ctor": "CustomEditor",
         "keys": [
           "state",
@@ -22911,7 +23169,6 @@
         "rows": []
       },
       {
-        "key": "ExtensionSelectorComponent|children,options,selectedIndex,listContainer,onSelectCallback,onCancelCallback,titleText,baseTitle,countdown,onToggleToolsExpanded",
         "ctor": "ExtensionSelectorComponent",
         "keys": [
           "children",
@@ -22932,7 +23189,26 @@
         "footer": "↑↓ navigate  enter select  escape/ctrl+c cancel"
       },
       {
-        "key": "ExtensionInputComponent|children,input,onSubmitCallback,onCancelCallback,titleText,baseTitle,countdown,_focused",
+        "ctor": "ExtensionSelectorComponent",
+        "keys": [
+          "children",
+          "options",
+          "selectedIndex",
+          "listContainer",
+          "onSelectCallback",
+          "onCancelCallback",
+          "titleText",
+          "baseTitle",
+          "countdown",
+          "onToggleToolsExpanded"
+        ],
+        "title": "PROBE_CONFIRM_TITLE",
+        "rows": [
+          " → Yes                                                                          "
+        ],
+        "footer": "↑↓ navigate  enter select  escape/ctrl+c cancel"
+      },
+      {
         "ctor": "ExtensionInputComponent",
         "keys": [
           "children",
@@ -22949,7 +23225,22 @@
         "footer": "enter submit  escape/ctrl+c cancel"
       },
       {
-        "key": "ExtensionEditorComponent|children,editor,onSubmitCallback,onCancelCallback,tui,keybindings,externalEditorCommand,_focused",
+        "ctor": "ExtensionInputComponent",
+        "keys": [
+          "children",
+          "input",
+          "onSubmitCallback",
+          "onCancelCallback",
+          "titleText",
+          "baseTitle",
+          "countdown",
+          "_focused"
+        ],
+        "title": "PROBE_SECRET_TITLE",
+        "rows": [],
+        "footer": "enter submit  escape/ctrl+c cancel"
+      },
+      {
         "ctor": "ExtensionEditorComponent",
         "keys": [
           "children",
@@ -22966,7 +23257,6 @@
         "footer": "enter submit  shift+enter/ctrl+j newline  escape/ctrl+c cancel  ctrl+g"
       },
       {
-        "key": "Object|render,invalidate,handleInput",
         "ctor": "Object",
         "keys": [
           "render",
@@ -22980,7 +23270,6 @@
         "footer": "Enter select • Tab input • Esc cancel"
       },
       {
-        "key": "ModelSelectorComponent|children,searchInput,_focused,listContainer,allModels,scopedModelItems,activeModels,filteredModels,selectedIndex,currentModel,settingsManager,modelRuntime,onSelectCallback,onCancelCallback,errorMessage,refreshStatusMessage,refreshStatusSuccess,tui,scopedModels,scope,scopeText,scopeHintText,refreshAbortController,refreshTimeout,closed",
         "ctor": "ModelSelectorComponent",
         "keys": [
           "children",
@@ -23015,7 +23304,6 @@
         ]
       },
       {
-        "key": "SettingsList|items,filteredItems,theme,selectedIndex,maxVisible,onChange,onCancel,searchInput,searchEnabled,submenuComponent,submenuItemIndex",
         "ctor": "SettingsList",
         "keys": [
           "items",
@@ -23037,7 +23325,6 @@
         "footer": "Type to search · Enter/Space to change · Esc to cancel"
       },
       {
-        "key": "SessionSelectorComponent|children,canRename,sessionList,header,keybindings,scope,sortMode,nameFilter,currentSessions,allSessions,currentSessionsLoader,allSessionsLoader,requestRender,renameSession,currentLoading,allLoading,allLoadSeq,mode,renameInput,renameTargetPath,_focused",
         "ctor": "SessionSelectorComponent",
         "keys": [
           "children",
@@ -23066,7 +23353,6 @@
         "rows": []
       },
       {
-        "key": "TreeSelectorComponent|children,treeList,labelInput,labelInputContainer,treeContainer,onLabelChangeCallback,onCopy,_focused",
         "ctor": "TreeSelectorComponent",
         "keys": [
           "children",
@@ -23083,7 +23369,6 @@
         "footer": "↑/↓ move · ←/→ page · option+←/→ branch · ctrl+x copy · shift+l label"
       },
       {
-        "key": "UserMessageList|messages,selectedIndex,onSelect,onCancel,maxVisible",
         "ctor": "UserMessageList",
         "keys": [
           "messages",
@@ -23096,7 +23381,26 @@
         "rows": []
       },
       {
-        "key": "ScopedModelsSelectorComponent|children,modelsById,allIds,enabledIds,filteredItems,selectedIndex,searchInput,_focused,listContainer,footerText,callbacks,maxVisible,isDirty",
+        "ctor": "ExtensionSelectorComponent",
+        "keys": [
+          "children",
+          "options",
+          "selectedIndex",
+          "listContainer",
+          "onSelectCallback",
+          "onCancelCallback",
+          "titleText",
+          "baseTitle",
+          "countdown",
+          "onToggleToolsExpanded"
+        ],
+        "title": "Select authentication method:",
+        "rows": [
+          " → Sign in with an account                                                      "
+        ],
+        "footer": "↑↓ navigate  enter select  escape/ctrl+c cancel"
+      },
+      {
         "ctor": "ScopedModelsSelectorComponent",
         "keys": [
           "children",

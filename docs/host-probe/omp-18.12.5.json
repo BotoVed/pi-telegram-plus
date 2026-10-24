@@ -19173,8 +19173,7 @@
         "onSelectModelTemporary": {
           "type": "undefined"
         }
-      },
-      "rendered": "\n╰─ \u001b_pi:c                                                 ⇧⇥ to change thinking effort"
+      }
     },
     "QT|children": {
       "type": "object",
@@ -19253,8 +19252,7 @@
             }
           ]
         }
-      },
-      "rendered": "╭─ PROBE_SELECT_TITLE ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│                                                                              │\n│  ❯ alpha                                                                     │\n│    beta                                                                      │\n│    gamma                                                                     │\n│                                                                              │\n│ ↑/↓ navigate  ⏎ select  ⎋ cancel                                             │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "FD|children": {
       "type": "object",
@@ -19305,8 +19303,7 @@
             }
           ]
         }
-      },
-      "rendered": "╭─ PROBE_INPUT_TITLE ──────────────────────────────────────────────────────────╮\n│                                                                              │\n│ >                                                                            │\n│                                                                              │\n│ ⏎ submit  ⎋ cancel                                                           │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "Fy|children,focused": {
       "type": "object",
@@ -19353,8 +19350,7 @@
           "type": "boolean",
           "value": false
         }
-      },
-      "rendered": "╭─ PROBE_EDITOR_TITLE ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ╭──────────────────────────────────────────────────────────────────────────╮ │\n│ ╰─ PROBE_EDITOR_PREFILL▏                                                  ─╯ │\n│                                                                              │\n│ ⌃Q/⌃⏎ submit  ⎋ cancel  ⌃G external editor                                   │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "Object|render,invalidate,handleInput": {
       "type": "object",
@@ -19380,8 +19376,7 @@
           "name": "handleInput",
           "length": 1
         }
-      },
-      "rendered": "PROBE CUSTOM DIALOG\nstate: options selected=0 answers=0 text=\n> 1. alpha\n  2. beta\n  3. gamma\nEnter select • Tab input • Esc cancel"
+      }
     },
     "Ej|callbacks,options": {
       "type": "object",
@@ -19456,8 +19451,7 @@
             }
           }
         }
-      },
-      "rendered": "╭─ Ask ────────────────────────────────────────────────────────────────────────╮\n│  colour    topping    Submit                                                 │\n│ PROBE_ASK_Q1                                                                 │\n├──────────────────────────────────────────────────────────────────────────────┤\n│   ○ red                                                                      │\n│ ❯ ○ green (Recommended)                                                      │\n│       PROBE_ASK_RECOMMENDED                                                  │\n│   ○ blue                                                                     │\n│   ○ Other (type your own)                                                    │\n│                                                                              │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ question · ⎋ cancel · ⌥H hide           │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "Fke|children,nativeOverlay": {
       "type": "object",
@@ -19539,22 +19533,19 @@
             }
           }
         }
-      },
-      "rendered": "╭─ Keyboard Shortcuts ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│ Navigation                                                                 █ │\n│                                                                            █ │\n│ ┌────────────┬─────────────────────────────────────────────┐               █ │\n│ │ Key        │ Action                                      │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ↑/↓/←/→    │ Move cursor / browse history (↑ when empty) │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ⌥←/⌥→      │ Move by word                                │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ⌃A/Home/⌘← │ Start of line                               │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ⌃E/End/⌘→  │ End of line                                 │               █ │\n│ └────────────┴─────────────────────────────────────────────┘               █ │\n│                                                                            █ │\n│ Editing                                                                    █ │\n│                                                                            █ │\n│ ┌───────┬─────────────────────────┐                                        █ │\n│ │ Key   │ Action                  │                                        █ │\n│ ├───────┼─────────────────────────┤                                        █ │\n│ │ ⏎     │ Send message            │                                        █ │\n│ ├───────┼─────────────────────────┤                                        █ │\n│ │ ⇧⏎/⌥⏎ │ New line                │                                        █ │\n│ ├───────┼─────────────────────────┤                                        █ │\n│ │ ⌃W/⌥⌫ │ Delete word backwards   │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌃U    │ Delete to start of line │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌃K    │ Delete to end of line   │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌥⇧L   │ Copy current line       │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌥⇧C   │ Copy whole prompt       │                                        │ │\n│ └───────┴─────────────────────────┘                                        │ │\n│                                                                            │ │\n│ Other                                                                      │ │\n│                                                                            │ │\n│ ┌──────────────────────────┬──────────────────────────────────────────────┐│ │\n│ │ Key                      │ Action                                       ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⇥                        │ Path completion / accept autocomplete        ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⎋                        │ Cancel autocomplete / interrupt active work  ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⌃C                       │ Clear editor (first) / exit (second)         ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⌃D                       │ Delete char forward (with draft) / exit      ││ │\n│ │                          │ (empty prompt)                               ││ │\n│ ├──────────────────────────┼─…[454 chars clipped]"
+      }
     },
     "EU|": {
       "type": "object",
       "ctor": "EU",
       "keys": [],
-      "fields": {},
-      "rendered": "╭─ Models ───────────────────┬─────────────────────────────────────────────────╮\n│   ✦ Roles             1/16 │  All available models                           │\n│ ❯ ⬢ All models          37 │  Kind: ◀ all ▶  chat ┆ tiny ┆ image ┆ tts ┆ st… │\n│ ────────────────────────── │  🔍 >                                           │\n│   ● apple                0 │                                                 │\n│   ● local               14 │   mock/mock-model                  33k ◫  free  │\n│   ● mock                 1 │   web/parallel                            free  │\n│   ● web                 22 │   local/kokoro                            free  │\n│ ────────────────────────── │   local/parakeet-tdt-0.6b-v3              free  │\n│   ○ abliteration           │   ──────────────────────────────────────────    │\n│   ○ aiand                  │   local/lfm2.5-350m                       free  │\n│   ○ aimlapi                │   local/lfm2.5-230m                       free  │\n│   ○ alibaba-coding-plan    │   local/falcon-h1-90m                     free  │\n│   ○ alibaba-token-plan     │   local/gemma-3-1b                        free  │\n│   ○ amazon-bedrock         │   local/qwen3-1.7b                        free  │\n│   ○ anthropic              │   local/qwen2.5-1.5b                      free  │\n│   ○ azure                  │   local/lfm2-1.2b                         free  │\n│   ○ baseten                │   local/nemotron-streaming-en-0.6b        free  │\n│   ○ bedrock-mantle         │   local/llama3.2:3b                       free  │\n│   ○ cerebras               │   local/whisper-base                      free  │\n│   ○ charm-hyper            │   local/whisper-large-v3-turbo            free  │\n│   ○ cline-pass             │   local/whisper-small                     free  │\n│   ○ cloudflare-ai-gateway  │   web/brave                               free  │\n│   ○ cloudflare-workers-ai  │   web/deepseek                            free  │\n│   ○ commandcode            │   web/duckduckgo                          free  │\n│   ○ coralbricks            │   web/ecosia                              free  │\n│   ○ coreweave              │   web/exa                                 free  │\n│   ○ cursor                 │   web/firecrawl                           free  │\n│   ○ deepinfra              │   web/google                              free  │\n│   ○ deepseek               │   web/hosted                              free  │\n│   ○ devin                  │   web/jina                                free  │\n│   ○ factory-droid          │   web/kagi                                free  │\n│   ○ firepass               │   web/kimi                                free  │\n│   ○ fireworks              │   web/mojeek                              free  │\n│   ○ github-copilot         │   web/ollama                              free  │\n│   ○ gitlab-duo             │   web/perplexity                          free  │\n│   ○ gitlab-duo-agent       │   web/public                              free  │\n│   ○ gmi-cloud              │   web/searxng                             free  │\n│   ○ google                 │   web/startpage                           free  │\n│   ○ google-antigravity     │   web/synthetic                           free  │\n│   ○ google-gemini-cli      │   web/tavily                              free  │\n│   ○ google-vertex          │   web/tinyfish                            free  │\n│   ○ groq                   │   web/zai                                 free  │\n│   ○ helmcode               │                                                 │\n│   ○ huggingface            │                                                 │\n│   ○ inception              │                                                 │\n│   ○ kilo                   │                                                 │\n│   ○ kimi-code              │                                                 │\n│   ○ meta                   │                                                 │\n│   ○ minimax                │ …[454 chars clipped]"
+      "fields": {}
     },
     "AU|": {
       "type": "object",
       "ctor": "AU",
       "keys": [],
-      "fields": {},
-      "rendered": "╭─ Settings ───────────────────────────────────────────────────────────────────╮\n│  🎨 Appearance    🤖    ⌨    📋    🧠    📁    💻    🔧    📦    🌐    📦    │\n├──────────────────────────────────────────────────────────────────────────────┤\n│   Theme                                                                    █ │\n│ ❯ Dark Theme                  titanium                                     █ │\n│   Light Theme                 light                                        █ │\n│   Symbol Preset               unicode                                      █ │\n│   Color-Blind Mode            false                                        █ │\n│   Composer                                                                 █ │\n│   Composer Shape              band                                         █ │\n│   Generation Rate             false                                        █ │\n│   Status Line                                                              █ │\n│   Status Line Preset          default                                      █ │\n│   Status Line Separator       powerline-thin                               █ │\n│   Context-Reactive Line       embedded                                     █ │\n│   Session Accent              true                                         █ │\n│   Transparent Status Line     false                                        █ │\n│   Compact Thinking Level      true                                         █ │\n│   Show Hook Status            true                                         █ │\n│   Display                                                                  █ │\n│   Resize Scrollback           rebuild                                      █ │\n│   Complete Scrollback         false                                        █ │\n│   Native Terminal Progress    false                                        █ │\n│   Program Status (OSC 7501)   true                                         █ │\n│   Large Headings (Kitty)      false                                        █ │\n│   Render Mermaid Diagrams     true                                         █ │\n│   Render SVG Figures          true                                         █ │\n│   Auto-Graph Tables           always                                       █ │\n│   Agent Reactions             true                                         █ │\n│   Codex Reset Fireworks       false                                        █ │\n│   Terminal Title Run State    true                                         █ │\n│   Terminal Title Spinner      braille                                      █ │\n│   Terminal Hyperlinks         auto                                         █ │\n│   Mouse Click-to-Focus        false                                        █ │\n│   Tight Layout                false                                        █ │\n│   Shimmer                     classic                                      █ │\n│   Pinned Agents               collapsed                                    █ │\n│   Subagent Live Preview       false                                        █ │\n│   Smooth Streaming            true                                         █ │\n│   Hide Tool Activity          false                                        │ │\n│   Show Token Usage            false                                        │ │\n│   Show Turn Time              false                                        │ │\n│   Cache Miss Marker           false                                        │ │\n│   Collapse Compacted History  true                                         │ │\n│   Show Hardware Cursor        true                                         │ │\n│                                                                              │\n│   Theme used when the terminal has a dark background                         │\n│                                                                              │\n│                                                                              │\n│                              …[455 chars clipped]"
+      "fields": {}
     },
     "WC|children": {
       "type": "object",
@@ -19613,8 +19604,7 @@
             }
           ]
         }
-      },
-      "rendered": "╭─ Resume Session (current folder) ────────────────────────────────────────────╮\n│                                                                              │\n│ >                                                                            │\n│                                                                              │\n│ ❯ /help                                                                      │\n│   just now  ·  2.7KB  ·  current  ·  ✔ done                                  │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                              …[454 chars clipped]"
+      }
     },
     "DA|children,onLabelChangeCallback,sessionName": {
       "type": "object",
@@ -19736,8 +19726,7 @@
         "sessionName": {
           "type": "undefined"
         }
-      },
-      "rendered": "╭─ Session Tree ───────────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ⏎: switch. ⌥↑/⌥↓: previous/next turn. PgUp/PgDn (←/→): page. Home/End: firs… │\n│ Search:                                                                      │\n├──────────────────────────────────────────────────────────────────────────────┤\n│                                                                              │\n│   • user: /help                                                              │\n│   • assistant: PROBE_OK                                                      │\n│   • user: /sessions                                                          │\n│ › • assistant: PROBE_OK                                                      │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "CF|children": {
       "type": "object",
@@ -19770,8 +19759,7 @@
             }
           ]
         }
-      },
-      "rendered": "╭─ Select provider to login ───────────────────────────────────────────────────╮\n│ ❯ ChatGPT Plus/Pro (Codex Subscription)                                    █ │\n│   Anthropic (Claude Pro/Max)                                               │ │\n│   Z.AI (GLM Coding Plan)                                                   │ │\n│   Z.AI (GLM Coding Plan · Sign in)                                         │ │\n│   Kimi Code                                                                │ │\n│   OpenRouter                                                               │ │\n│   GitHub Copilot                                                           │ │\n│   Cursor (Claude, GPT, etc.)                                               │ │\n│   Devin                                                                    │ │\n│   Google Antigravity (Gemini, Claude, GPT-OSS)                             │ │\n│ Type to search                                                               │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "Lse|onClose,onRequestRender": {
       "type": "object",
@@ -19787,8 +19775,7 @@
         "onRequestRender": {
           "type": "undefined"
         }
-      },
-      "rendered": "╭─ Extension Control Center ───────────────────────────────────────────────────╮\n│  ALL (26)    Builtin Defaults    Skillshare    OMP Extension Packages        │\n│  Claude Code    Agent Plugins    Claude Code Marketplace                     │\n│  Agent Dirs (.agent/.agents)    OpenAI Codex    Gemini CLI    OpenCode       │\n│  Cursor    Windsurf    Cline    GitHub Copilot    VS Code    AGENTS.md       │\n│  CLAUDE.md    Custom context files    Managed Skills (auto-learn)            │\n│  MCP Config    SSH Config                                                    │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ Search:                                │ go-add-cleanup                      │\n│                                        │                                     │\n│ ⚖ Rules (26)                           │ ● Active                            │\n│    ● go-add-cleanup                    │                                     │\n│    ● go-bench-loop                     │ Prefer runtime.AddCleanup over      │\n│    ● go-exp-promoted                   │ runtime.SetFinalizer for new code   │\n│    ● go-ioutil                         │ (Go 1.24)                           │\n│    ● go-join-hostport                  │                                     │\n│    ● go-new-expr                       │ Origin:                             │\n│    ● go-rand-v2                        │   via Builtin Defaults (User)       │\n│    ● go-range-int                      │   builtin-defaults:go-add-cleanup   │\n│    ● rs-box-leak                       │   .md                               │\n│    ● rs-future-prelude                 │                                     │\n│    ● rs-lazylock                       │ Applies                             │\n│    ● rs-match-ergonomics               │ ─────────────────────────────────   │\n│    ● rs-result-type                    │   condition  runtime\\.SetFinalize   │\n│    ● ts-bare-catch                     │              r                      │\n│    ● ts-import-type                    │   scope      tool:edit(*.go)        │\n│    ● ts-no-any                         │              tool:write(*.go)       │\n│    ● ts-no-deprecated-left…            │   interrupt  never                  │\n│    ● ts-no-dynamic-import              │                                     │\n│    ● ts-no-inline-cast-acc…            │ Rule                                │\n│    ● ts-no-local-is-record             │ ─────────────────────────────────   │\n│    ● ts-no-return-type                 │ Go 1.24 added                       │\n│    ● ts-no-test-timers                 │ `runtime.AddCleanup`; new code      │\n│    ● ts-no-tiny-functions              │ SHOULD prefer it over               │\n│    ● ts-promise-with-resol…            │ `runtime.SetFinalizer`.             │\n│    ● ts-redundant-clear-gu…            │                                     │\n│    ● ts-set-map                        │ ## Why AddCleanup wins              │\n│                                        │                                     │\n│                                        │ - One object — multiple             │\n│                                        │ cleanups; `SetFinalizer`: one.      │\n│                                        │ - Cleanups MAY attach to            │\n│                                        │ interior pointers.                  │\n│                                        │ - Reference cycles: cleanups        │\n│                                        │ run; finalizers leak.               │\n│                                        │ - Cleanup neither resurrects        │\n│                                        │ object nor delays freeing it or     │\n│                                        │ its referents an extra GC cycle.    │\n│                                        │                                     │\n│                                        │ ## Migration                        │\n│                              …[454 chars clipped]"
+      }
     },
     "u|children,ctx": {
       "type": "object",
@@ -20998,8 +20985,7 @@
             }
           }
         }
-      },
-      "rendered": "╭─ Debug Tools ────────────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ❯ Open: artifact folder           Open session artifacts in file manager   █ │\n│   Report: performance issue       Profile CPU, reproduce, then bundle      █ │\n│   Profile: work scheduling        Open flamegraph of last 30s              █ │\n│   Report: dump session            Create report bundle immediately         │ │\n│   Report: memory issue            Memory statistics + bundle               │ │\n│   View: recent logs               Show last 50 log entries                 │ │\n│   View: system info               Show environment details                 │ │\n│   Type to search                                                             │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+      }
     },
     "$D|children": {
       "type": "object",
@@ -21094,17 +21080,567 @@
             }
           ]
         }
-      },
-      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n ⠋ Sharing session...                                                           \n\n ⎋ cancel                                                                       \n\n────────────────────────────────────────────────────────────────────────────────"
+      }
     },
     "Dse|": {
       "type": "object",
       "ctor": "Dse",
       "keys": [],
-      "fields": {},
-      "rendered": "╭─ Agents ─────────┬───────────────────────────────────────────────────────────╮\n│   ⬢ All agents 6 │  All agents · 6                                           │\n│ ──────────────── │  search: type to filter                                   │\n│   ● Bundled    6 │                                                           │\n│ ──────────────── │  ❯ ● reviewer           bundled                           │\n│   + New agent    │    ● scout              bundled                           │\n│                  │    ● seance             bundled                           │\n│                  │    ● security-reviewer  bundled                           │\n│                  │    ● sonic              bundled                           │\n│                  │    ● task               bundled                           │\n│                  │    + New agent…                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │ ───────────────────────────────────────────────────────── │\n│                  │  Code revi…[454 chars clipped]"
+      "fields": {}
     }
   },
+  "frameSamples": [
+    {
+      "ctor": "Ww",
+      "keys": [
+        "focused",
+        "cursorOverride",
+        "decorateText",
+        "describeDecorations",
+        "describeLanguage",
+        "describeLayout",
+        "describePlaceholder",
+        "onYank",
+        "onVimModeChange",
+        "borderColor",
+        "onAutocompleteUpdate",
+        "onTextAssistApplied",
+        "viewportRowsProvider",
+        "atomicTokenPattern",
+        "onSubmit",
+        "onAltEnter",
+        "onChange",
+        "onLargePaste",
+        "onAutocompleteCancel",
+        "disableSubmit",
+        "placeholder",
+        "prediction",
+        "imageLinks",
+        "pendingImages",
+        "pendingImageLinks",
+        "pendingTexts",
+        "draftImageLinkMaterializer",
+        "tui",
+        "skillFilePath",
+        "modelMentionLabel",
+        "modelMentionSelector",
+        "fileHyperlink",
+        "magicKeywordsEnabledOverride",
+        "magicKeywordsEnabled",
+        "imageReferenceHyperlink",
+        "composerState",
+        "attachmentChips",
+        "composerFacts",
+        "onEscape",
+        "onClear",
+        "onExit",
+        "onDisplayReset",
+        "onCycleThinkingLevel",
+        "onCycleModelForward",
+        "onCycleModelBackward",
+        "onSelectModel",
+        "onSuspend",
+        "onSelectModelTemporary",
+        "onCopyPrompt",
+        "onPasteImage",
+        "onPasteImagePath",
+        "onPasteTextRaw",
+        "onDequeue",
+        "onRetry",
+        "onCapsLock",
+        "onToggleDictation",
+        "onLeftAtStart",
+        "onFocusAgent",
+        "spaceHold",
+        "handleInput"
+      ],
+      "rendered": "\n╰─ \u001b_pi:c                                                 ⇧⇥ to change thinking effort"
+    },
+    {
+      "ctor": "QT",
+      "keys": [
+        "children"
+      ],
+      "rendered": "╭─ PROBE_SELECT_TITLE ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│                                                                              │\n│  ❯ alpha                                                                     │\n│    beta                                                                      │\n│    gamma                                                                     │\n│                                                                              │\n│ ↑/↓ navigate  ⏎ select  ⎋ cancel                                             │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Ww",
+      "keys": [
+        "focused",
+        "cursorOverride",
+        "decorateText",
+        "describeDecorations",
+        "describeLanguage",
+        "describeLayout",
+        "describePlaceholder",
+        "onYank",
+        "onVimModeChange",
+        "borderColor",
+        "onAutocompleteUpdate",
+        "onTextAssistApplied",
+        "viewportRowsProvider",
+        "atomicTokenPattern",
+        "onSubmit",
+        "onAltEnter",
+        "onChange",
+        "onLargePaste",
+        "onAutocompleteCancel",
+        "disableSubmit",
+        "placeholder",
+        "prediction",
+        "imageLinks",
+        "pendingImages",
+        "pendingImageLinks",
+        "pendingTexts",
+        "draftImageLinkMaterializer",
+        "tui",
+        "skillFilePath",
+        "modelMentionLabel",
+        "modelMentionSelector",
+        "fileHyperlink",
+        "magicKeywordsEnabledOverride",
+        "magicKeywordsEnabled",
+        "imageReferenceHyperlink",
+        "composerState",
+        "attachmentChips",
+        "composerFacts",
+        "onEscape",
+        "onClear",
+        "onExit",
+        "onDisplayReset",
+        "onCycleThinkingLevel",
+        "onCycleModelForward",
+        "onCycleModelBackward",
+        "onSelectModel",
+        "onSuspend",
+        "onSelectModelTemporary",
+        "onCopyPrompt",
+        "onPasteImage",
+        "onPasteImagePath",
+        "onPasteTextRaw",
+        "onDequeue",
+        "onRetry",
+        "onCapsLock",
+        "onToggleDictation",
+        "onLeftAtStart",
+        "onFocusAgent",
+        "spaceHold",
+        "handleInput"
+      ],
+      "rendered": " π > ⬢ Mock Model > 🗑 pitg-probe/run-omp/project ▶────23%╎─────┃────────────33K─\n╰─                                                                              "
+    },
+    {
+      "ctor": "QT",
+      "keys": [
+        "children"
+      ],
+      "rendered": "╭─ PROBE_CONFIRM_TITLE ────────────────────────────────────────────────────────╮\n│                                                                              │\n│ PROBE_CONFIRM_MESSAGE                                                        │\n│                                                                              │\n│  ❯ Yes                                                                       │\n│    No                                                                        │\n│                                                                              │\n│ ↑/↓ navigate  ⏎ select  ⎋ cancel                                             │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "FD",
+      "keys": [
+        "children"
+      ],
+      "rendered": "╭─ PROBE_INPUT_TITLE ──────────────────────────────────────────────────────────╮\n│                                                                              │\n│ >                                                                            │\n│                                                                              │\n│ ⏎ submit  ⎋ cancel                                                           │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "FD",
+      "keys": [
+        "children"
+      ],
+      "rendered": "╭─ PROBE_SECRET_TITLE ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│ >                                                                            │\n│                                                                              │\n│ ⏎ submit  ⎋ cancel                                                           │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Fy",
+      "keys": [
+        "children",
+        "focused"
+      ],
+      "rendered": "╭─ PROBE_EDITOR_TITLE ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ╭──────────────────────────────────────────────────────────────────────────╮ │\n│ ╰─ PROBE_EDITOR_PREFILL▏                                                  ─╯ │\n│                                                                              │\n│ ⌃Q/⌃⏎ submit  ⎋ cancel  ⌃G external editor                                   │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Object",
+      "keys": [
+        "render",
+        "invalidate",
+        "handleInput"
+      ],
+      "rendered": "PROBE CUSTOM DIALOG\nstate: options selected=0 answers=0 text=\n> 1. alpha\n  2. beta\n  3. gamma\nEnter select • Tab input • Esc cancel"
+    },
+    {
+      "ctor": "Ww",
+      "keys": [
+        "focused",
+        "cursorOverride",
+        "decorateText",
+        "describeDecorations",
+        "describeLanguage",
+        "describeLayout",
+        "describePlaceholder",
+        "onYank",
+        "onVimModeChange",
+        "borderColor",
+        "onAutocompleteUpdate",
+        "onTextAssistApplied",
+        "viewportRowsProvider",
+        "atomicTokenPattern",
+        "onSubmit",
+        "onAltEnter",
+        "onChange",
+        "onLargePaste",
+        "onAutocompleteCancel",
+        "disableSubmit",
+        "placeholder",
+        "prediction",
+        "imageLinks",
+        "pendingImages",
+        "pendingImageLinks",
+        "pendingTexts",
+        "draftImageLinkMaterializer",
+        "tui",
+        "skillFilePath",
+        "modelMentionLabel",
+        "modelMentionSelector",
+        "fileHyperlink",
+        "magicKeywordsEnabledOverride",
+        "magicKeywordsEnabled",
+        "imageReferenceHyperlink",
+        "composerState",
+        "attachmentChips",
+        "composerFacts",
+        "onEscape",
+        "onClear",
+        "onExit",
+        "onDisplayReset",
+        "onCycleThinkingLevel",
+        "onCycleModelForward",
+        "onCycleModelBackward",
+        "onSelectModel",
+        "onSuspend",
+        "onSelectModelTemporary",
+        "onCopyPrompt",
+        "onPasteImage",
+        "onPasteImagePath",
+        "onPasteTextRaw",
+        "onDequeue",
+        "onRetry",
+        "onCapsLock",
+        "onToggleDictation",
+        "onLeftAtStart",
+        "onFocusAgent",
+        "spaceHold",
+        "handleInput"
+      ],
+      "rendered": " π > ⬢ Mock Model > 🗑 pitg-probe/run-omp/project ▶────23%╎─────┃────────────33K─\n╰─ \u001b_pi:c                                                 ⇧⇥ to change thinking effort"
+    },
+    {
+      "ctor": "Ej",
+      "keys": [
+        "callbacks",
+        "options"
+      ],
+      "rendered": "╭─ Ask ────────────────────────────────────────────────────────────────────────╮\n│  colour    topping    Submit                                                 │\n│ PROBE_ASK_Q1                                                                 │\n├──────────────────────────────────────────────────────────────────────────────┤\n│   ○ red                                                                      │\n│ ❯ ○ green (Recommended)                                                      │\n│       PROBE_ASK_RECOMMENDED                                                  │\n│   ○ blue                                                                     │\n│   ○ Other (type your own)                                                    │\n│                                                                              │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ question · ⎋ cancel · ⌥H hide           │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Fke",
+      "keys": [
+        "children",
+        "nativeOverlay"
+      ],
+      "rendered": "╭─ Keyboard Shortcuts ─────────────────────────────────────────────────────────╮\n│                                                                              │\n│ Navigation                                                                 █ │\n│                                                                            █ │\n│ ┌────────────┬─────────────────────────────────────────────┐               █ │\n│ │ Key        │ Action                                      │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ↑/↓/←/→    │ Move cursor / browse history (↑ when empty) │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ⌥←/⌥→      │ Move by word                                │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ⌃A/Home/⌘← │ Start of line                               │               █ │\n│ ├────────────┼─────────────────────────────────────────────┤               █ │\n│ │ ⌃E/End/⌘→  │ End of line                                 │               █ │\n│ └────────────┴─────────────────────────────────────────────┘               █ │\n│                                                                            █ │\n│ Editing                                                                    █ │\n│                                                                            █ │\n│ ┌───────┬─────────────────────────┐                                        █ │\n│ │ Key   │ Action                  │                                        █ │\n│ ├───────┼─────────────────────────┤                                        █ │\n│ │ ⏎     │ Send message            │                                        █ │\n│ ├───────┼─────────────────────────┤                                        █ │\n│ │ ⇧⏎/⌥⏎ │ New line                │                                        █ │\n│ ├───────┼─────────────────────────┤                                        █ │\n│ │ ⌃W/⌥⌫ │ Delete word backwards   │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌃U    │ Delete to start of line │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌃K    │ Delete to end of line   │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌥⇧L   │ Copy current line       │                                        │ │\n│ ├───────┼─────────────────────────┤                                        │ │\n│ │ ⌥⇧C   │ Copy whole prompt       │                                        │ │\n│ └───────┴─────────────────────────┘                                        │ │\n│                                                                            │ │\n│ Other                                                                      │ │\n│                                                                            │ │\n│ ┌──────────────────────────┬──────────────────────────────────────────────┐│ │\n│ │ Key                      │ Action                                       ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⇥                        │ Path completion / accept autocomplete        ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⎋                        │ Cancel autocomplete / interrupt active work  ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⌃C                       │ Clear editor (first) / exit (second)         ││ │\n│ ├──────────────────────────┼──────────────────────────────────────────────┤│ │\n│ │ ⌃D                       │ Delete char forward (with draft) / exit      ││ │\n│ │                          │ (empty prompt)                               ││ │\n│ ├──────────────────────────┼─…[454 chars clipped]"
+    },
+    {
+      "ctor": "Ww",
+      "keys": [
+        "focused",
+        "cursorOverride",
+        "decorateText",
+        "describeDecorations",
+        "describeLanguage",
+        "describeLayout",
+        "describePlaceholder",
+        "onYank",
+        "onVimModeChange",
+        "borderColor",
+        "onAutocompleteUpdate",
+        "onTextAssistApplied",
+        "viewportRowsProvider",
+        "atomicTokenPattern",
+        "onSubmit",
+        "onAltEnter",
+        "onChange",
+        "onLargePaste",
+        "onAutocompleteCancel",
+        "disableSubmit",
+        "placeholder",
+        "prediction",
+        "imageLinks",
+        "pendingImages",
+        "pendingImageLinks",
+        "pendingTexts",
+        "draftImageLinkMaterializer",
+        "tui",
+        "skillFilePath",
+        "modelMentionLabel",
+        "modelMentionSelector",
+        "fileHyperlink",
+        "magicKeywordsEnabledOverride",
+        "magicKeywordsEnabled",
+        "imageReferenceHyperlink",
+        "composerState",
+        "attachmentChips",
+        "composerFacts",
+        "onEscape",
+        "onClear",
+        "onExit",
+        "onDisplayReset",
+        "onCycleThinkingLevel",
+        "onCycleModelForward",
+        "onCycleModelBackward",
+        "onSelectModel",
+        "onSuspend",
+        "onSelectModelTemporary",
+        "onCopyPrompt",
+        "onPasteImage",
+        "onPasteImagePath",
+        "onPasteTextRaw",
+        "onDequeue",
+        "onRetry",
+        "onCapsLock",
+        "onToggleDictation",
+        "onLeftAtStart",
+        "onFocusAgent",
+        "spaceHold",
+        "handleInput"
+      ],
+      "rendered": " π > ⬢ Mock Model > 🗑 pitg-probe/run-omp/project ▶────23%╎─────┃────────────33K─\n╰─ \u001b_pi:c                                                                             "
+    },
+    {
+      "ctor": "EU",
+      "keys": [],
+      "rendered": "╭─ Models ───────────────────┬─────────────────────────────────────────────────╮\n│   ✦ Roles             1/16 │  All available models                           │\n│ ❯ ⬢ All models          37 │  Kind: ◀ all ▶  chat ┆ tiny ┆ image ┆ tts ┆ st… │\n│ ────────────────────────── │  🔍 >                                           │\n│   ● apple                0 │                                                 │\n│   ● local               14 │   mock/mock-model                  33k ◫  free  │\n│   ● mock                 1 │   web/parallel                            free  │\n│   ● web                 22 │   local/kokoro                            free  │\n│ ────────────────────────── │   local/parakeet-tdt-0.6b-v3              free  │\n│   ○ abliteration           │   ──────────────────────────────────────────    │\n│   ○ aiand                  │   local/lfm2.5-350m                       free  │\n│   ○ aimlapi                │   local/lfm2.5-230m                       free  │\n│   ○ alibaba-coding-plan    │   local/falcon-h1-90m                     free  │\n│   ○ alibaba-token-plan     │   local/gemma-3-1b                        free  │\n│   ○ amazon-bedrock         │   local/qwen3-1.7b                        free  │\n│   ○ anthropic              │   local/qwen2.5-1.5b                      free  │\n│   ○ azure                  │   local/lfm2-1.2b                         free  │\n│   ○ baseten                │   local/nemotron-streaming-en-0.6b        free  │\n│   ○ bedrock-mantle         │   local/llama3.2:3b                       free  │\n│   ○ cerebras               │   local/whisper-base                      free  │\n│   ○ charm-hyper            │   local/whisper-large-v3-turbo            free  │\n│   ○ cline-pass             │   local/whisper-small                     free  │\n│   ○ cloudflare-ai-gateway  │   web/brave                               free  │\n│   ○ cloudflare-workers-ai  │   web/deepseek                            free  │\n│   ○ commandcode            │   web/duckduckgo                          free  │\n│   ○ coralbricks            │   web/ecosia                              free  │\n│   ○ coreweave              │   web/exa                                 free  │\n│   ○ cursor                 │   web/firecrawl                           free  │\n│   ○ deepinfra              │   web/google                              free  │\n│   ○ deepseek               │   web/hosted                              free  │\n│   ○ devin                  │   web/jina                                free  │\n│   ○ factory-droid          │   web/kagi                                free  │\n│   ○ firepass               │   web/kimi                                free  │\n│   ○ fireworks              │   web/mojeek                              free  │\n│   ○ github-copilot         │   web/ollama                              free  │\n│   ○ gitlab-duo             │   web/perplexity                          free  │\n│   ○ gitlab-duo-agent       │   web/public                              free  │\n│   ○ gmi-cloud              │   web/searxng                             free  │\n│   ○ google                 │   web/startpage                           free  │\n│   ○ google-antigravity     │   web/synthetic                           free  │\n│   ○ google-gemini-cli      │   web/tavily                              free  │\n│   ○ google-vertex          │   web/tinyfish                            free  │\n│   ○ groq                   │   web/zai                                 free  │\n│   ○ helmcode               │                                                 │\n│   ○ huggingface            │                                                 │\n│   ○ inception              │                                                 │\n│   ○ kilo                   │                                                 │\n│   ○ kimi-code              │                                                 │\n│   ○ meta                   │                                                 │\n│   ○ minimax                │ …[454 chars clipped]"
+    },
+    {
+      "ctor": "AU",
+      "keys": [],
+      "rendered": "╭─ Settings ───────────────────────────────────────────────────────────────────╮\n│  🎨 Appearance    🤖    ⌨    📋    🧠    📁    💻    🔧    📦    🌐    📦    │\n├──────────────────────────────────────────────────────────────────────────────┤\n│   Theme                                                                    █ │\n│ ❯ Dark Theme                  titanium                                     █ │\n│   Light Theme                 light                                        █ │\n│   Symbol Preset               unicode                                      █ │\n│   Color-Blind Mode            false                                        █ │\n│   Composer                                                                 █ │\n│   Composer Shape              band                                         █ │\n│   Generation Rate             false                                        █ │\n│   Status Line                                                              █ │\n│   Status Line Preset          default                                      █ │\n│   Status Line Separator       powerline-thin                               █ │\n│   Context-Reactive Line       embedded                                     █ │\n│   Session Accent              true                                         █ │\n│   Transparent Status Line     false                                        █ │\n│   Compact Thinking Level      true                                         █ │\n│   Show Hook Status            true                                         █ │\n│   Display                                                                  █ │\n│   Resize Scrollback           rebuild                                      █ │\n│   Complete Scrollback         false                                        █ │\n│   Native Terminal Progress    false                                        █ │\n│   Program Status (OSC 7501)   true                                         █ │\n│   Large Headings (Kitty)      false                                        █ │\n│   Render Mermaid Diagrams     true                                         █ │\n│   Render SVG Figures          true                                         █ │\n│   Auto-Graph Tables           always                                       █ │\n│   Agent Reactions             true                                         █ │\n│   Codex Reset Fireworks       false                                        █ │\n│   Terminal Title Run State    true                                         █ │\n│   Terminal Title Spinner      braille                                      █ │\n│   Terminal Hyperlinks         auto                                         █ │\n│   Mouse Click-to-Focus        false                                        █ │\n│   Tight Layout                false                                        █ │\n│   Shimmer                     classic                                      █ │\n│   Pinned Agents               collapsed                                    █ │\n│   Subagent Live Preview       false                                        █ │\n│   Smooth Streaming            true                                         █ │\n│   Hide Tool Activity          false                                        │ │\n│   Show Token Usage            false                                        │ │\n│   Show Turn Time              false                                        │ │\n│   Cache Miss Marker           false                                        │ │\n│   Collapse Compacted History  true                                         │ │\n│   Show Hardware Cursor        true                                         │ │\n│                                                                              │\n│   Theme used when the terminal has a dark background                         │\n│                                                                              │\n│                                                                              │\n│                              …[455 chars clipped]"
+    },
+    {
+      "ctor": "WC",
+      "keys": [
+        "children"
+      ],
+      "rendered": "╭─ Resume Session (current folder) ────────────────────────────────────────────╮\n│                                                                              │\n│ >                                                                            │\n│                                                                              │\n│ ❯ /help                                                                      │\n│   just now  ·  2.7KB  ·  current  ·  ✔ done                                  │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                                                                              │\n│                              …[454 chars clipped]"
+    },
+    {
+      "ctor": "DA",
+      "keys": [
+        "children",
+        "onLabelChangeCallback",
+        "sessionName"
+      ],
+      "rendered": "╭─ Session Tree ───────────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ⏎: switch. ⌥↑/⌥↓: previous/next turn. PgUp/PgDn (←/→): page. Home/End: firs… │\n│ Search:                                                                      │\n├──────────────────────────────────────────────────────────────────────────────┤\n│                                                                              │\n│   • user: /help                                                              │\n│   • assistant: PROBE_OK                                                      │\n│   • user: /sessions                                                          │\n│ › • assistant: PROBE_OK                                                      │\n│                                                                              │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "CF",
+      "keys": [
+        "children"
+      ],
+      "rendered": "╭─ Select provider to login ───────────────────────────────────────────────────╮\n│ ❯ ChatGPT Plus/Pro (Codex Subscription)                                    █ │\n│   Anthropic (Claude Pro/Max)                                               │ │\n│   Z.AI (GLM Coding Plan)                                                   │ │\n│   Z.AI (GLM Coding Plan · Sign in)                                         │ │\n│   Kimi Code                                                                │ │\n│   OpenRouter                                                               │ │\n│   GitHub Copilot                                                           │ │\n│   Cursor (Claude, GPT, etc.)                                               │ │\n│   Devin                                                                    │ │\n│   Google Antigravity (Gemini, Claude, GPT-OSS)                             │ │\n│ Type to search                                                               │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Lse",
+      "keys": [
+        "onClose",
+        "onRequestRender"
+      ],
+      "rendered": "╭─ Extension Control Center ───────────────────────────────────────────────────╮\n│  ALL (26)    Builtin Defaults    Skillshare    OMP Extension Packages        │\n│  Claude Code    Agent Plugins    Claude Code Marketplace                     │\n│  Agent Dirs (.agent/.agents)    OpenAI Codex    Gemini CLI    OpenCode       │\n│  Cursor    Windsurf    Cline    GitHub Copilot    VS Code    AGENTS.md       │\n│  CLAUDE.md    Custom context files    Managed Skills (auto-learn)            │\n│  MCP Config    SSH Config                                                    │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ Search:                                │ go-add-cleanup                      │\n│                                        │                                     │\n│ ⚖ Rules (26)                           │ ● Active                            │\n│    ● go-add-cleanup                    │                                     │\n│    ● go-bench-loop                     │ Prefer runtime.AddCleanup over      │\n│    ● go-exp-promoted                   │ runtime.SetFinalizer for new code   │\n│    ● go-ioutil                         │ (Go 1.24)                           │\n│    ● go-join-hostport                  │                                     │\n│    ● go-new-expr                       │ Origin:                             │\n│    ● go-rand-v2                        │   via Builtin Defaults (User)       │\n│    ● go-range-int                      │   builtin-defaults:go-add-cleanup   │\n│    ● rs-box-leak                       │   .md                               │\n│    ● rs-future-prelude                 │                                     │\n│    ● rs-lazylock                       │ Applies                             │\n│    ● rs-match-ergonomics               │ ─────────────────────────────────   │\n│    ● rs-result-type                    │   condition  runtime\\.SetFinalize   │\n│    ● ts-bare-catch                     │              r                      │\n│    ● ts-import-type                    │   scope      tool:edit(*.go)        │\n│    ● ts-no-any                         │              tool:write(*.go)       │\n│    ● ts-no-deprecated-left…            │   interrupt  never                  │\n│    ● ts-no-dynamic-import              │                                     │\n│    ● ts-no-inline-cast-acc…            │ Rule                                │\n│    ● ts-no-local-is-record             │ ─────────────────────────────────   │\n│    ● ts-no-return-type                 │ Go 1.24 added                       │\n│    ● ts-no-test-timers                 │ `runtime.AddCleanup`; new code      │\n│    ● ts-no-tiny-functions              │ SHOULD prefer it over               │\n│    ● ts-promise-with-resol…            │ `runtime.SetFinalizer`.             │\n│    ● ts-redundant-clear-gu…            │                                     │\n│    ● ts-set-map                        │ ## Why AddCleanup wins              │\n│                                        │                                     │\n│                                        │ - One object — multiple             │\n│                                        │ cleanups; `SetFinalizer`: one.      │\n│                                        │ - Cleanups MAY attach to            │\n│                                        │ interior pointers.                  │\n│                                        │ - Reference cycles: cleanups        │\n│                                        │ run; finalizers leak.               │\n│                                        │ - Cleanup neither resurrects        │\n│                                        │ object nor delays freeing it or     │\n│                                        │ its referents an extra GC cycle.    │\n│                                        │                                     │\n│                                        │ ## Migration                        │\n│                              …[454 chars clipped]"
+    },
+    {
+      "ctor": "Fke",
+      "keys": [
+        "children",
+        "nativeOverlay"
+      ],
+      "rendered": "╭─ Recent Changes ─────────────────────────────────────────────────────────────╮\n│                                                                              │\n│ [18.12.3] - 2026-10-19                                                     █ │\n│                                                                            █ │\n│ ### Added                                                                  █ │\n│                                                                            █ │\n│ - Added the Ask and remember approval mode (tools.approvalMode:            │ │\n│   always-ask-cached, --approval-mode always-ask-cached): it also asks      │ │\n│   before file reads, and file prompts can remember the folder or the file, │ │\n│   for this session or across sessions, through approval-cache.db (#16049   │ │\n│   (https://github.com/can1357/oh-my-pi/pull/16049) by @Peribunt            │ │\n│   (https://github.com/Peribunt))                                           │ │\n│ - Added /forget-approvals to forget every file and folder approval Ask and │ │\n│   remember has recorded (#16049                                            │ │\n│   (https://github.com/can1357/oh-my-pi/pull/16049) by @Peribunt            │ │\n│   (https://github.com/Peribunt))                                           │ │\n│ - Extension ui.approve() hosts can render the new prompt.grants choices and│ │\n│   answer { grant, always }; hosts that ignore them keep answering          │ │\n│   once/session/deny (#16049                                                │ │\n│   (https://github.com/can1357/oh-my-pi/pull/16049) by @Peribunt            │ │\n│   (https://github.com/Peribunt))                                           │ │\n│ - Extension and custom tools can declare approvalCacheTargets to take part │ │\n│   in Ask and remember grants (#16049                                       │ │\n│   (https://github.com/can1357/oh-my-pi/pull/16049) by @Peribunt            │ │\n│   (https://github.com/Peribunt))                                           │ │\n│ - Added proc://<id>/streams for bash jobs: it lists the command's pipes,   │ │\n│   and proc://<id>/streams/<n> shows what has crossed pipe n so far, so cmd │ │\n│   | tail -5 can be followed live without rerunning cmd                     │ │\n│ - Background job widgets are designed per job by the new widget model role │ │\n│   (resolves like smol until you assign it): one request writes rules that  │ │\n│   read the job's output and its pipes (cmd | tail included), and every     │ │\n│   later update is computed locally with no further model calls or messages │ │\n│   to the agent; a subagent gets a widget only once it says which output    │ │\n│   shows its progress, and a job with nothing worth charting gets none; turn│ │\n│   them off with async.widgets: false                                       │ │\n│ - Running subagents now show their current step, in their own words, on the│ │\n│   task card; the periodic completion check also asks the subagent which    │ │\n│   output shows its progress, so the job widget knows what to chart         │ │\n│ - The wait card shows the watched jobs as a row of tiles, each with its    │ │\n│   status, name (a subagent's in full), what it is doing, and its headline  │ │\n│   figure and live widget when it has one (a throughput chart with its      │ │\n│   target line, per-model bars, CI job status, trial progress), and a       │ │\n│   subagent's own completion estimate as a ring that turns from blue to     │ │\n│   green as it fills (hover the tile for the percentage); the HUD jobs pill │ │\n│   shows the freshest job's headline and a mini chart, and hovering it opens│ │\n│   a card with the running jobs as tiles; the jobs sheet shows the selected │ │\n│   job's widget above its output, and the terminal status line appends the  │ │\n│   headline to the jobs count                                               │ │\n│                                                                            │ │\n│ ### Changed                  …[454 chars clipped]"
+    },
+    {
+      "ctor": "u",
+      "keys": [
+        "children",
+        "ctx"
+      ],
+      "rendered": "╭─ Debug Tools ────────────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ❯ Open: artifact folder           Open session artifacts in file manager   █ │\n│   Report: performance issue       Profile CPU, reproduce, then bundle      █ │\n│   Profile: work scheduling        Open flamegraph of last 30s              █ │\n│   Report: dump session            Create report bundle immediately         │ │\n│   Report: memory issue            Memory statistics + bundle               │ │\n│   View: recent logs               Show last 50 log entries                 │ │\n│   View: system info               Show environment details                 │ │\n│   Type to search                                                             │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "$D",
+      "keys": [
+        "children"
+      ],
+      "rendered": "────────────────────────────────────────────────────────────────────────────────\n\n ⠋ Sharing session...                                                           \n\n ⎋ cancel                                                                       \n\n────────────────────────────────────────────────────────────────────────────────"
+    },
+    {
+      "ctor": "Fke",
+      "keys": [
+        "children",
+        "nativeOverlay"
+      ],
+      "rendered": "╭─ Available Tools ────────────────────────────────────────────────────────────╮\n│                                                                              │\n│ ┌────────────────┬────────────────────────────────────────────────────────┐█ │\n│ │ Tool           │ Description                                            │█ │\n│ ├────────────────┼────────────────────────────────────────────────────────┤█ │\n│ │ read           │ Use read for static web; browser only if needed. Put   │█ │\n│ │                │ line ranges in path, never a separate                  │█ │\n│ │                │ range/offset/limit parameter:                          │█ │\n│ │                │ {\"path\":\"notes.txt:450-455\"} reads lines 450-455;      │█ │\n│ │                │ {\"path\":\"notes.txt:-5\"} reads the last 5. Include the  │█ │\n│ │                │ selector on every ranged call; repeating a bare path   ││ │\n│ │                │ does not advance through the file. Path suffixes: :50  ││ │\n│ │                │ or :50- starts at line 50; :50-200 inclusive; :50+150  ││ │\n│ │                │ counts lines; :-60 last 60; commas join ranges         ││ │\n│ │                │ (:5-16,960-973) or individual lines (:19,59). A single ││ │\n│ │                │ non-raw range also shows 1 line before and 3 after     ││ │\n│ │                │ (e.g. :50-80 shows 49-83); non-raw reads (comma lists  ││ │\n│ │                │ too) may add the open/close line of a cut block; only  ││ │\n│ │                │ :raw stays exact. :raw verbatim without                ││ │\n│ │                │ anchors/prefixes; combine :2-4:raw or :raw:2-4 for     ││ │\n│ │                │ exactly those lines; beside :raw a bare number is that ││ │\n│ │                │ one line (:17:raw), :17-:raw runs on. :conflicts lists ││ │\n│ │                │ one line per unresolved merge block. SVG/SVGZ default  ││ │\n│ │                │ text; :img rasterizes an SVG/SVGZ into an image, :raw  ││ │\n│ │                │ original. Raster images (PNG, JPEG) need no selector;  ││ │\n│ │                │ :img rejects them. Video requires ffmpeg/ffprobe: bare ││ │\n│ │                │ preview grid+metadata, :412 frame,                     ││ │\n│ │                │ :1h5m42s/:90s/:01:23 time. Sources: - Bare code:       ││ │\n│ │                │ declarations only; re-read ONLY footer-named           ││ │\n│ │                │ omissions, NEVER guess ../…. - Selected file:          ││ │\n│ │                │ [foo.ts#1A2B] snapshot+lines. Copy [FILENAME#TAG] for  ││ │\n│ │                │ anchored edits; NEVER invent tag. - Directory:         ││ │\n│ │                │ complete root; child listings cap at 12 (… N more),    ││ │\n│ │                │ read child; page via :N-M/:-N. - SQLite: file.db       ││ │\n│ │                │ tables; :table schema/rows; :table:key by primary key; ││ │\n│ │                │ ?limit=, ?where=, ?q=SELECT. - Archives:               ││ │\n│ │                │ ZIP/JAR/APK/WHL, compressed TAR,                       ││ │\n│ │                │ RAR/7z/ISO/CAB/DEB/RPM/CPIO/AR/LZH/ARJ/ASAR,           ││ │\n│ │                │ compressed streams; member via                         ││ │\n│ │                │ archive.ext:member/path. - JSON/JSONL/NDJSON:          ││ │\n│ │                │ file.json?q=<jq filter>; &raw=true unquoted strings,   ││ │\n│ │                │ &compact=true one-line values, &offset=&limit= page    ││ │\n│ │                │ results; & inside the filter → %26. - Executables      ││ │\n│ │                │ (ELF/PE/Mach-O, extensionless ok): overview + function ││ │\n│ │                │ list; :<func|0xaddr> pseudocode, :<func>:asm,          ││ │\n│ │                │ :imports, :exports, :strings, :xrefs:<func|0xaddr>;    ││ │\n│ │                │ line ranges apply after the view (bin:main:10-40).     ││ │\n│ │                │ Universal Mach-O: host-arch slice by default,          ││ │\n│ │                │ bin:@<arch> picks another (bin:@x86_64:main). -        ││ │\n│ │                │ PDF/docume…[454 chars clipped]"
+    },
+    {
+      "ctor": "Dse",
+      "keys": [],
+      "rendered": "╭─ Agents ─────────┬───────────────────────────────────────────────────────────╮\n│   ⬢ All agents 6 │  All agents · 6                                           │\n│ ──────────────── │  search: type to filter                                   │\n│   ● Bundled    6 │                                                           │\n│ ──────────────── │  ❯ ● reviewer           bundled                           │\n│   + New agent    │    ● scout              bundled                           │\n│                  │    ● seance             bundled                           │\n│                  │    ● security-reviewer  bundled                           │\n│                  │    ● sonic              bundled                           │\n│                  │    ● task               bundled                           │\n│                  │    + New agent…                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │                                                           │\n│                  │ ───────────────────────────────────────────────────────── │\n│                  │  Code revi…[454 chars clipped]"
+    },
+    {
+      "ctor": "Ej",
+      "keys": [
+        "callbacks",
+        "options"
+      ],
+      "rendered": "╭─ Ask ────────────────────────────────────────────────────────────────────────╮\n│ Pick a color for the acceptance run                                          │\n├──────────────────────────────────────────────────────────────────────────────┤\n│   ○ red                                                                      │\n│ ❯ ○ green (Recommended)                                                      │\n│   ○ blue                                                                     │\n│   ○ Other (type your own)                                                    │\n│                                                                              │\n│                                                                              │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ⏎ select · n note · ↑/↓ move · ⎋ cancel · ⌥H hide                            │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Ww",
+      "keys": [
+        "focused",
+        "cursorOverride",
+        "decorateText",
+        "describeDecorations",
+        "describeLanguage",
+        "describeLayout",
+        "describePlaceholder",
+        "onYank",
+        "onVimModeChange",
+        "borderColor",
+        "onAutocompleteUpdate",
+        "onTextAssistApplied",
+        "viewportRowsProvider",
+        "atomicTokenPattern",
+        "onSubmit",
+        "onAltEnter",
+        "onChange",
+        "onLargePaste",
+        "onAutocompleteCancel",
+        "disableSubmit",
+        "placeholder",
+        "prediction",
+        "imageLinks",
+        "pendingImages",
+        "pendingImageLinks",
+        "pendingTexts",
+        "draftImageLinkMaterializer",
+        "tui",
+        "skillFilePath",
+        "modelMentionLabel",
+        "modelMentionSelector",
+        "fileHyperlink",
+        "magicKeywordsEnabledOverride",
+        "magicKeywordsEnabled",
+        "imageReferenceHyperlink",
+        "composerState",
+        "attachmentChips",
+        "composerFacts",
+        "onEscape",
+        "onClear",
+        "onExit",
+        "onDisplayReset",
+        "onCycleThinkingLevel",
+        "onCycleModelForward",
+        "onCycleModelBackward",
+        "onSelectModel",
+        "onSuspend",
+        "onSelectModelTemporary",
+        "onCopyPrompt",
+        "onPasteImage",
+        "onPasteImagePath",
+        "onPasteTextRaw",
+        "onDequeue",
+        "onRetry",
+        "onCapsLock",
+        "onToggleDictation",
+        "onLeftAtStart",
+        "onFocusAgent",
+        "spaceHold",
+        "handleInput"
+      ],
+      "rendered": " ⠹ 6s > ⬢ Mock Model > 🗺 Plan > 🗑 pitg-probe/run-omp/project ▶─28%╎──┃──────33K─\n╰─                                                                              "
+    },
+    {
+      "ctor": "Ej",
+      "keys": [
+        "callbacks",
+        "options"
+      ],
+      "rendered": "╭─ Ask ────────────────────────────────────────────────────────────────────────╮\n│  E2E Multi    E2E Size    Submit                                             │\n│ Pick toppings                                                                │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ❯ ☐ cheese                                                                   │\n│   ☐ mushroom                                                                 │\n│   ☐ olive                                                                    │\n│   ☐ Other (type your own)                                                    │\n│                                                                              │\n│                                                                              │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ␣ toggle · ⏎ next · ↑/↓ move · ⇥/←/→ question · ⎋ cancel · ⌥H hide           │\n╰──────────────────────────────────────────────────────────────────────────────╯"
+    },
+    {
+      "ctor": "Ww",
+      "keys": [
+        "focused",
+        "cursorOverride",
+        "decorateText",
+        "describeDecorations",
+        "describeLanguage",
+        "describeLayout",
+        "describePlaceholder",
+        "onYank",
+        "onVimModeChange",
+        "borderColor",
+        "onAutocompleteUpdate",
+        "onTextAssistApplied",
+        "viewportRowsProvider",
+        "atomicTokenPattern",
+        "onSubmit",
+        "onAltEnter",
+        "onChange",
+        "onLargePaste",
+        "onAutocompleteCancel",
+        "disableSubmit",
+        "placeholder",
+        "prediction",
+        "imageLinks",
+        "pendingImages",
+        "pendingImageLinks",
+        "pendingTexts",
+        "draftImageLinkMaterializer",
+        "tui",
+        "skillFilePath",
+        "modelMentionLabel",
+        "modelMentionSelector",
+        "fileHyperlink",
+        "magicKeywordsEnabledOverride",
+        "magicKeywordsEnabled",
+        "imageReferenceHyperlink",
+        "composerState",
+        "attachmentChips",
+        "composerFacts",
+        "onEscape",
+        "onClear",
+        "onExit",
+        "onDisplayReset",
+        "onCycleThinkingLevel",
+        "onCycleModelForward",
+        "onCycleModelBackward",
+        "onSelectModel",
+        "onSuspend",
+        "onSelectModelTemporary",
+        "onCopyPrompt",
+        "onPasteImage",
+        "onPasteImagePath",
+        "onPasteTextRaw",
+        "onDequeue",
+        "onRetry",
+        "onCapsLock",
+        "onToggleDictation",
+        "onLeftAtStart",
+        "onFocusAgent",
+        "spaceHold",
+        "handleInput"
+      ],
+      "rendered": " ⠧ 6s > ⬢ Mock Model > 🗺 Plan > 🗑 pitg-probe/run-omp/project ▶────╎──┃34%───33K─\n╰─                                                                              "
+    }
+  ],
   "conclusions": {
     "host": "omp",
     "hostVersion": "omp/18.12.5",
@@ -21192,7 +21728,6 @@
     },
     "dialogFrames": [
       {
-        "key": "Ww|focused,cursorOverride,decorateText,describeDecorations,describeLanguage,describeLayout,describePlaceholder,onYank,onVimModeChange,borderColor,onAutocompleteUpdate,onTextAssistApplied,viewportRowsProvider,atomicTokenPattern,onSubmit,onAltEnter,onChange,onLargePaste,onAutocompleteCancel,disableSubmit,placeholder,prediction,imageLinks,pendingImages,pendingImageLinks,pendingTexts,draftImageLinkMaterializer,tui,skillFilePath,modelMentionLabel,modelMentionSelector,fileHyperlink,magicKeywordsEnabledOverride,magicKeywordsEnabled,imageReferenceHyperlink,composerState,attachmentChips,composerFacts,onEscape,onClear,onExit,onDisplayReset,onCycleThinkingLevel,onCycleModelForward,onCycleModelBackward,onSelectModel,onSuspend,onSelectModelTemporary,onCopyPrompt,onPasteImage,onPasteImagePath,onPasteTextRaw,onDequeue,onRetry,onCapsLock,onToggleDictation,onLeftAtStart,onFocusAgent,spaceHold,handleInput",
         "ctor": "Ww",
         "keys": [
           "focused",
@@ -21260,7 +21795,6 @@
         "rows": []
       },
       {
-        "key": "QT|children",
         "ctor": "QT",
         "keys": [
           "children"
@@ -21272,7 +21806,84 @@
         "footer": "│ ↑/↓ navigate  ⏎ select  ⎋ cancel                                             │"
       },
       {
-        "key": "FD|children",
+        "ctor": "Ww",
+        "keys": [
+          "focused",
+          "cursorOverride",
+          "decorateText",
+          "describeDecorations",
+          "describeLanguage",
+          "describeLayout",
+          "describePlaceholder",
+          "onYank",
+          "onVimModeChange",
+          "borderColor",
+          "onAutocompleteUpdate",
+          "onTextAssistApplied",
+          "viewportRowsProvider",
+          "atomicTokenPattern",
+          "onSubmit",
+          "onAltEnter",
+          "onChange",
+          "onLargePaste",
+          "onAutocompleteCancel",
+          "disableSubmit",
+          "placeholder",
+          "prediction",
+          "imageLinks",
+          "pendingImages",
+          "pendingImageLinks",
+          "pendingTexts",
+          "draftImageLinkMaterializer",
+          "tui",
+          "skillFilePath",
+          "modelMentionLabel",
+          "modelMentionSelector",
+          "fileHyperlink",
+          "magicKeywordsEnabledOverride",
+          "magicKeywordsEnabled",
+          "imageReferenceHyperlink",
+          "composerState",
+          "attachmentChips",
+          "composerFacts",
+          "onEscape",
+          "onClear",
+          "onExit",
+          "onDisplayReset",
+          "onCycleThinkingLevel",
+          "onCycleModelForward",
+          "onCycleModelBackward",
+          "onSelectModel",
+          "onSuspend",
+          "onSelectModelTemporary",
+          "onCopyPrompt",
+          "onPasteImage",
+          "onPasteImagePath",
+          "onPasteTextRaw",
+          "onDequeue",
+          "onRetry",
+          "onCapsLock",
+          "onToggleDictation",
+          "onLeftAtStart",
+          "onFocusAgent",
+          "spaceHold",
+          "handleInput"
+        ],
+        "title": "π > ⬢ Mock Model > 🗑 pitg-probe/run-omp/project ▶────23%╎─────┃────────────33K",
+        "rows": []
+      },
+      {
+        "ctor": "QT",
+        "keys": [
+          "children"
+        ],
+        "title": "PROBE_CONFIRM_TITLE",
+        "rows": [
+          "│  ❯ Yes                                                                       │"
+        ],
+        "footer": "│ ↑/↓ navigate  ⏎ select  ⎋ cancel                                             │"
+      },
+      {
         "ctor": "FD",
         "keys": [
           "children"
@@ -21284,7 +21895,17 @@
         "footer": "│ ⏎ submit  ⎋ cancel                                                           │"
       },
       {
-        "key": "Fy|children,focused",
+        "ctor": "FD",
+        "keys": [
+          "children"
+        ],
+        "title": "PROBE_SECRET_TITLE",
+        "rows": [
+          "│ >                                                                            │"
+        ],
+        "footer": "│ ⏎ submit  ⎋ cancel                                                           │"
+      },
+      {
         "ctor": "Fy",
         "keys": [
           "children",
@@ -21295,7 +21916,6 @@
         "footer": "│ ⌃Q/⌃⏎ submit  ⎋ cancel  ⌃G external editor                                   │"
       },
       {
-        "key": "Object|render,invalidate,handleInput",
         "ctor": "Object",
         "keys": [
           "render",
@@ -21309,7 +21929,73 @@
         "footer": "Enter select • Tab input • Esc cancel"
       },
       {
-        "key": "Ej|callbacks,options",
+        "ctor": "Ww",
+        "keys": [
+          "focused",
+          "cursorOverride",
+          "decorateText",
+          "describeDecorations",
+          "describeLanguage",
+          "describeLayout",
+          "describePlaceholder",
+          "onYank",
+          "onVimModeChange",
+          "borderColor",
+          "onAutocompleteUpdate",
+          "onTextAssistApplied",
+          "viewportRowsProvider",
+          "atomicTokenPattern",
+          "onSubmit",
+          "onAltEnter",
+          "onChange",
+          "onLargePaste",
+          "onAutocompleteCancel",
+          "disableSubmit",
+          "placeholder",
+          "prediction",
+          "imageLinks",
+          "pendingImages",
+          "pendingImageLinks",
+          "pendingTexts",
+          "draftImageLinkMaterializer",
+          "tui",
+          "skillFilePath",
+          "modelMentionLabel",
+          "modelMentionSelector",
+          "fileHyperlink",
+          "magicKeywordsEnabledOverride",
+          "magicKeywordsEnabled",
+          "imageReferenceHyperlink",
+          "composerState",
+          "attachmentChips",
+          "composerFacts",
+          "onEscape",
+          "onClear",
+          "onExit",
+          "onDisplayReset",
+          "onCycleThinkingLevel",
+          "onCycleModelForward",
+          "onCycleModelBackward",
+          "onSelectModel",
+          "onSuspend",
+          "onSelectModelTemporary",
+          "onCopyPrompt",
+          "onPasteImage",
+          "onPasteImagePath",
+          "onPasteTextRaw",
+          "onDequeue",
+          "onRetry",
+          "onCapsLock",
+          "onToggleDictation",
+          "onLeftAtStart",
+          "onFocusAgent",
+          "spaceHold",
+          "handleInput"
+        ],
+        "title": "π > ⬢ Mock Model > 🗑 pitg-probe/run-omp/project ▶────23%╎─────┃────────────33K",
+        "rows": []
+      },
+      {
         "ctor": "Ej",
         "keys": [
           "callbacks",
@@ -21322,7 +22008,6 @@
         "footer": "│ ⏎ select · n note · ↑/↓ move · ⇥/←/→ question · ⎋ cancel · ⌥H hide           │"
       },
       {
-        "key": "Fke|children,nativeOverlay",
         "ctor": "Fke",
         "keys": [
           "children",
@@ -21333,7 +22018,73 @@
         "footer": "│ │ ↑/↓/←/→    │ Move cursor / browse history (↑ when empty) │               █ │"
       },
       {
-        "key": "EU|",
+        "ctor": "Ww",
+        "keys": [
+          "focused",
+          "cursorOverride",
+          "decorateText",
+          "describeDecorations",
+          "describeLanguage",
+          "describeLayout",
+          "describePlaceholder",
+          "onYank",
+          "onVimModeChange",
+          "borderColor",
+          "onAutocompleteUpdate",
+          "onTextAssistApplied",
+          "viewportRowsProvider",
+          "atomicTokenPattern",
+          "onSubmit",
+          "onAltEnter",
+          "onChange",
+          "onLargePaste",
+          "onAutocompleteCancel",
+          "disableSubmit",
+          "placeholder",
+          "prediction",
+          "imageLinks",
+          "pendingImages",
+          "pendingImageLinks",
+          "pendingTexts",
+          "draftImageLinkMaterializer",
+          "tui",
+          "skillFilePath",
+          "modelMentionLabel",
+          "modelMentionSelector",
+          "fileHyperlink",
+          "magicKeywordsEnabledOverride",
+          "magicKeywordsEnabled",
+          "imageReferenceHyperlink",
+          "composerState",
+          "attachmentChips",
+          "composerFacts",
+          "onEscape",
+          "onClear",
+          "onExit",
+          "onDisplayReset",
+          "onCycleThinkingLevel",
+          "onCycleModelForward",
+          "onCycleModelBackward",
+          "onSelectModel",
+          "onSuspend",
+          "onSelectModelTemporary",
+          "onCopyPrompt",
+          "onPasteImage",
+          "onPasteImagePath",
+          "onPasteTextRaw",
+          "onDequeue",
+          "onRetry",
+          "onCapsLock",
+          "onToggleDictation",
+          "onLeftAtStart",
+          "onFocusAgent",
+          "spaceHold",
+          "handleInput"
+        ],
+        "title": "π > ⬢ Mock Model > 🗑 pitg-probe/run-omp/project ▶────23%╎─────┃────────────33K",
+        "rows": []
+      },
+      {
         "ctor": "EU",
         "keys": [],
         "title": "Models ───────────────────┬",
@@ -21342,7 +22093,6 @@
         ]
       },
       {
-        "key": "AU|",
         "ctor": "AU",
         "keys": [],
         "title": "Settings",
@@ -21351,7 +22101,6 @@
         ]
       },
       {
-        "key": "WC|children",
         "ctor": "WC",
         "keys": [
           "children"
@@ -21363,7 +22112,6 @@
         ]
       },
       {
-        "key": "DA|children,onLabelChangeCallback,sessionName",
         "ctor": "DA",
         "keys": [
           "children",
@@ -21375,7 +22123,6 @@
         "footer": "│ ⏎: switch. ⌥↑/⌥↓: previous/next turn. PgUp/PgDn (←/→): page. Home/End: firs… │"
       },
       {
-        "key": "CF|children",
         "ctor": "CF",
         "keys": [
           "children"
@@ -21386,7 +22133,6 @@
         ]
       },
       {
-        "key": "Lse|onClose,onRequestRender",
         "ctor": "Lse",
         "keys": [
           "onClose",
@@ -21396,7 +22142,15 @@
         "rows": []
       },
       {
-        "key": "u|children,ctx",
+        "ctor": "Fke",
+        "keys": [
+          "children",
+          "nativeOverlay"
+        ],
+        "title": "Recent Changes",
+        "rows": []
+      },
+      {
         "ctor": "u",
         "keys": [
           "children",
@@ -21408,7 +22162,6 @@
         ]
       },
       {
-        "key": "$D|children",
         "ctor": "$D",
         "keys": [
           "children"
@@ -21418,10 +22171,177 @@
         "footer": "⎋ cancel"
       },
       {
-        "key": "Dse|",
+        "ctor": "Fke",
+        "keys": [
+          "children",
+          "nativeOverlay"
+        ],
+        "title": "Available Tools",
+        "rows": [],
+        "footer": "│ │                │ tables; :table schema/rows; :table:key by primary key; ││ │"
+      },
+      {
         "ctor": "Dse",
         "keys": [],
         "title": "Agents ─────────┬",
+        "rows": []
+      },
+      {
+        "ctor": "Ej",
+        "keys": [
+          "callbacks",
+          "options"
+        ],
+        "title": "Ask",
+        "rows": [
+          "│ ❯ ○ green (Recommended)                                                      │"
+        ],
+        "footer": "│ ⏎ select · n note · ↑/↓ move · ⎋ cancel · ⌥H hide                            │"
+      },
+      {
+        "ctor": "Ww",
+        "keys": [
+          "focused",
+          "cursorOverride",
+          "decorateText",
+          "describeDecorations",
+          "describeLanguage",
+          "describeLayout",
+          "describePlaceholder",
+          "onYank",
+          "onVimModeChange",
+          "borderColor",
+          "onAutocompleteUpdate",
+          "onTextAssistApplied",
+          "viewportRowsProvider",
+          "atomicTokenPattern",
+          "onSubmit",
+          "onAltEnter",
+          "onChange",
+          "onLargePaste",
+          "onAutocompleteCancel",
+          "disableSubmit",
+          "placeholder",
+          "prediction",
+          "imageLinks",
+          "pendingImages",
+          "pendingImageLinks",
+          "pendingTexts",
+          "draftImageLinkMaterializer",
+          "tui",
+          "skillFilePath",
+          "modelMentionLabel",
+          "modelMentionSelector",
+          "fileHyperlink",
+          "magicKeywordsEnabledOverride",
+          "magicKeywordsEnabled",
+          "imageReferenceHyperlink",
+          "composerState",
+          "attachmentChips",
+          "composerFacts",
+          "onEscape",
+          "onClear",
+          "onExit",
+          "onDisplayReset",
+          "onCycleThinkingLevel",
+          "onCycleModelForward",
+          "onCycleModelBackward",
+          "onSelectModel",
+          "onSuspend",
+          "onSelectModelTemporary",
+          "onCopyPrompt",
+          "onPasteImage",
+          "onPasteImagePath",
+          "onPasteTextRaw",
+          "onDequeue",
+          "onRetry",
+          "onCapsLock",
+          "onToggleDictation",
+          "onLeftAtStart",
+          "onFocusAgent",
+          "spaceHold",
+          "handleInput"
+        ],
+        "title": "⠹ 6s > ⬢ Mock Model > 🗺 Plan > 🗑 pitg-probe/run-omp/project ▶─28%╎──┃──────33K",
+        "rows": []
+      },
+      {
+        "ctor": "Ej",
+        "keys": [
+          "callbacks",
+          "options"
+        ],
+        "title": "Ask",
+        "rows": [
+          "│ ❯ ☐ cheese                                                                   │"
+        ],
+        "footer": "│ ␣ toggle · ⏎ next · ↑/↓ move · ⇥/←/→ question · ⎋ cancel · ⌥H hide           │"
+      },
+      {
+        "ctor": "Ww",
+        "keys": [
+          "focused",
+          "cursorOverride",
+          "decorateText",
+          "describeDecorations",
+          "describeLanguage",
+          "describeLayout",
+          "describePlaceholder",
+          "onYank",
+          "onVimModeChange",
+          "borderColor",
+          "onAutocompleteUpdate",
+          "onTextAssistApplied",
+          "viewportRowsProvider",
+          "atomicTokenPattern",
+          "onSubmit",
+          "onAltEnter",
+          "onChange",
+          "onLargePaste",
+          "onAutocompleteCancel",
+          "disableSubmit",
+          "placeholder",
+          "prediction",
+          "imageLinks",
+          "pendingImages",
+          "pendingImageLinks",
+          "pendingTexts",
+          "draftImageLinkMaterializer",
+          "tui",
+          "skillFilePath",
+          "modelMentionLabel",
+          "modelMentionSelector",
+          "fileHyperlink",
+          "magicKeywordsEnabledOverride",
+          "magicKeywordsEnabled",
+          "imageReferenceHyperlink",
+          "composerState",
+          "attachmentChips",
+          "composerFacts",
+          "onEscape",
+          "onClear",
+          "onExit",
+          "onDisplayReset",
+          "onCycleThinkingLevel",
+          "onCycleModelForward",
+          "onCycleModelBackward",
+          "onSelectModel",
+          "onSuspend",
+          "onSelectModelTemporary",
+          "onCopyPrompt",
+          "onPasteImage",
+          "onPasteImagePath",
+          "onPasteTextRaw",
+          "onDequeue",
+          "onRetry",
+          "onCapsLock",
+          "onToggleDictation",
+          "onLeftAtStart",
+          "onFocusAgent",
+          "spaceHold",
+          "handleInput"
+        ],
+        "title": "⠧ 6s > ⬢ Mock Model > 🗺 Plan > 🗑 pitg-probe/run-omp/project ▶────╎──┃34%───33K",
         "rows": []
       }
     ],

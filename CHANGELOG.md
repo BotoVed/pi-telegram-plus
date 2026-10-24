@@ -40,16 +40,43 @@ missing or mislabelled cannot be published.
   lands in the chat that asked for it instead of being tracked without a message.
   Affordances the host has no twin for - the nested `menu` keyboard the plugin's management
   screens walk - stay served by the plugin, so `/tg` keeps working while the host owns prompts.
-  Hosts whose dialogs the broker cannot read yet — OMP renders its selector, text input and
-  an `ask` dialog into an overlay that never takes focus — stay entirely outside the broker:
-  it tracks nothing, posts no dialog message and claims no text there, so the plugin's own
-  prompts answer as before. Handing OMP's prompts back to the plugin was not enough on its
-  own; a broker that watches dialogs it cannot read took answers away from OMP's own menus
-  and lifecycle commands, so the switch that decides who answers a prompt now also gates the
-  broker.
+  Hosts whose dialogs the broker could not read stayed outside it entirely, and OMP was such a
+  host: its overlays keep their rows in private fields, so the broker saw an unreadable screen
+  and the plugin kept answering in Telegram by itself.
+- **OMP dialogs belong to the host as well.** The broker now reads an OMP overlay from what the
+  host itself advertises instead of from field names - the question and options of the call that
+  opened the dialog, then the rows and the highlighted row of the frame the dialog draws - so on
+  OMP, as on pi, extension `select` / `confirm` / `input` / `custom` prompts and the `ask` tool
+  (single- and multi-question) appear in Telegram as real choice buttons, and a terminal answer
+  and a Telegram tap compete fairly: whoever answers first resolves the host's dialog once and
+  the other keyboard disappears.
 
 ### Fixed
 
+- **A redraw no longer closes a dialog.** OMP hands focus back to the editor for a frame while it
+  redraws an open overlay. That single frame was read as "answered in the terminal": the Telegram
+  dialog was written off mid-question, its keyboard withdrawn, and the screen mirror took the
+  chat over. A dialog now has to stay unfocused for a quarter-second before it counts as closed,
+  which a terminal answer still passes and a redraw does not.
+- **A spinner no longer answers for the dialog.** The host's "working" panel holds the keyboard so
+  `Esc` can interrupt, and the broker treated any focused component as a dialog: it drew the
+  spinner as an unanswerable screen with a keyboard, and that screen then claimed the message you
+  typed for the dialog that was still loading - the text never reached the model. A panel with no
+  question in it is no longer drawn as a dialog; the terminal mirror still shows it. Recognising
+  a question that has no readable rows now happens *after* the loader checks, because that
+  recognition costs a claim on the entry the host recorded: a spinner that took focus first used
+  to leave with the question's identity, and the dialog that arrived afterwards reached the
+  adapters nameless.
+
+- **A refused repaint keeps a live keyboard.** Redrawing a dialog stripped its buttons whenever
+  the edit call failed, but a failure usually says nothing about the dialog - flood control, or
+  content Telegram considers unchanged - and the question behind it is still open, now with no way
+  to answer it from the chat. A failed repaint is logged and the next one redraws; only a dialog
+  that has actually finished loses its keyboard.
+
+- **One question, one keyboard.** While the broker shows a dialog in a chat, the terminal mirror
+  keeps streaming the screen but stops offering its own arrow keys: two keyboards for the same
+  question meant taps landed on the mirror and the dialog stayed open.
 - **A prompt's answer stays with the prompt.** A dialog still open in the terminal is
   mirrored into the chat as a screen snapshot, and that mirror claimed every following text
   message as a search term: the answer typed for a Telegram prompt (a bot token, a secret)
@@ -108,6 +135,58 @@ missing or mislabelled cannot be published.
   into them. It is now typed into the component's own field and submitted with Enter, and
   a secret answer is still deleted from the chat.
 
+- **Buttons keep working when the host moves focus to the overlay wrapper.** OMP opens a
+  dialog and then hands the keyboard to the container that holds it. The broker read that as a
+  new dialog, so every button already in the chat died ("this menu has expired") halfway
+  through a flow. The session now follows the question rather than the object: the wrapper
+  receives the keystrokes, while reading and typing still go to the component that holds the
+  rows, and the message, its buttons and any half-typed answer stay valid.
+
+- **A question behind a spinner is still answerable.** The host puts its "working" panel in
+  front of an open dialog so `Esc` can interrupt the turn; the broker closed the dialog and
+  withdrew the keyboard at that moment, so a multi-question `ask` never reached its Submit
+  row. The panel is still never drawn as a dialog, but it no longer ends the question behind
+  it, and a tap on the dialog still reaches the dialog.
+
+- **A redraw of an unchanged dialog keeps its buttons.** The same dialog losing and regaining
+  focus (which OMP does while it repaints) used to bump the dialog's version, and the buttons
+  you were looking at were reported stale - "the list changed, choose again" - although
+  nothing had moved. The version now changes only when the buttons themselves change: a redraw
+  that merely moves the terminal's own cursor leaves the keyboard in the chat untouched.
+
+- **A command no longer waits behind a dialog nobody answered.** The host queues every later
+  command behind an unanswered dialog, so one abandoned question turned the next command into
+  a 30-second silence. Sending a command now closes that dialog for you - as you would press
+  `Esc` in the terminal - and the chat is told which question was closed. Only the dead
+  keyboard is stripped from the old message, never written over: the command that arrived
+  answers on that same message. A dialog another chat was shown is left alone, and one the
+  terminal had already answered is closed without a word.
+
+- **Choices work on lists the terminal has filtered or paged.** When a host keeps its rows in
+  private fields, the highlighted row is only visible in the frame the dialog draws; the count
+  of arrow presses was taken from the full option list, so a filtered or scrolled list landed
+  on the wrong row. The steps are now counted between the rows actually on screen, and a row
+  that is not on screen is refused instead of guessed.
+
+- **Screens nobody can model stay with the screen mirror.** A dialog no adapter can read was
+  also posted to the chat as a wall of text with a keyboard that could not answer it, while the
+  mirror - which can drive it with real arrow keys - was silenced for that message. Two
+  keyboards for one question followed. Such a screen is now left to the mirror alone.
+
+- **A command that only reports still reports to the chat.** Once OMP's dialogs went through
+  the host, a command's own context carried the host's raw UI, whose notifications print only
+  in the terminal: `/changelog`, `/copy`, `/debug` and the rest answered with a single line the
+  remote user never received, so each looked like a 30-second hang. The command's UI is routed
+  again - prompts stay with the host so the terminal can answer them - and a notification
+  reaches the chat exactly once: where the host's UI already reports to the chat, nothing is
+  copied over it.
+
+- **Options the host pads are still recognised.** OMP hands its extension host option strings
+  that carry their own indentation and a "this is the current value" dot, while the frame draws
+  a cursor mark in front of the same text; the two never matched, so taps in the configuration
+  submenus and on `/model` were refused with "this button does nothing here". Labels are now
+  compared with that decoration stripped.
+
 ### Testing
 
 - **Per-command parity audit (`npm run test:e2e:parity`).** Boots a fresh isolated host
@@ -124,11 +203,26 @@ missing or mislabelled cannot be published.
   api.telegram.org (send → edit → delete) and asserts the real API rejects an unsupported
   tag while the local validator agrees.
 
+- **A suite refuses a port another run owns.** Every e2e suite injects updates through a
+  mock Bot API on a fixed port; a `--keep` run that never died left that port answering for
+  the *old* host, and the next suite then read a different chat and reported failures the
+  plugin never caused. All five suites probe both ports before spawning anything and name
+  the collision instead of sharing it silently. A command step that first has to close an
+  unanswered dialog now waits for the command's own reply rather than the notice that
+  precedes it.
+
 - **Dialog round trip (`npm run test:e2e:dialogs`).** Raises `select`, `confirm`, `input`,
   `inputSecret` and `custom` from an extension, plus the `ask` tool from the mock provider,
   answers each one from Telegram *and* from the terminal, and asserts the value the
   extension call actually resolved to (read back from the stage-0 probe document) instead
   of the shape of the keyboard — including that a secret answer never reaches the Bot API.
+
+- **The dialog driver taps what is on screen.** A dialog is redrawn while the host finishes
+  painting it, and every edit hands out fresh callback values, so the suite now works off the
+  newest keyboard in the chat and remembers which row it pressed by that row's own text.
+  Reusing the keyboard captured at open time made the multi-question `ask` tick the same box
+  back and forth forever: pressing something the user could no longer see is refused, and
+  Submit never appeared.
 
 ### Added
 

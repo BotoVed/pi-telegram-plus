@@ -19,12 +19,13 @@
  *
  * Usage:
  *   node scripts/e2e/run-e2e-omp.mjs [--keep] [--timeout 90]
- *     [--tg-port 9950] [--provider-port 9951] [--omp /path/to/omp]
+ *     [--tg-port 9980] [--provider-port 9981] [--omp /path/to/omp]
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createServer } from "node:net";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
 const PLUGIN_ENTRY = join(REPO, "index.ts");
@@ -37,8 +38,8 @@ function argValue(flag, fallback) {
 
 const KEEP = process.argv.includes("--keep");
 const STEP_TIMEOUT_MS = Number(argValue("--timeout", "90")) * 1000;
-const TG_PORT = Number(argValue("--tg-port", "9950"));
-const PROVIDER_PORT = Number(argValue("--provider-port", "9951"));
+const TG_PORT = Number(argValue("--tg-port", "9980"));
+const PROVIDER_PORT = Number(argValue("--provider-port", "9981"));
 const OMP_CLI = argValue("--omp", process.env.OMP_CLI || "omp");
 const BOT_TOKEN = "222222:OMP_E2E_MOCK_TOKEN";
 const CHAT_ID = 778;
@@ -510,6 +511,18 @@ async function main() {
   mkdirSync(ROOT, { recursive: true });
   writeFileSync(join(ROOT, "provider.jsonl"), "");
   writeFileSync(join(ROOT, "telegram.jsonl"), "");
+
+  // A leftover run holding these ports would silently steal the injected updates: this
+  // suite would then read another host's chat. Fail with a name.
+  for (const [label, port] of [["telegram mock", TG_PORT], ["provider mock", PROVIDER_PORT]]) {
+    await new Promise((resolveReady, rejectBusy) => {
+      const probe = createServer();
+      probe.once("error", (error) => rejectBusy(new Error(
+        `${label} port ${port} is already in use (${error.code}); another e2e run is likely alive - kill it or pass --tg-port/--provider-port`,
+      )));
+      probe.listen(port, "127.0.0.1", () => probe.close(resolveReady));
+    });
+  }
 
   console.log("pi-telegram-plus OMP E2E acceptance");
   console.log(`  repo:    ${REPO}`);

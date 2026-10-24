@@ -29,11 +29,11 @@
 
 ## 阶段 3：列表、设置、登录
 
-前置条件：阶段 2 已验收。OMP 的 broker 开关目前仍只对 pi 打开（方案 §9 决定 27），所以 T3.0 是必做项；若届时开关已放开、OMP 对话框已走 broker，则跳过 T3.0。
+前置条件：阶段 2 已验收。OMP 的 broker 开关已放开（方案 §9 决定 27 作废，`hostOwnsPrompts` 对两个宿主同等生效），所以 T3.0 已完成，见其完成记录。
 
 | # | 任务 | 依赖 | 状态 | 提交 |
 |---|---|---|---|---|
-| T3.0 | OMP 对话框分类与读取（条件任务） | — | ☐ | |
+| T3.0 | OMP 对话框分类与读取（条件任务） | — | ☑ | 本提交，见下方完成记录 |
 | T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☐ | |
 | T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
@@ -44,7 +44,7 @@
 | T3.8 | pi `/resume` | T3.6 | ☐ | |
 | T3.9 | pi `/tree`、`/fork` | T3.6 | ☐ | |
 | T3.10 | pi `/login`、`/logout` | T3.3 | ☐ | |
-| T3.11 | OMP 选择器走快照 | T3.0（如需要） | ☐ | |
+| T3.11 | ~~OMP 选择器走快照~~ | — | 作废 | 方案 §9 决定 34:读不到字段的屏幕交回屏幕镜像,broker 不建会话、不发假键盘 |
 | T3.12 | 所有命令切到 Gateway，删除三个命令集合 | T3.2–T3.11 | ☐ | |
 | T3.13 | 阶段 3 验收 | T3.12 | ☐ | |
 
@@ -60,6 +60,17 @@
 - **不是接口变更**：方案 §4.1.3"按焦点识别对话框"保持，改的是判定条件（形状 → 是否有入口条目）；按规则 5 仍需在 §9 记一条决定。
 - **完成标准**：OMP 上扩展 `select/input` 和 `ask` 多问题从 Telegram 作答走 broker 方言（`tgplus:dlg:`），并且终端先作答时 Telegram 键盘被撤销；`npm run test:e2e:dialogs` OMP 部分全绿；打开 OMP 的 broker 后，`run-e2e-commands.mjs --host omp` 不得低于阶段 1 基线 132/132（方案 §9 决定 27）。
 - **不做**：OMP 内置选择器（T3.11）。
+
+- **完成记录（OMP 18.12.5）**：
+  - 分类：`lib/tui/entry.ts` 的入口条目活到宿主 Promise 结束（`entryCallDepth` 判嵌套、thenable 决定回收时机），`FocusTracker` 见到未结束条目即判 `dialog`，不再猜类名与形状；焦点被交给 overlay 容器时换按键目标不换会话（方案 §9 决定 29）。
+  - 读取：`extensionSelectAdapter` 先读组件字段，读不到就解析 `render(80)` 的帧（`frameRows` 给出行、高亮行与可见顺序）；方向键步数按帧上真正显示的行计（决定 36）；选项串两边去掉缩进与当前值标记后再比（决定 35）。
+  - 操作：仍走 `act()` 的按键注入；`ask` 由 `omp-ask` 适配器出问卷模型，多问题的"下一题/提交全部"照常出按钮。
+  - 关闭：入口 Promise 结束、焦点回编辑器（250ms 确认）或换到别的对话框；progress 抢焦点不算关闭（决定 30）。
+  - 键盘有效期：generation 只在"用户能按的按钮"变化时递增（决定 37），终端移动光标不再让聊天里的键盘失效。
+  - 命令侧：命令开作用域时替用户关掉遗留的未答对话框（决定 31）；host 模式下命令上下文改用路由 UI，只发通知的命令重新回到聊天（决定 38）。
+  - 验收：`npm run test:e2e:dialogs -- --host omp` 全绿（`DIALOGS_ACCEPTANCE=0`，含 select/confirm/input/secret/custom、`ask` 单题与多题、终端先作答撤销键盘）；`run-e2e-commands.mjs --host omp --phase main` 139/139（`COMMANDS_ACCEPTANCE=0`），高于阶段 1 基线 132。
+  - 键盘与重绘：重绘失败不再顺手摘键盘（决定 39）；`classify` 先判 loader/signal 再认 entry，转圈面板不会带走问题的身份（决定 40）。
+  - 测试基础设施：五个 e2e 套件启动前都先探测 mock Bot API / provider 端口，被占用就直接报错退出。此前 `--keep` 留下的旧宿主继续轮询同一端口，后跑的套件读到的是**前一个宿主**的聊天，制造过两轮假失败（`Bot not found: e2e-extra`、"This prompt is no longer active"、`/copy` 的回执显示上一条命令）；`run-e2e-omp.mjs` 的默认端口也从 9950/9951 挪到 9980/9981，不再与 commands 套件撞端口。命令步骤 `dispatch` 支持按内容匹配自己的回执，免得把"已关闭未回答的对话框"这类善后通知当成命令答复。
 
 ### T3.1 OMP 只读面板截获
 

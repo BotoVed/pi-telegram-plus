@@ -15,6 +15,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createServer } from "node:net";
 import { validateTelegramCalls } from "./telegram-contract.mjs";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
@@ -235,15 +236,20 @@ async function runHost(host, label, phase = "main") {
 
   const cursor = async () => (await controlGet()).calls.length;
 
-  /** Dispatch a command and wait for the first visible response. */
-  const dispatch = async (command, { timeoutMs = STEP_TIMEOUT_MS } = {}) => {
+  /**
+   * Dispatch a command and wait for its visible response. `match` picks which response is
+   * the command's own: a command that had to close an unanswered dialog is preceded by the
+   * notice about it, and taking the first message would read that notice as the answer.
+   */
+  const dispatch = async (command, { timeoutMs = STEP_TIMEOUT_MS, match } = {}) => {
     const since = await cursor();
     await injectMessage(command);
     const call = await waitFor(`response to ${command}`, (state) => {
       const hit = state.calls.slice(since).find((entry) =>
         RESPONSE_METHODS.has(entry.method)
         && entry.body
-        && (typeof entry.body.text === "string" || Array.isArray(entry.body.reply_markup?.inline_keyboard)));
+        && (typeof entry.body.text === "string" || Array.isArray(entry.body.reply_markup?.inline_keyboard))
+        && (!match || match.test(String(entry.body.text ?? ""))));
       return hit ?? false;
     }, timeoutMs);
     return call;
@@ -816,8 +822,10 @@ async function runHost(host, label, phase = "main") {
       state.calls.slice(since).findLast((c) => RESPONSE_METHODS.has(c.method) && /Bot added/i.test(String(c.body?.text ?? ""))) ?? false);
     record("menu Bots → Add bot answered from Telegram", true, String(added.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
 
-    const removed = await dispatch("/tg-bot-remove e2e-extra");
-    record("management /tg-bot-remove", /Removed|removed/i.test(String(removed.body?.text ?? "")),
+    // The add flow leaves the bot-name prompt behind, so this command first closes it and
+    // says so; the confirmation of the removal is the message that names the bot as removed.
+    const removed = await dispatch("/tg-bot-remove e2e-extra", { match: /removed/i });
+    record("management /tg-bot-remove", true,
       String(removed.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
   } catch (error) {
     record("management bot CRUD", false, String(error.message).slice(0, 220));
@@ -885,6 +893,18 @@ async function runHost(host, label, phase = "main") {
 
 async function main() {
   const hosts = HOST_ARG === "both" ? ["pi", "omp"] : [HOST_ARG];
+
+  // A leftover run (--keep, or a zombie script) holding these ports would silently steal
+  // the injected updates: the next suite then reads another host's chat. Fail with a name.
+  for (const [label, port] of [["telegram mock", TG_PORT], ["provider mock", PROVIDER_PORT]]) {
+    await new Promise((resolveReady, rejectBusy) => {
+      const probe = createServer();
+      probe.once("error", (error) => rejectBusy(new Error(
+        `${label} port ${port} is already in use (${error.code}); another e2e run is likely alive - kill it or pass --tg-port/--provider-port`,
+      )));
+      probe.listen(port, "127.0.0.1", () => probe.close(resolveReady));
+    });
+  }
   rmSync(join(ROOT, "tmp"), { recursive: true, force: true });
   mkdirSync(join(ROOT, "tmp"), { recursive: true });
 

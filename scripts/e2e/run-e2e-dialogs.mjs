@@ -23,6 +23,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { createServer } from "node:net";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
 const PLUGIN = join(REPO, "index.ts");
@@ -431,6 +432,11 @@ async function runHost(host, servers) {
     record("project config in effect", mode === "full", `tuiBridge: ${mode ?? "unknown"}`);
   }
 
+  // A host that greets the session with a dialog of its own (OMP's update
+  // notification) queues every later command behind it: clear the terminal
+  // before asking a dialog to appear.
+  await clearDialog();
+
   // ── select: answered from Telegram ─────────────────────────────────────
   try {
     const since = await cursor();
@@ -464,12 +470,22 @@ async function runHost(host, servers) {
     } else {
       const messageId = kb.body?.message_id ?? kb.message_id;
       await sleep(600);
-      tmux("send-keys", "-t", session, "Enter");
-      const result = await waitForExtensionResult(probePath, "confirm", undefined, 20_000);
+      // Which keystroke answers a host dialog is the host's own business: a confirm may
+      // take Enter on the highlighted row, a y/n shortcut, or Down then Enter. Send what
+      // a terminal user would send, in that order, and stop at the one that resolves the
+      // dialog - what is under test is that a terminal answer wins and the Telegram
+      // keyboard is withdrawn, not which key happens to do it.
+      let result;
+      let answeredBy = "";
+      for (const keys of [["Enter"], ["y"], ["Down", "Enter"]]) {
+        for (const key of keys) tmux("send-keys", "-t", session, key);
+        result = await waitForExtensionResult(probePath, "confirm", undefined, 4_000);
+        if (result) { answeredBy = keys.join("+"); break; }
+      }
       const cleared = result ? await keyboardGone(messageId) : undefined;
       const late = result ? undefined : findExtensionResult(probePath, "confirm").at(-1);
       record("terminal answer wins the race", Boolean(result),
-        `${dialectOf(kb)} · resolved ${JSON.stringify(result?.data?.value)}`
+        `${dialectOf(kb)} · answered by ${answeredBy || "no key"} · resolved ${JSON.stringify(result?.data?.value)}`
         + (result
           ? (cleared ? " · keyboard withdrawn" : " · keyboard left on screen")
           : ` · host focused ${focusedCtors(probePath, stepStartedAt).join("/") || "nothing"}`
@@ -557,36 +573,63 @@ async function runHost(host, servers) {
         await injectText(`please run the probe ${marker}`);
         const kb = await keyboardAfter(`${marker} keyboard`, since, 30_000);
         if (!kb) throw new Error("no ask keyboard offered");
-        const labels = buttonsOf(kb).map((b) => String(b.text ?? ""));
+        const labelOf = (b) => String(b.text ?? "");
+        // "Already pressed" must survive a redraw: the callback value carries the dialog's
+        // generation, so every edit hands out new values and comparing those makes the driver
+        // tick the same box over and over (☐ to ☑ to ☐), leaving Submit permanently hidden.
+        // The row's own text, minus the state marks the host moves around, is stable.
+        const identity = (b) => String(b.text ?? "").replace(/[☐☑○●◉□▸❯→\s]/g, "");
+        // A Submit affordance appears only once every question is answered, and a
+        // multi-select question needs its own "Done selecting" row before the next tab
+        // can be finished - pressing either is progress, not an answer. The Broker
+        // draws these rows in Chinese ("⏎ 提交全部", "下一题 ▶"), so both vocabularies count.
+        const SKIP_ROW = /^\s*(Cancel|Other\b|⬅|Back|Next\b|Prev\b|取消|✏️)/i;
+        const isSubmit = (text) => (/\b(Submit|Done|Enter)\b/i.test(text) || /提交|确定|确认/.test(text))
+          && !/selecting/i.test(text);
+        const isAdvance = (text) => /done selecting|上一题|下一题|^\s*第\s*\d+\/\d+\s*题\s*$/.test(text);
+        const labels = buttonsOf(kb).map(labelOf);
         const messageId = kb.body?.message_id ?? kb.message_id;
+        // The Broker edits at most once a second, and a dialog is redrawn as soon as the host
+        // finishes painting it (OMP draws the option rows a beat after focus), which retires
+        // the keyboard captured the moment it opened. A user always taps the keyboard that is
+        // on screen, so from here the driver only presses rows of the newest drivable one.
+        let seenCalls = (await controlGet()).calls.length;
+        const latestKeyboard = async (waitMs = 3_000) => {
+          const deadline = Date.now() + waitMs;
+          for (;;) {
+            const calls = (await controlGet()).calls;
+            const fresh = calls.slice(seenCalls)
+              .findLast((entry) => Array.isArray(rowsOf(entry)) && isDrivable(entry));
+            if (fresh) { seenCalls = calls.length; return fresh; }
+            if (Date.now() >= deadline) return undefined;
+            await sleep(150);
+          }
+        };
+        let current = await latestKeyboard(2_500) ?? kb;
         // A toggle row must only tick a box: the dialog stays open until Submit.
-        const toggle = buttonsOf(kb).find((b) => /cheese/i.test(String(b.text ?? "")));
+        const toggle = buttonsOf(current).find((b) => /cheese/i.test(labelOf(b)));
         let toggleSubmitted = false;
         if (toggle) {
-          await clickButton(toggle, messageId);
+          await clickButton(toggle, current.body?.message_id ?? current.message_id ?? messageId);
           toggleSubmitted = providerEntries().slice(providerBefore).some((entry) =>
             entry.lastRole === "tool" || entry.lastRole === "toolResult");
         }
-        // A Submit affordance appears only once every question is answered, and a
-        // multi-select question first needs its own "Done selecting" row to move on
-        // to the next tab - pressing that one is progress, not an answer.
-        const SKIP_ROW = /^\s*(Cancel|Other\b|⬅|Back|Next\b|Prev\b)/i;
-        const labelOf = (b) => String(b.text ?? "");
-        const isSubmit = (text) => /^\s*(?:[✅✔✓☑]?\s*)?(Submit|Done|Enter)\b/i.test(text) && !/selecting/i.test(text);
-        const isAdvance = (text) => /done selecting/i.test(text);
-        const clicked = new Set(toggle ? [String(toggle.text ?? "")] : []);
-        const latestKeyboard = async () => (await controlGet()).calls.slice(since)
-          .findLast((entry) => Array.isArray(rowsOf(entry)) && isDrivable(entry));
-        let current = await latestKeyboard() ?? kb;
+        const clicked = new Set(toggle ? [identity(toggle)] : []);
         let submit;
         for (let hop = 0; hop < 8 && !submit; hop += 1) {
           const rows = buttonsOf(current);
           submit = rows.find((b) => isSubmit(labelOf(b))) ?? rows.find((b) => /green/i.test(labelOf(b)));
           if (submit) break;
-          const option = rows.find((b) => isAdvance(labelOf(b)))
-            ?? rows.find((b) => !SKIP_ROW.test(labelOf(b)) && !clicked.has(labelOf(b)));
+          // Answer everything the current tab offers before moving on: an unanswered
+          // tab is what keeps Submit hidden.
+          // Prefer a row that actually moves forward: the tab strip ("第 1/2 题") also counts
+          // as an advance, and pressing the tab already on screen changes nothing.
+          const forward = (text) => /下一题|上一题|done selecting|\bNext\b|▶|⬅/i.test(text);
+          const option = rows.find((b) => !SKIP_ROW.test(labelOf(b)) && !isAdvance(labelOf(b)) && !clicked.has(identity(b)))
+            ?? rows.find((b) => isAdvance(labelOf(b)) && forward(labelOf(b)) && !clicked.has(identity(b)))
+            ?? rows.find((b) => isAdvance(labelOf(b)) && !clicked.has(identity(b)));
           if (!option) break;
-          if (!isAdvance(labelOf(option))) clicked.add(labelOf(option));
+          clicked.add(identity(option));
           if (!await clickButton(option, current.body?.message_id ?? current.message_id)) {
             throw new Error(`pressing "${labelOf(option)}" was never acknowledged`);
           }
@@ -654,6 +697,18 @@ async function runHost(host, servers) {
 async function main() {
   if (HOST_ARG !== "pi" && HOST_ARG !== "omp" && HOST_ARG !== "both") {
     throw new Error(`--host must be pi, omp or both, got ${HOST_ARG}`);
+  }
+
+  // A leftover run (--keep, or a zombie script) holding these ports would silently steal
+  // the injected updates: this suite would then read another host's chat. Fail with a name.
+  for (const [label, port] of [["telegram mock", TG_PORT], ["provider mock", PROVIDER_PORT]]) {
+    await new Promise((resolveReady, rejectBusy) => {
+      const probe = createServer();
+      probe.once("error", (error) => rejectBusy(new Error(
+        `${label} port ${port} is already in use (${error.code}); another e2e run is likely alive - kill it or pass --tg-port/--provider-port`,
+      )));
+      probe.listen(port, "127.0.0.1", () => probe.close(resolveReady));
+    });
   }
   rmSync(ROOT, { recursive: true, force: true, maxRetries: 3 });
   mkdirSync(ROOT, { recursive: true });

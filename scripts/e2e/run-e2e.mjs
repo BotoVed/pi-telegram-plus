@@ -27,6 +27,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createServer } from "node:net";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
 const PLUGIN_ENTRY = join(REPO, "index.ts");
@@ -581,6 +582,18 @@ async function main() {
   mkdirSync(ROOT, { recursive: true });
   writeFileSync(join(ROOT, "provider.jsonl"), "");
   writeFileSync(join(ROOT, "telegram.jsonl"), "");
+
+  // A leftover run holding these ports would silently steal the injected updates: this
+  // suite would then read another host's chat. Fail with a name.
+  for (const [label, port] of [["telegram mock", TG_PORT], ["provider mock", PROVIDER_PORT]]) {
+    await new Promise((resolveReady, rejectBusy) => {
+      const probe = createServer();
+      probe.once("error", (error) => rejectBusy(new Error(
+        `${label} port ${port} is already in use (${error.code}); another e2e run is likely alive - kill it or pass --tg-port/--provider-port`,
+      )));
+      probe.listen(port, "127.0.0.1", () => probe.close(resolveReady));
+    });
+  }
 
   console.log(`pi-telegram-plus E2E acceptance`);
   console.log(`  repo:     ${REPO}`);
