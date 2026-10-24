@@ -34,7 +34,7 @@ export type EntrySink = {
   bind(component: object, info: EntryInfo): void;
 };
 
-type EntryKindLiteral = "select" | "confirm" | "input" | "editor" | "custom" | "ask" | "approval";
+type EntryKindLiteral = "select" | "confirm" | "input" | "editor" | "custom" | "ask" | "approval" | "panel";
 
 export type EntrySpec = {
   method: string;
@@ -151,6 +151,23 @@ export const UI_CONTEXT_SPECS: EntrySpec[] = [
   { method: "approve", kind: "approval", extract: approvalFrom },
 ];
 
+/** Fixed titles for OMP's full-screen read-only panels that take no title argument. */
+const OMP_PANEL_TITLES: Record<string, string> = {
+  showDebugSelector: "Debug",
+  showUsageDashboard: "Usage",
+  showExtensionsDashboard: "Extensions",
+  showAgentsDashboard: "Agents",
+};
+
+/** `showCommandReport({ title, body })` carries its own title; the others use a fixed one. */
+const panelFrom = (method: string): Extract => (args) => {
+  if (method === "showCommandReport") {
+    const first = args[0] as { title?: unknown } | undefined;
+    return { kind: "panel", title: typeof first?.title === "string" ? first.title : undefined, source: "omp" };
+  }
+  return { kind: "panel", title: OMP_PANEL_TITLES[method], source: "omp" };
+};
+
 /** OMP 18.12.5 mode-level delegates that the tool context forwards to. */
 export const OMP_ENTRY_SPECS: EntrySpec[] = [
   { method: "showCollabAwareSelector", kind: "select", extract: selectFrom },
@@ -160,6 +177,11 @@ export const OMP_ENTRY_SPECS: EntrySpec[] = [
   { method: "showHookCustom", kind: "custom", factory: true, extract: customFrom },
   { method: "showAskDialog", kind: "ask", extract: askFrom },
   { method: "showCollabAwareApproval", kind: "approval", extract: approvalFrom },
+  { method: "showCommandReport", kind: "panel", extract: panelFrom("showCommandReport") },
+  { method: "showDebugSelector", kind: "panel", extract: panelFrom("showDebugSelector") },
+  { method: "showUsageDashboard", kind: "panel", extract: panelFrom("showUsageDashboard") },
+  { method: "showExtensionsDashboard", kind: "panel", extract: panelFrom("showExtensionsDashboard") },
+  { method: "showAgentsDashboard", kind: "panel", extract: panelFrom("showAgentsDashboard") },
 ];
 
 /** Maps one entry-method call to its semantic entry (exported for tests). */

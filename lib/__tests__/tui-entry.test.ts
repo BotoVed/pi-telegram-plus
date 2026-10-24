@@ -13,7 +13,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import * as host from "@earendil-works/pi-coding-agent";
 import { pickAdapter } from "../tui/adapters/index.ts";
 import { extensionInputAdapter } from "../tui/adapters/extension.ts";
-import { hookEntryMethods, PI_ENTRY_SPECS } from "../tui/entry.ts";
+import { entryFromCall, hookEntryMethods, OMP_ENTRY_SPECS, PI_ENTRY_SPECS } from "../tui/entry.ts";
 import { FocusTracker } from "../tui/focus.ts";
 import type { AdapterContext, EntryInfo } from "../tui/model.ts";
 
@@ -136,5 +136,31 @@ describe("input adapter reads the entry as the authority", () => {
     const select = { kind: "select", title: "Pick env", options: ["dev"], source: "pi" } as EntryInfo;
     expect(extensionInputAdapter.detect({}, context(select))).toBe(false);
     expect(extensionInputAdapter.detect({}, context(undefined))).toBe(false);
+  });
+});
+
+describe("OMP read-only panels are recorded as panel entries (§4.6.5 #12)", () => {
+  const panelEntry = (method: string, args: unknown[]): EntryInfo | undefined => {
+    const spec = OMP_ENTRY_SPECS.find((candidate) => candidate.method === method);
+    expect(spec).toBeDefined();
+    return entryFromCall(spec!, args, "omp");
+  };
+
+  it("keeps the title showCommandReport carries", () => {
+    const info = panelEntry("showCommandReport", [{ title: "MCP Server Management", body: {} }]);
+    expect(info).toMatchObject({ kind: "panel", title: "MCP Server Management", method: "showCommandReport" });
+  });
+
+  it("still records the panel when showCommandReport sends no title", () => {
+    const info = panelEntry("showCommandReport", [{ body: {} }]);
+    expect(info?.kind).toBe("panel");
+    expect(info?.title).toBeUndefined();
+  });
+
+  it("names the panels that take no title argument", () => {
+    expect(panelEntry("showUsageDashboard", [[]])).toMatchObject({ kind: "panel", title: "Usage" });
+    expect(panelEntry("showDebugSelector", [])).toMatchObject({ kind: "panel", title: "Debug" });
+    expect(panelEntry("showExtensionsDashboard", [])).toMatchObject({ kind: "panel", title: "Extensions" });
+    expect(panelEntry("showAgentsDashboard", [])).toMatchObject({ kind: "panel", title: "Agents" });
   });
 });
