@@ -15,6 +15,16 @@
 
 不再在 Telegram 里重写命令逻辑，不再解析终端画面文本来生成可操作按钮。
 
+### 0.1 v6 生效规则（2026-10-24，优先于本文其他位置的冲突内容）
+
+1. **只支持一个宿主版本**：pi `1.4.0`、OMP `18.12.x`。版本不符或读不到版本时，插件启动直接报错（状态栏 + Telegram 提示），不做任何降级或兼容。`peerDependencies` 固定为 pi `1.4.0`；不再维护多版本测试矩阵。
+2. **以宿主源码为准**：本地只读副本 pi `/Users/jaly/Documents/project/research/pi-1.4.0`（tag `v1.4.0`）、OMP `/Users/jaly/Documents/project/research/oh-my-pi-18.12.5`（tag `v18.12.5`）。文中所有"pi 0.81.1、第 N 行"的字段和行号引用作废，以 1.4.0 源码为准，任务 A1 核对后逐处更新；`docs/host-probe/pi-0.81.1.json` 及基于它的结论作废。
+3. **不做降级，只有一套做法**：识别不了的对话框不给截图加方向键，也不交回屏幕镜像，而是在 Telegram 明确告知"终端上有一个 Telegram 无法处理的对话框（<类型>），请在终端处理"，只提供"取消"按钮（发 Esc）。桥接不可用（宿主以 RPC/print 模式运行、hook 失败）时插件启动直接报错，不退回插件原生实现。
+4. **立即删除旧路径**（任务 D1–D4，先于后续迁移）：`off` 模式与 `tuiBridge` 配置项、旧屏幕镜像（`runTuiCommand`、`tui-selector.ts`、`tgplus:tui:` 回调）、插件重做宿主功能的原生实现（`lib/commands/` 中 model/session/settings/auth 等对应部分、`telegram-ui.ts` 中对应的原生对话框流程、`custom-dialogs.ts`）、快照方向键。插件自己的管理功能（`/tg` 菜单、`/stop`、`/pair` 等 `pluginOnly` 命令）保留。
+5. **E2E"待迁移"清单**：删除旧路径后，尚未迁移到新架构的命令在 Telegram 上暂时没有输出或交互。E2E 套件维护一份"待迁移"清单：清单内步骤失败算预期结果，单独列出；清单外步骤失败才算回归。每完成一项迁移，从清单中移除对应步骤。
+6. 本节与 §4.11（OMP 结构化通道）、§9 决定 41–50 共同构成 v6 的约束。
+
+
 ---
 
 ## 1. 背景与现状诊断
@@ -31,7 +41,7 @@
 - 不改宿主源码。
 - 不改变本地 TUI 用户自己发起的操作的行为。
 - 不支持宿主的非捕获浮层（`showOverlay(c, { nonCapturing: true })`）：它们不获得焦点、不接收输入，只是装饰。
-- 本次不清理 `off` 模式（§10）。
+- 不保留 `off` 模式与插件原生实现（§0.1 第 4 条，v6）。
 
 ### 1.3 现状（为什么要重构）
 
@@ -51,11 +61,11 @@
 
 ## 2. 设计原则（实现时必须遵守）
 
-1. **宿主执行，插件不重写。** 除 `pluginOnly` 命令外，命令文本交给宿主的提交处理器执行。插件里已有的原生命令实现只在桥接不可用时作兜底（§4.2.5）。
+1. **宿主执行，插件不重写。** 除 `pluginOnly` 命令外，命令文本交给宿主的提交处理器执行。插件不保留重做宿主功能的原生实现；桥接不可用时启动报错（§0.1）。
 2. **读结构化数据，不读画面。** 数据来源依次是：入口方法的参数 → 宿主方法的返回值 → 组件对象上的字段 → 最后才是只读截图。任何层级都**禁止**用正则解析渲染出来的文本来生成可操作按钮。例外只有 §4.6.6 列出的两种（pi-goal 的不透明 `custom()` 组件；OMP 入口对话框的当前行定位），都有严格限制。
 3. **谁发起，谁显示；共享所有权，先操作者生效。** Telegram 发起的对话框：Telegram 显示，终端也会显示（宿主画的），任一端完成操作，另一端立即关闭或显示"已在另一端处理"。本地发起的对话框：只在终端。终端上的变化不主动同步到 Telegram。
 4. **操作走组件自己的输入处理。** Telegram 上的选择翻译成：先设置组件的结构化状态（比如 `selectedIndex`），再对**焦点对象**调用 `handleInput("\r")`。不去猜私有回调的参数签名。
-5. **逐级降级，永不卡死。** 识别失败时降级为只读截图，并提供"取消"（Esc）。任何 Telegram 端的等待都必须能被终端端的完成、宿主超时或 `/stop` 打断。
+5. **识别不了就明确告知，永不卡死。** 识别失败时不降级、不给半吊子操作：在 Telegram 明确告知并只提供"取消"（Esc）（§0.1 第 3 条）。任何 Telegram 端的等待都必须能被终端端的完成、宿主超时或 `/stop` 打断。
 6. **不覆盖本地草稿。** 从 Telegram 提交命令前保存本地编辑器内容，在命令 scope 结束时按 §4.2.4 的规则恢复。
 7. **hook 不得影响宿主。** 所有包装函数先调用原方法、原样返回结果，插件逻辑全部包在 `try/catch` 中。
 
@@ -222,7 +232,7 @@ type HostCapabilities = {
 };
 ```
 
-启动时写入调试日志。`focusHook`、`focusRead`、`submitHook` 任一失败，整个新架构不可用，走 §4.2.5 的兜底路径。
+启动时写入调试日志。`focusHook`、`focusRead`、`submitHook` 任一失败，插件启动直接报错（§0.1），不退回任何其他路径。
 
 ### 4.2 CommandGateway
 
@@ -257,7 +267,7 @@ type HostCapabilities = {
 2. name 命中终端专属映射表（§4.8）    → 执行映射
 3. 桥接可用 且 (name ∈ hostBuiltin 或 name 是宿主扩展命令/模板/技能)
                                        → gateway.submit("/name args", origin)
-4. name ∈ pluginNative               → 插件原生兜底 handler（桥接不可用时，或 off 模式）
+4. （v6 删除：不再有插件原生兜底 handler，§0.1）
 5. 否则                               → 回复"该命令需要在终端执行"
 ```
 
@@ -325,7 +335,7 @@ scope 结束时（§4.3），设当前编辑器内容为 `E`：
 
 #### 4.2.5 兜底路径
 
-`HostCapabilities` 显示不可用时（宿主以 RPC/print 模式运行、宿主升级导致 hook 失败），以及 `off` 模式下，使用现有的 Telegram 原生实现（`lib/commands/*`、`telegram-ui.ts`、`custom-dialogs.ts`）。这部分代码本次不删除（§10）。
+**v6 取消兜底路径。** `HostCapabilities` 显示不可用时（宿主以 RPC/print 模式运行、宿主升级导致 hook 失败），插件启动直接报错；不保留 `off` 模式，Telegram 原生实现（`lib/commands/*` 中重做宿主功能的部分、`telegram-ui.ts` 中对应的原生对话框流程、`custom-dialogs.ts`）在任务 D1–D4 中删除（§0.1）。
 
 #### 4.2.6 Enqueued turn 的持有
 
@@ -675,7 +685,7 @@ ctx.requestRender();
 | 10 | `ApprovalAdapter`（OMP） | `entry.kind === "approval"`（工具 UI 上下文的 `approve`） | 入口参数是 `{full, compact, session}` 三个字符串；焦点组件只有 `callbacks{onApprove,onDeny}` / `options{fullPrompt, timeout, session, draft}`。模型标题/详情取 `full`，选项由组件自己渲染的按键决定（探测到 `handleInput`）；操作发按键给 `F`，不直接调用 `callbacks` | OMP `approve` |
 | 11 | `CustomGoalAdapter` | 见 §4.6.6：pi-goal 0.6.x 的三种形态都只有 `render/invalidate/handleInput`，没有字段，按例外规则识别 | 单问 → `select`；确认框 → `confirm`；多问 → `questionnaire`。通过 `F.handleInput` 发按键完成，不再旁路 `done` | pi-goal 0.6.x |
 | 12 | `InfoPanelAdapter` | **只在有正面证据时命中**：pi 按已知构造器/字段白名单；OMP 18.12.5 按入口语义白名单（`showCommandReport`、`showDebugSelector`、`showUsageDashboard`、`showExtensionsDashboard`、`showAgentsDashboard`）登记，焦点组件只有 `children`/空字段 | `render(80)` 去色、脱敏后作为只读文本，按钮只有"关闭"（发 Esc） | 已确认的只读面板（pi + OMP 入口白名单） |
-| 13 | `SnapshotAdapter`（兜底） | 永远为真 | 截图（迁移自 `renderScreen`），脱敏 | 未知组件。按钮只有 ↑ ↓ Enter Esc 和"输入文字"，标题标明"未适配的对话框" |
+| 13 | `UnsupportedAdapter`（v6，取代 `SnapshotAdapter`） | 永远为真 | 不读画面；只取组件类型名和入口标题（如有） | 未知组件。Telegram 只显示"终端上有一个 Telegram 无法处理的对话框（<类型>），请在终端处理"，按钮只有"取消"（发 Esc）（§0.1 第 3 条） |
 
 每个适配器都要有单元测试（§7.1）。
 
@@ -691,7 +701,7 @@ ctx.requestRender();
    - 渲染文本只能用于**识别形态和读取选项文字**；
    - 所有操作都通过 `F.handleInput` 发按键完成（例如选项序号对应的方向键次数 + Enter，或组件自己的 Tab 切题），**不得**像现有代码那样绕过组件直接调用 `done` 构造结果；
    - 发按键前重新渲染、重新识别，确认目标选项仍在原位置，不一致就重绘 Telegram 消息并提示"列表已变化"；
-   - 适配器绑定已测试的 pi-goal 版本范围（写在适配器常量里），版本不在范围内或识别失败时退回快照；
+   - 适配器绑定已测试的 pi-goal 版本范围（写在适配器常量里），版本不在范围内或识别失败时按 §0.1 第 3 条明确告知，不退回快照；
    - 契约测试使用该版本的 pi-goal 真实组件，pi-goal 升级导致文本变化时测试先失败。
 3. 例外启用与否、依据的探测文件，记录在本节末尾（阶段 0 完成后填写）。
 
@@ -702,7 +712,7 @@ ctx.requestRender();
 - 白名单只包含 pi-goal `0.6.x` 的这三种形态；确认框按标题 `Confirm Goal Draft` / `Confirm Sisyphus Goal Draft` 识别（单问/多问没有这个标题），单问与多问按渲染文本中的题目数量和 tab 栏区分。
 - 渲染文本只用于识别形态和读取标题/选项文字；当前光标、已答状态、当前 tab 由 `CustomGoalAdapter` 自己维护，并在每次操作后重新 `render` 确认目标仍在原位置。
 - 操作全部通过 `F.handleInput` 发按键（↑↓ 选择、Enter 确认、Tab/←→ 切题、Esc 取消），**不调用 `done`**。
-- 版本不在 `0.6.x`、渲染里找不到预期标题/选项、或重渲染结果与模型不一致 → 退回 `SnapshotAdapter`。
+- 版本不在 `0.6.x`、渲染里找不到预期标题/选项、或重渲染结果与模型不一致 → 交给 `UnsupportedAdapter` 明确告知（§0.1 第 3 条）。
 - 契约测试固定使用 pi-goal 0.6.0 的真实组件；升级导致文本变化时测试先失败。
 
 **例外二：OMP 入口对话框的当前行定位（2026-10-24 启用；已被 §4.11 取代，过渡期保留，T3.2g 删除）**
@@ -820,8 +830,8 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
    - **`notify` 只转给宿主，不再同时调用 `telegramUi.notify`。** 宿主会把 `notify` 转成 `showStatus`/`showError`/`showWarning`（`showExtensionNotify` L1891），由 OutputCapture 按归属发到 Telegram。这样只有一条发送路径，不会双发。（`off` 模式的 `createRoutedTelegramUi` 不受影响。）
    - 编辑器类方法（`pasteToEditor`、`setEditorText`、`getEditorText`）在 Telegram turn 期间不做任何事（继承旧文档原则 3）。
 2. 删除 `startPromptMirror` 和 `promptMirrorHook`；`runWithTelegramUi` 的参数改为 `uiMode`（§4.2.6）。
-3. `custom()`：宿主生成组件并给它焦点，Broker 照常接管；认不出来降级为快照。不再直接返回 `undefined`。
-4. 桥接不可用或 `off` 模式：继续使用现有的 Telegram 原生 UI 和 `custom-dialogs.ts`。
+3. `custom()`：宿主生成组件并给它焦点，Broker 照常接管；认不出来按 §0.1 第 3 条明确告知。不再直接返回 `undefined`。
+4. （v6 删除：桥接不可用时插件启动报错，不再有 `off` 模式，§0.1。）
 5. **删除本地命令镜像。** 现有的 `bridge.onLocalSubmit` 订阅（控制器中 `unsubscribeLocalTui` 一段）会把本地用户在终端敲的 `/` 和 `!` 命令及其结果截图推送到活动 chat，这违反"谁发起，谁显示"（§9 决定 1）。`on` 模式下不再注册该订阅；`off` 模式本来就不推送（该订阅在 `off` 下直接返回）。相应删除 README 和 E2E 中"local-command mirror"的说法与用例。
 
 ### 4.10 配置
@@ -831,7 +841,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 值 | 含义 |
 |---|---|
 | `on`（默认） | 本方案的架构 |
-| `off` | 只用 Telegram 原生实现，不 hook 宿主（行为与重构前的 `off` 完全一致） |
+| `off` | **v6 删除**（§0.1 第 4 条）：`tuiBridge` 配置项整体删除，读到旧配置时忽略并在日志里提示一次 |
 
 旧值迁移：未设置、`commands`、`full` → `on`。迁移写在 `lib/config.ts` 的读取逻辑里，不改写配置文件，直到用户下次在 `/tg → Config` 中保存。
 
@@ -841,7 +851,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 `/tg → Config` 菜单（`lib/commands/tg-menu.ts`、`lib/commands/tg-config.ts` 中读取 `config.tuiBridge` 的地方）只保留 `on`/`off`。
 
-**本次重构不清理 `off` 模式**，只做取值迁移和菜单更新；`off` 下的行为不变，现有测试必须继续通过。后续清理见 §10。
+**v6：删除 `off` 模式和 `tuiBridge` 配置项**（任务 D1），`/tg → Config` 菜单中的对应选项一并删除。
 
 ---
 
@@ -1000,7 +1010,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 ### 阶段 5：清理
 
 - 删除旧镜像代码、`tui-selector.ts`、`tui-bridge.ts`；旧回调前缀改为"已过期"；配置迁移；文档更新。
-- **验收**：§7.2 的 parity 测试在 pi 全部 E2E 版本和 OMP 上通过。
+- **验收**：§7.2 的 parity 测试在 pi `1.4.0` 和 OMP `18.12.x` 上通过，"待迁移"清单为空（§0.1）。
 
 ---
 
@@ -1044,7 +1054,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| 宿主升级改了私有字段或方法名 | 适配器识别失败 | 逐级降级到快照，功能不中断；契约测试提前发现；启动日志打印 `HostCapabilities` |
+| 宿主升级改了私有字段或方法名 | 适配器识别失败 | 只支持固定版本（pi `1.4.0`、OMP `18.12.x`），版本不符启动即报错；升级前先读新版本源码、跑通契约测试和 E2E 再放开版本（§0.1） |
 | OMP 的实际结构与预期不同 | OMP 部分对话框退化为快照 | 阶段 0 已探测：OMP 内置 model/settings/session/tree/oauth 组件没有可读字段，阶段 3 先按快照实现；扩展入口参数仍提供结构化模型（§4.6.5） |
 | 两端同时操作 | 竞争 | 宿主模态对话框只生效一次；Broker 操作前做焦点校验；回调带 sessionId + generation；按 key 定位 |
 | Telegram 提交命令时终端开着对话框或上一个命令未结束 | 命令落不到编辑器 | Gateway 拒绝并提示（§4.2.3） |
@@ -1063,7 +1073,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | # | 问题 | 决定 |
 |---|---|---|
 | 1 | 本地发起的对话框是否推送到 Telegram | **不推送**。谁发起，谁显示。本地 agent turn 中的 `ask` 也不推送 |
-| 2 | `tuiBridge` 是否保留 `off` | **本次保留，不清理**（§4.10），清理见 §10 |
+| 2 | `tuiBridge` 是否保留 `off` | ~~本次保留，不清理~~ **v6 推翻：立即删除 `off` 模式和插件原生实现**（决定 48） |
 | 3 | `/quit` 能否从 Telegram 执行 | **允许**，二次确认 |
 | 4 | 终端变化是否同步到 Telegram | **不同步**。执行前按实时状态和 key 定位 |
 | 5 | 命令 scope 何时结束 | `onSubmit` 和持有都结束 + 无活动会话 + 焦点在编辑器 + 1.5 秒无输出；30 分钟上限（§4.3） |
@@ -1107,6 +1117,11 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 43 | 用户自己开 `/collab` 时怎么办 | **让位给真实 collab 宿主，不另找路径。** 桥接发现 `mode.collabHost` 被替换就停止接管；期间 Telegram 发起的 select/editor/ask/approve 直接回复"终端正在 /collab 协作，请在终端或协作端处理"；collab 结束后重新挂上。 |
 | 44 | OMP 结构化通道的版本约束 | **绑定 `18.12.x`，不符即失败，不做降级**（用户 2026-10-24 确定："版本不对直接失败，不要搞多套"）。版本不符或读不到版本时插件明确报错，OMP 对话框不桥接；支持新版本须先核对源码并跑通 E2E（§4.11.4）。同理废弃 S8（`558d574`）"版本不符退回快照"的做法，相关代码随 T3.2g 删除。 |
 | 45 | 现有 broker 在 OMP 上怎么调整 | **保留为中枢，适配器换成结构化来源**（用户 2026-10-24 要求现有 broker 也改为新方案）。会话来源增加 collab 请求；OMP 上的焦点 + 画面 + 按键路径在 T3.2g 删除。 |
+| 46 | 支持哪些宿主版本 | **只支持 pi `1.4.0` 与 OMP `18.12.x`，不兼容多个版本**（用户 2026-10-24：只对齐 1.4.0，不再兼容多个版本）。版本不符启动报错；删除多版本测试矩阵与仅为旧版本存在的兼容代码。 |
+| 47 | 识别不了的对话框怎么办 | **明确告知，不做半吊子操作**（用户 2026-10-24）。取消快照方向键与"交回屏幕镜像"（决定 34 作废），由 `UnsupportedAdapter` 告知并只提供"取消"。 |
+| 48 | `off` 模式与插件原生实现 | **立即删除**（用户 2026-10-24，推翻决定 2）。桥接不可用时启动报错；`pluginOnly` 管理命令保留。 |
+| 49 | 旧路径什么时候删 | **现在删，先于迁移**（用户 2026-10-24：当前不在使用，删除不影响）。未迁移命令暂无输出，由 E2E"待迁移"清单区分预期失败与回归。 |
+| 50 | 宿主行为以什么为准 | **以宿主源码为准**：先读 pi `1.4.0` / OMP `18.12.5` 源码确定前提，运行时实验只用于验证（此前两次在未读源码的情况下靠运行时实验摸索，浪费多轮）。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 
@@ -1114,11 +1129,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 ## 10. 后续 TODO（不在本次重构范围内）
 
-- [ ] **清理 `off` 模式。** 前提：本方案全部阶段完成，并在 pi 全部 E2E 版本和 OMP 上稳定运行至少一个发布周期。届时需要决定：
-  - 是否去掉 `tuiBridge` 配置项本身（只剩 `on`），以及旧配置值的迁移方式；
-  - Telegram 原生实现（`lib/commands/model.ts`、`session.ts`、`settings.ts`、`auth.ts`，`lib/telegram-ui.ts` 中的 `select/confirm/input/editor/inputSecret` 流程，`lib/custom-dialogs.ts`）是整体删除，还是只保留宿主没有交互界面时（RPC/print 模式、hook 失败）的自动兜底部分；
-  - §4.2.2 第 4 步兜底分支如何收敛；
-  - 相关测试和 README 中 off 模式的说明一并处理。
+- [x] ~~清理 `off` 模式~~：v6 改为立即删除，见 §0.1 第 4 条与任务 D1–D4。
 
 - [ ] **E2E：`settings mirror matches the host screen`（OMP）偶发失败。** 2026-10-24 在 5 轮干净运行中失败 1 次（失败时 pane 里只有 "Select provider to login"），其余步骤稳定。需要查清是时序问题还是镜像取屏的时机问题。
 - [ ] **运行时被替换时，队列里未发出的 Telegram 调用被静默丢弃。** `lib/active-transport.ts` 在 `isActive()` / lease 不匹配时直接返回兜底结果（`sendButtons` 返回 `message_id: 0`），调用方拿不到错误，看起来像"菜单没发出去"。2026-10-24 S5 测量时每个阶段结束的最后一秒都有几条。应改为显式失败或在新运行时补发。
@@ -1126,6 +1137,10 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 ---
 
 ## 11. 修订说明
+
+### v6（相对 v5，2026-10-24）
+
+用户确定：只支持 pi `1.4.0` 与 OMP `18.12.x`；识别不了的对话框明确告知；立即删除 `off` 模式、插件原生实现、旧屏幕镜像与快照方向键；E2E 用"待迁移"清单区分预期失败。新增 §0.1 与决定 46–50；决定 2、34 作废；原则 1、5 与 §4.2.5、§4.6.5 #13、§4.10、§8、§10 相应改写。文中 pi 0.81.1 的行号引用待任务 A1 核对 1.4.0 源码后更新。
 
 ### v5（相对 v4，2026-10-24）
 
