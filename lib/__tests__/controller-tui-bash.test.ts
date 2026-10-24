@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { clipScreen, createTelegramController, snapshotLinks, trimScreenChrome } from "../controller.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
-import type { TuiBridgeAdapter } from "../tui-bridge.ts";
+import { hostOwnsPrompts, type TuiBridgeAdapter } from "../tui-bridge.ts";
 
 type Call = { method: string; text?: string; messageId?: number; rows?: unknown };
 
@@ -616,6 +616,15 @@ describe("Host capability routing", () => {
       login: async () => undefined,
       logout: async () => undefined,
     },
+  });
+
+  it("hands prompts to the host only where the broker can read its dialogs", () => {
+    const adapter = (host: string, available = true) => ({ isAvailable: () => available, getHost: () => host });
+    const asBridge = (value: unknown) => value as unknown as TuiBridgeAdapter; // only the two probed members matter
+    expect(hostOwnsPrompts(asBridge(adapter("pi")), "full")).toBe(true);
+    expect(hostOwnsPrompts(asBridge(adapter("omp")), "full")).toBe(false);
+    expect(hostOwnsPrompts(asBridge(adapter("pi")), "commands")).toBe(false);
+    expect(hostOwnsPrompts(asBridge(adapter("pi", false)), "full")).toBe(false);
   });
 
   const send = async (harness: { controller: { handleMessage(m: unknown): Promise<void> } }, text: string) => {

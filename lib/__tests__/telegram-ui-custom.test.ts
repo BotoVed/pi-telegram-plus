@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { bridgeCustomDialog, stripAnsi, type ButtonRow } from "../custom-dialogs.ts";
 import { createTelegramUiRuntime } from "../telegram-ui.ts";
+import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 
 // ---- Helpers ----
 
@@ -999,9 +1000,9 @@ describe("bridgeCustomDialog — multi-question single-select & Submit gating", 
   });
 });
 
-// ---- createTelegramUiRuntime: interactive modals are Telegram-only (do NOT forward to base) ----
+// ---- createTelegramUiRuntime: modals are Telegram-only unless the broker owns them ----
 
-describe("createTelegramUiRuntime — interactive modals are Telegram-only (no base forwarding)", () => {
+describe("createTelegramUiRuntime — interactive modals stay Telegram-only without a live broker", () => {
   function makeBaseRuntime(base: any) {
     const transport = {
       removeInlineKeyboard: vi.fn(async () => undefined),

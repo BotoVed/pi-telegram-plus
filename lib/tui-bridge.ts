@@ -62,7 +62,14 @@ type BridgeState = TuiHostState & {
   captureSubscribers: Set<(state: TuiHostState) => void>;
 };
 
-const state: BridgeState = {
+// A host can load this package twice in one process (OMP resolves it under two
+// specifiers), and only the copy whose prototype patch landed first is ever told
+// about a captured mode. Without sharing, the copy that serves Telegram reports the
+// bridge as unavailable, answers dialogs itself and never lets the host draw them -
+// so the captured state lives behind a process-wide key every copy can reach.
+const SHARED_STATE_KEY = "__piTelegramPlusTuiBridgeState";
+const sharedGlobal = globalThis as typeof globalThis & { [SHARED_STATE_KEY]?: BridgeState };
+const state: BridgeState = sharedGlobal[SHARED_STATE_KEY] ??= {
   host: "unknown",
   hostCommands: [],
   suppressLocalSubmit: false,
@@ -595,3 +602,17 @@ export const tuiBridge: TuiBridgeAdapter = {
     return () => { state.localSubscribers.delete(listener); };
   },
 };
+
+/**
+ * Whether the host's own components may serve prompts raised by Telegram work
+ * (§4.9). Handing a prompt to the host only helps where the DialogBroker can read
+ * the component afterwards: otherwise Telegram keeps a screen of arrow keys and no
+ * way to answer. OMP's confirm and custom components are readable, but its select
+ * list, text input and `ask` dialog render into an overlay without taking focus and
+ * have no adapters yet (§4.6), so OMP keeps the plugin's own prompts for now.
+ */
+export function hostOwnsPrompts(bridge: TuiBridgeAdapter, configuredMode: string): boolean {
+  return configuredMode === "full"
+    && bridge.isAvailable()
+    && bridge.getHost() === "pi";
+}

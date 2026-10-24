@@ -12,16 +12,19 @@ type Pending = { flowId: string; resolve: PendingInputResolver; timer: NodeJS.Ti
 
 function truncateLabel(text: string): string { return text.length <= MAX_BUTTON_TEXT ? text : text.slice(0, MAX_BUTTON_TEXT - 1) + "…"; }
 
+/** The UI context handed to one Telegram-originated flow. */
+export type TelegramUiContext = ExtensionUIContext & {
+  chatId: number;
+  messageThreadId?: number;
+  inputSecret?: (title: string, placeholder?: string) => Promise<string | undefined>;
+  /** Like select, but successive menu() calls edit one message in place (nested menus). */
+  menu: (title: string, options: string[]) => Promise<string | undefined>;
+  /** Remove the keyboard from the live menu message (call when the menu exits). */
+  closeMenu: () => Promise<void>;
+};
+
 export type TelegramUiRuntime = {
-  create(chatId: number, messageThreadId?: number, sourceMessageId?: number): ExtensionUIContext & {
-    chatId: number;
-    messageThreadId?: number;
-    inputSecret?: (title: string, placeholder?: string) => Promise<string | undefined>;
-    /** Like select, but successive menu() calls edit one message in place (nested menus). */
-    menu: (title: string, options: string[]) => Promise<string | undefined>;
-    /** Remove the keyboard from the live menu message (call when the menu exits). */
-    closeMenu: () => Promise<void>;
-  };
+  create(chatId: number, messageThreadId?: number, sourceMessageId?: number): TelegramUiContext;
   resolveInput(chatId: number, value: string | boolean | undefined, replyToMessageId?: number, fromCallback?: boolean, messageThreadId?: number): { handled: boolean; promptMessageId?: number };
   isSensitiveInput(chatId: number, replyToMessageId?: number, messageThreadId?: number): boolean;
   hasPendingInput(chatId: number, messageThreadId?: number): boolean;
@@ -132,18 +135,17 @@ export function createTelegramUiRuntime(deps: {
         void deps.transport.removeInlineKeyboard(chatId, id);
       };
 
-      return {
+      const created: TelegramUiContext = {
         chatId,
         messageThreadId,
 
         // ---- Interactive modals: Telegram-only (do NOT forward to base) ----
-        // Plan Layer A: "谁触发的 turn 就给谁". A Telegram-triggered turn must NOT
-        // also pop the modal in the local TUI, because ExtensionUIContext.custom and
-        // the other modals expose no external cancel handle — once the Telegram side
-        // resolves, any TUI-side component we mounted could never be dismissed, so
-        // the local TUI would stay "stuck at the selection". Local TUI turns never
-        // enter runWithTelegramUi, so they keep using the real TUI UIContext and are
-        // completely unaffected by this Telegram-only path.
+        // A Telegram-triggered turn must not also pop the modal in the local TUI: the
+        // host modals expose no external cancel handle, so a component mounted here
+        // could never be dismissed once Telegram answered. When the broker owns the
+        // dialogs the host's own UI context is installed instead (promptUiMode), so
+        // those prompts never run through this object. Local terminal turns never
+        // enter it either.
         notify: notifyFn,
         confirm: async (title, message) => {
           releaseMenu();
@@ -295,6 +297,7 @@ export function createTelegramUiRuntime(deps: {
         // this precondition explicit instead of hiding it behind a cast.
         get theme() { return base!.theme; },
       };
+      return created;
     },
     resolveInput(chatId, raw, replyToMessageId, fromCallback = false, messageThreadId) {
       const key = targetKey(chatId, messageThreadId);
