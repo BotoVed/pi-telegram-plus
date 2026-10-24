@@ -1,0 +1,283 @@
+# TUI 对等重构：阶段 3–5 任务清单
+
+本文是 `docs/tui-parity-refactor-plan.md`（下称"方案"）§6 阶段 3、4、5 的任务拆分。方案讲**做成什么样、为什么**；本文讲**按什么顺序做、做到什么程度算完**。两者冲突时以方案为准，并在方案 §9 追加决定记录。
+
+阶段 2 的拆分等阶段 2 完成后再补。
+
+---
+
+## 0. 使用规则
+
+1. **一个任务一个提交**（或一组连续提交），提交后在下面的状态栏打勾，并填写提交号。不要把多个任务的改动混在一个工作区里不提交。
+2. **按编号顺序做**；"依赖"一栏为空的任务可以提前做。
+3. **每个任务的完成标准都必须满足**，才能开始下一个任务。完成标准里写的测试是最低要求。
+4. **"不做"一栏的内容不要顺手做**，它们属于别的任务。
+5. 遇到文档没写清楚的地方，按方案 §2 的原则自己决定，在方案 §9 末尾追加一行决定记录，然后继续。只有下面三种情况停下来问：
+   - 要违反方案 §2 的某条原则；
+   - 要改某个阶段的验收标准，或某个任务的完成标准；
+   - 要改模块之间的接口（方案 §4 的类型定义和模块职责）。
+6. **每个提交都要通过的检查**（下文"通用检查"）：`npm run typecheck`、`npm test` 全绿；`tuiBridge: off` 的现有测试不受影响。
+7. 每个阶段结束时汇报一次：最后一个提交号、每个任务的完成标准逐条对照、新增的 §9 决定。
+
+### 通用检查
+
+- 新适配器都要有真实组件契约测试（方案 §7.1），放在 `lib/__tests__/tui-adapters.contract.test.ts` 或同名前缀的新文件中。实在无法实例化的组件，测字段形状，并在测试里写明原因。
+- 新增的 E2E 断言要检查**正文或宿主状态**，不能只检查 ack。
+- OMP 上无法读取字段的对话框一律走快照（方案 §9 决定 18），**不要**解析渲染文本伪造列表。
+
+---
+
+## 阶段 3：列表、设置、登录
+
+前置条件：阶段 2 已验收。如果阶段 2 结束时 OMP 的 select/input/`ask` 仍然只能走旧路径（`hostOwnsPrompts` 里还限制只对 pi 打开），先做 T3.0；否则跳过 T3.0。
+
+| # | 任务 | 依赖 | 状态 | 提交 |
+|---|---|---|---|---|
+| T3.0 | OMP 对话框识别不依赖焦点（条件任务） | — | ☐ | |
+| T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☐ | |
+| T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
+| T3.3 | pi `SelectListAdapter` | — | ☐ | |
+| T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
+| T3.5 | pi `/settings` 子菜单 | T3.4 | ☐ | |
+| T3.6 | 通用 `FilteredListAdapter`：搜索与翻页 | T3.3 | ☐ | |
+| T3.7 | pi `/model`、`/scoped-models` | T3.6 | ☐ | |
+| T3.8 | pi `/resume` | T3.6 | ☐ | |
+| T3.9 | pi `/tree`、`/fork` | T3.6 | ☐ | |
+| T3.10 | pi `/login`、`/logout` | T3.3 | ☐ | |
+| T3.11 | OMP 选择器走快照 | T3.0（如需要） | ☐ | |
+| T3.12 | 所有命令切到 Gateway，删除三个命令集合 | T3.2–T3.11 | ☐ | |
+| T3.13 | 阶段 3 验收 | T3.12 | ☐ | |
+
+### T3.0 OMP 对话框识别不依赖焦点（条件任务）
+
+- **背景**：阶段 2 实测发现 OMP 的 select/input/`ask` 渲染在 overlay 里且不调用 `setFocus`，FocusTracker 看不到对话框；`hostOwnsPrompts()` 因此只对 pi 打开。
+- **要做**：
+  - 对 OMP，以**入口调用**（UI 上下文的 `select/confirm/input/editor/custom`、工具上下文的 `askDialog/approve`）作为对话框打开的信号，题目和选项取自入口参数（方案 §4.6.5 #1–#4、#10 已经这样设计）；
+  - hook `showOverlay`/`hideOverlay`，从 overlay 子树中找到真正接收按键的组件，作为 `act()` 的注入目标；
+  - 对话框关闭以入口调用的 Promise 结束为准（不是焦点离开）；
+  - 去掉 `hostOwnsPrompts` 对 OMP 的限制。
+- **这是接口变更**（方案 §4.1.3"按焦点识别"的前提不成立），开工前先按规则 5 找架构确认方案，确认后在 §9 记录。
+- **完成标准**：OMP 上扩展 `select/input` 和 `ask` 多问题从 Telegram 作答走 broker 方言（`tgplus:dlg:`），并且终端先作答时 Telegram 键盘被撤销；`npm run test:e2e:dialogs` OMP 部分全绿。
+- **不做**：OMP 内置选择器（T3.11）。
+
+### T3.1 OMP 只读面板截获
+
+- **文件**：`lib/tui/adapters/panel.ts`、`lib/tui/output.ts`，必要时 `lib/tui/entry.ts`。
+- **要做**：按方案 §4.6.5 #12，以入口语义白名单识别 OMP 的 `showCommandReport`、`showDebugSelector`、`showUsageDashboard`、`showExtensionsDashboard`、`showAgentsDashboard`；`render(80)` 去色、脱敏后作为只读正文发到 Telegram，按钮只有"关闭"（发 Esc）。
+- **完成标准**：
+  - 单测：用 `docs/host-probe/omp-18.12.5.json` 里记录的入口参数构造调用，断言识别为 `info` 模型、按钮只有"关闭"；
+  - E2E（OMP）：从 Telegram 发 `/status`、`/usage`，收到的消息里有面板正文（至少断言一个面板里一定出现的字段），点"关闭"后终端面板消失。
+- **不做**：把命令加入白名单（T3.2）。
+
+### T3.2 OMP 只有输出的命令接入 Gateway
+
+- **文件**：`lib/tui/gateway.ts`（OMP 白名单），方案附录 A 或 §4.8 的 OMP 表。
+- **要做**：把方案 §4.8 OMP 表第一行的 18 个命令（`/help`、`/status`、`/usage`、`/stats`、`/context`、`/changelog`、`/debug`、`/skills`、`/plugins`、`/extensions`、`/tools`、`/agents`、`/mcp`、`/plan`、`/session`、`/jobs`、`/todo`、`/memory`）加入 OMP 的 Gateway 白名单。
+- **完成标准**：E2E（OMP）对这 18 个命令逐个断言：不进入 `runTuiCommand`（返回的不是旧镜像键盘）、收到的正文非空且不只是 ack。任何一个命令只回 ack，就从白名单中移除，并在 §9 记录原因。
+- **不做**：选择器类命令（T3.11）。
+
+### T3.3 pi `SelectListAdapter`
+
+- **文件**：`lib/tui/adapters/`（新增 `select-list.ts`），注册到 `adapters/index.ts`。
+- **要做**：方案 §4.6.5 #6。`findShape(F, isSelectList)` 命中后读 `filteredItems` 的 `value/label/description` 和 `selectedIndex`；操作按方案 §4.6.4：设置 `selectedIndex`，然后向 `inputTargetOf(F)` 发 `\r`。
+- **完成标准**：
+  - 契约测试：用真实的 `ThemeSelectorComponent`、`ShowImagesSelectorComponent` 和思考档位选择器，断言 `read()` 返回的选项与组件完整列表一致、当前值标记正确、`act()` 后组件回调收到目标值；
+  - E2E（pi）：从 Telegram 发 `/settings` 以外任意一个使用 SelectList 的命令（例如切换思考档位），点选后宿主状态改变，并与终端操作的结果一致。
+- **不做**：搜索、翻页（T3.6）。
+
+### T3.4 pi `SettingsListAdapter` 主列表
+
+- **要做**：方案 §4.6.5 #5 的主列表部分：读 `items`/`filteredItems`、`selectedIndex`、每项的 `currentValue`/`values`；cycle 按 `(indexOf(目标) − indexOf(当前) + n) % n` 算按键次数；操作后重新读取，确认 `currentValue` 已变。`currentValue` 不在 `values` 里时返回 `false`，退回快照。
+- **完成标准**：
+  - 契约测试：真实 `SettingsSelectorComponent`（焦点是 `getSettingsList()`）的主列表读取和一次 cycle；
+  - E2E（pi）：从 Telegram 修改一个 cycle 类设置，settings 文件对应字段与终端操作的结果一致。
+- **不做**：子菜单（T3.5）。
+
+### T3.5 pi `/settings` 子菜单
+
+- **要做**：`submenuComponent` 非空时，对它用 `findShape` 找 SelectList，生成 `submenu.model`；操作仍发给 `F`（方案 §4.6.5 #5）。`ThemeSubmenu` 这类不是 SelectList 的子菜单降级为快照，只提供 ↑↓/Enter/Esc。
+- **完成标准**：
+  - 单测：打开子菜单、选择、返回主列表，全程是同一个 broker 会话（不是新对话框），Telegram 复用同一条消息；
+  - E2E（pi）：通过子菜单修改一个设置，结果与终端一致；进入主题子菜单时 Telegram 显示快照和按键。
+- **不做**：无。
+
+### T3.6 通用 `FilteredListAdapter`：搜索与翻页
+
+- **文件**：`lib/tui/adapters/`（新增 `filtered-list.ts`）、`lib/tui/render-telegram.ts`（翻页布局）、broker 的文本路由（搜索输入）。
+- **要做**：
+  - 方案 §4.6.5 #7：标签依次取 `label ?? name ?? title ?? id ?? String(x)`；当前值比较组件上的 `current*` 字段；
+  - Telegram 翻页：选项超过一屏时分页，翻页按钮的回调数据不超过 64 字节；
+  - 搜索：用户发一条文字时，按方案 §4.5.1 的"搜索"类型路由，把文字写入组件的搜索输入，重新读取列表后重绘。
+- **完成标准**：
+  - 单测：翻页回调编码 ≤ 64 字节；搜索后列表变短；选中第 2 页的某一项，`act()` 定位正确；
+  - 契约测试：至少一个真实组件（例如 oauth provider 列表）。
+- **不做**：模型、会话的专用字段（T3.7、T3.8）。
+
+### T3.7 pi `/model`、`/scoped-models`
+
+- **要做**：方案 §4.6.5 #8 的 `ModelSelectorAdapter`：选项显示 `provider/id`，标出当前模型；作用域切换键作为额外按钮。
+- **完成标准**：E2E（pi）：从 Telegram 搜索一个模型、翻页、选中，之后宿主当前模型与终端执行相同操作的结果一致；当前模型在 Telegram 列表里有标记；`/scoped-models` 的勾选结果写入的文件与终端一致。
+- **不做**：OMP 模型选择器（T3.11）。
+
+### T3.8 pi `/resume`
+
+- **要做**：`SessionSelectorAdapter`：数据在嵌套的 `sessionList` 里（`sessionList.filteredSessions`）；显示会话名或第一条消息加时间；删除、排序、按名称筛选作为 `extraActions`。
+- **完成标准**：E2E（pi）：准备两个会话，从 Telegram 发 `/resume` 选中较早的那个，之后 `/session` 显示的会话文件就是它；删除操作会先二次确认。
+- **不做**：无。
+
+### T3.9 pi `/tree`、`/fork`
+
+- **背景**：`/fork` 保留原生处理器（方案 §9 决定 21），只有其中选择器的步骤交给 broker。
+- **要做**：`/tree` 和 `/fork` 的消息列表（焦点 `selector.getMessageList()`）走 `FilteredListAdapter` 或专用适配器；`/fork` 选中后宿主写入编辑器的文本按方案 §4.2.4 处理：作为一条消息发到 Telegram，然后恢复本地草稿。
+- **完成标准**：
+  - E2E（pi）：`/fork` 选中第 N 条消息后，新会话的消息数与终端执行相同操作的结果一致；Telegram 收到"已放入编辑器的文本"；终端原有的草稿还在；
+  - `/tree` 跳转后的当前节点与终端一致。
+- **不做**：OMP 的 `/tree`、`/fork`（T3.11）。
+
+### T3.10 pi `/login`、`/logout`
+
+- **要做**：方案 §4.6.5 #9 的 `LoginDialogAdapter`：输入一律 `secret: true`；**禁止**对登录对话框截图；用户回复后立即删除该 Telegram 消息；原文登记到 `SecretStore`。`/logout` 走 provider 选择列表。
+- **完成标准**：
+  - E2E（pi）：从 Telegram 完成"选择 API key 登录 → 输入 key"，认证文件中出现该 provider；整个过程中 mock Telegram 收到的所有消息（包括编辑后的消息）都不包含 key 的明文；用户发 key 的那条消息已被删除；
+  - `/logout` 后认证文件中该 provider 被移除。
+- **不做**：OMP 登录（T3.11）。
+
+### T3.11 OMP 选择器走快照
+
+- **要做**：OMP 的 model/settings/session/tree/oauth/login 选择器（方案 §4.8 OMP 表第二行的命令）没有可读字段，统一由 `SnapshotAdapter` 提供 ↑↓/Enter/Esc 和"输入文字"按钮，标题标明"未适配的对话框"；**不**解析渲染文本伪造列表（方案 §9 决定 18）。
+- **完成标准**：E2E（OMP）：从 Telegram 用按键在 `/model` 中切换模型，在 `/settings` 中修改一项，结果与终端一致；`/login` 列表能用按键选择并能取消。
+- **不做**：OMP 字段适配器。
+
+### T3.12 所有命令切到 Gateway，删除三个命令集合
+
+- **文件**：`lib/controller.ts`、`index.ts`。
+- **要做**：
+  - `on` 模式下所有宿主命令都经过方案 §4.2.2 的分发顺序，不再进入 `runTuiCommand`；
+  - 删除 `TUI_NATIVE_SELECTOR_COMMANDS`、`MIRROR_FIRST_COMMANDS`、`HOST_CAPABILITY_COMMANDS`（`lib/controller.ts`），并检查 `index.ts` 的 `TUI_VISIBLE_COMMANDS` 是否还需要；
+  - `off` 模式继续使用 `lib/commands/model.ts`、`session.ts`、`settings.ts`、`auth.ts` 的原生实现（方案 §10：本次不清理）。
+- **完成标准**：`grep` 不到这三个常量；`on` 模式的单测断言没有任何命令会进入 `runTuiCommand`；`off` 模式的现有测试全绿。
+- **不做**：删除镜像代码本身（T5.4）。
+
+### T3.13 阶段 3 验收
+
+- 按方案 §6 阶段 3 的验收标准，在 pi 和 OMP 上各跑一次完整 E2E，报告逐条结果。
+- 任何一条不通过，回到对应任务修复，不在本任务里修。
+
+---
+
+## 阶段 4：终端专属命令与收尾
+
+| # | 任务 | 依赖 | 状态 | 提交 |
+|---|---|---|---|---|
+| T4.1 | `/copy` | — | ☐ | |
+| T4.2 | `/hotkeys` | — | ☐ | |
+| T4.3 | `/quit`、`/exit`、`/restart` 二次确认 | — | ☐ | |
+| T4.4 | OMP `/export` 发送文件 | — | ☐ | |
+| T4.5 | OMP 确认类与网络类命令 | — | ☐ | |
+| T4.6 | 未知 custom 组件走快照 | — | ☐ | |
+| T4.7 | 密钥脱敏覆盖三个发送源 | — | ☐ | |
+| T4.8 | 阶段 4 验收 | T4.1–T4.7 | ☐ | |
+
+### T4.1 `/copy`
+
+- **要做**：方案 §4.8：不提交给宿主；读取会话中最后一条 assistant 文本，直接作为 Telegram 消息发送（pi 和 OMP 都这样处理，OMP 不打开 `showCopySelector`）。没有 assistant 消息时回复"没有可复制的内容"。
+- **完成标准**：单测：有/无 assistant 消息两种情况；E2E（pi、OMP 各一次）：收到的文本等于最后一条回复的原文，并且已经过 `SecretStore` 脱敏。
+
+### T4.2 `/hotkeys`
+
+- **要做**：不提交给宿主，发送插件生成的 Telegram 用法说明（包括对话框按钮、发送文字作为输入、`/stop`）。
+- **完成标准**：单测断言说明里包含上述三项；终端上不打开快捷键面板。
+
+### T4.3 `/quit`、`/exit`、`/restart` 二次确认
+
+- **要做**：Telegram 上先显示"✅ 确认退出 / 取消"，确认后才提交给宿主；取消或超时则什么都不做。`/restart` 只有 OMP 有。
+- **完成标准**：单测：确认、取消、超时三种路径；E2E（pi）：确认后宿主进程退出，取消后进程还在。现有的 `quit`/`exit` E2E 场景继续通过。
+
+### T4.4 OMP `/export` 发送文件
+
+- **要做**：方案 §9 决定 20：等 `exportToHtml` 的 Promise 解析，把解析出的路径作为文档发送；只在 scope 标签是 `/export` 时记录（`/share` 内部的临时文件不能发出去）。
+- **完成标准**：E2E（OMP）：收到的文档文件名和导出路径一致，文件存在；`/share` 不会发出临时文件。
+
+### T4.5 OMP 确认类与网络类命令
+
+- **要做**：方案 §4.8 OMP 表中的两类命令：
+  - 确认类（`/new`、`/fresh`、`/clear`、`/delete`、`/cleanse`、`/wt`、`/worktree`）：确认框按 `confirm` 模型渲染为"是/否"；
+  - 网络类（`/share`、`/collab`、`/join`、`/leave`、`/hub`）：直接提交，输出回传；有进度条的按 `progress` 模型显示，完成后改为完成状态并去掉键盘。
+- **完成标准**：E2E（OMP）：`/delete` 的确认在 Telegram 上点"否"后会话还在；`/share` 的输出正文回传到 Telegram。需要网络的命令在 mock 环境下无法完成时，只断言确认框或进度条的渲染，并在汇报里写明。
+
+### T4.6 未知 custom 组件走快照
+
+- **要做**：在 `scripts/e2e/probe-extension.ts`（或新建测试扩展）里加一个结构未知的 `custom()` 组件。
+- **完成标准**：E2E（pi）：从 Telegram 触发该组件，收到快照（标题"未适配的对话框"）以及 ↑↓/Enter/Esc 按钮；点 Esc 后组件关闭，扩展收到取消结果；快照文本已脱敏。
+
+### T4.7 密钥脱敏覆盖三个发送源
+
+- **背景**：方案 §4.7.4 要求在 OutputCapture、Broker、`lib/renderer.ts` 三个发送源转换成 HTML 之前替换。阶段 2 可能已经完成一部分，本任务负责核对并补齐。
+- **完成标准**：单测覆盖方案 §7.1"密钥"一条的全部用例：三个来源都被脱敏；含 `& < >` 的密钥替换后 HTML 结构完好；短于 8 个字符的不登记；`/new` 后清空；Telegram turn 中输入的密钥同样生效。已有的测试直接引用，不用重写。
+
+### T4.8 阶段 4 验收
+
+- 按方案 §6 阶段 4 的验收标准逐条报告。
+
+---
+
+## 阶段 5：清理
+
+顺序很重要：**先建好状态等价测试，再删旧代码**，删完再跑一遍，用测试证明删除没有造成回归。
+
+| # | 任务 | 依赖 | 状态 | 提交 |
+|---|---|---|---|---|
+| T5.1 | 配置取值迁移与菜单 | — | ☐ | |
+| T5.2 | 状态等价 E2E 框架 | — | ☐ | |
+| T5.3 | 状态等价 E2E 覆盖全部命令 | T5.2 | ☐ | |
+| T5.4 | 删除 controller 中的镜像代码 | T5.3 | ☐ | |
+| T5.5 | 删除 `tui-selector.ts`、`tui-bridge.ts` | T5.4 | ☐ | |
+| T5.6 | 旧回调前缀改为"已过期" | T5.4 | ☐ | |
+| T5.7 | 文档更新 | T5.1–T5.6 | ☐ | |
+| T5.8 | 最终验收 | T5.7 | ☐ | |
+
+### T5.1 配置取值迁移与菜单
+
+- **文件**：`lib/config.ts`、`lib/types.ts`、`lib/commands/tg-menu.ts`、`lib/commands/tg-config.ts`。
+- **要做**：方案 §4.10：读取配置时把未设置、`commands`、`full` 映射成 `on`，不改写配置文件；`/tg → Config` 菜单只保留 `on`/`off`。
+- **完成标准**：单测：四种旧值（未设置、`commands`、`full`、`off`）读取结果正确，配置文件内容不变；菜单只显示两个选项；`off` 模式的现有测试全绿。CHANGELOG 中以"行为变更"单独说明。
+
+### T5.2 状态等价 E2E 框架
+
+- **文件**：`scripts/e2e/audit-parity.mjs`。
+- **要做**：方案 §7.2 的第 1–3 步：每个用例启动两个全新的隔离宿主，A 用 tmux 在终端操作，B 从 mock Telegram 操作；执行后导出状态快照（当前模型、思考档位、会话文件、settings 文件、认证文件中的相关字段），比较 A 和 B 是否一致。
+- **完成标准**：先用 3 个命令（`/name`、`/model`、`/settings` 中的一项）跑通；故意让 B 少一步操作时测试失败（证明比较有效）。保留现有的 Bot API 契约校验。
+
+### T5.3 状态等价 E2E 覆盖全部命令
+
+- **要做**：把方案附录 A 中所有会改变状态的 pi 命令，以及 OMP 中能在 mock 环境下运行的命令，都加进 T5.2 的框架；补上方案 §7.2 第 4 步："Telegram 上列出的选项集合等于组件的完整列表"。
+- **完成标准**：pi 和 OMP 全绿；mock 环境下跑不了的命令列出清单并写明原因。
+
+### T5.4 删除 controller 中的镜像代码
+
+- **要做**：删除方案 §5"修改"表中 `lib/controller.ts` 一行列出的函数（`TuiMirror`、`refreshTuiMirror`、`startPromptMirror`、`promptMirrorHook`、`runTuiCommand`、`runTuiCommandInner`、`buildSelectorKeyboard`、`formatSelectorMessage`、`tuiKeyRows`、`advertisedKeys`、`formatTuiSnapshot`、`trimScreenChrome`、`snapshotLinks`、`hasInputPrompt`、`handleTuiCallback`）。
+- **完成标准**：`grep` 不到这些名字；T5.3 的状态等价 E2E 删除前后都全绿；`off` 模式的测试全绿（`off` 用的是 Telegram 原生实现，不依赖镜像）。
+
+### T5.5 删除 `tui-selector.ts`、`tui-bridge.ts`
+
+- **要做**：`lib/tui-bridge.ts` 中仍被使用的导出迁移到 `lib/tui/host.ts`、`lib/tui/snapshot.ts`（快照渲染从 `renderScreen` 迁移过来），调用方改为从新位置导入；然后删除 `lib/tui-bridge.ts`、`lib/tui-selector.ts`、`lib/__tests__/tui-selector.test.ts`。
+- **完成标准**：两个文件不存在；`npm run typecheck`、`npm test`、T5.3 全绿。
+
+### T5.6 旧回调前缀改为"已过期"
+
+- **要做**：收到 `tgplus:tui:` 回调（升级前发出的旧消息）时，回复"此按钮已过期"，并移除那条消息的键盘；不执行任何按键。
+- **完成标准**：单测：旧前缀的回调不会触发任何宿主输入，并且会回复过期提示。
+
+### T5.7 文档更新
+
+- **要做**：方案 §5"修改"表中的文档项：
+  - `README.md`：改写 "Interactive modals are Telegram-only during a Telegram turn" 和 "Mirrored dialogs arrive as one Telegram message" 两段，并补上密钥脱敏的局限；
+  - `CHANGELOG.md`：汇总行为变更；
+  - `docs/telegram-interactions-plan.md` 顶部注明原则 1 已被新方案取代；
+  - `docs/compatibility.md`：更新 pi/OMP 支持矩阵（哪些对话框是结构化的，哪些是快照）。
+- **完成标准**：README 中不再出现"镜像"作为当前行为的描述；兼容性矩阵与 T5.3 的测试结果一致。
+
+### T5.8 最终验收
+
+- 方案 §6 阶段 5 的验收标准：§7.2 的状态等价测试在 `npm run test:pi-versions` 覆盖的全部 pi 版本和 OMP 上通过。
+- 汇报：每个版本的结果；不通过的版本单独列出原因，并说明是修复还是在兼容性矩阵中标为不支持（后者属于改验收标准，按规则 5 先问）。
