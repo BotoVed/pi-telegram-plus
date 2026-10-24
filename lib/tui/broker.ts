@@ -153,6 +153,17 @@ function ctorName(value: Record<string, unknown>): string {
   }
 }
 
+/**
+ * What a command arriving from Telegram did to the open dialog (§4.5 rule 6): `closed` names
+ * this chat's own question that was just cancelled, `blocked` names a question that belongs to
+ * another chat or to the terminal and is holding the host's queue, `nothing` means nothing was
+ * in the way.
+ */
+export type AbandonOutcome =
+  | { kind: "closed"; title?: string }
+  | { kind: "blocked"; title?: string }
+  | { kind: "nothing" };
+
 export class DialogBroker {
   private session?: DialogSession;
   private unsubscribe?: () => void;
@@ -529,22 +540,30 @@ export class DialogBroker {
   }
 
   /**
-   * A new command from this chat means the remote user abandoned the question it was being
-   * asked: the host queues every later command behind that dialog, so press Esc for them and
-   * report what was closed (§4.5 rule 6). A dialog another chat drew is left alone. Returns
-   * the title when something was abandoned.
+   * A new command from this chat means the remote user abandoned the question *this chat* was
+   * being asked: the host queues every later command behind that dialog, so press Esc for them
+   * and report what was closed (§4.5 rule 6). A question drawn for another chat, or never drawn
+   * for anyone, is not this chat's to discard - it is reported as a blocker so the controller can
+   * answer the user instead of submitting a command that would only wait out the host's timeout.
    */
-  abandonFor(chatId: number, messageThreadId?: number): string | undefined {
+  abandonFor(chatId: number, messageThreadId?: number): AbandonOutcome {
     const session = this.session;
-    if (!session || session.state === "closed") return undefined;
+    if (!session || session.state === "closed") return { kind: "nothing" };
     const telegram = session.telegram;
     const forThisChat = telegram !== undefined
       && telegram.chatId === chatId
       && (telegram.messageThreadId ?? undefined) === (messageThreadId ?? undefined);
-    // Unowned means nobody was ever shown the question (§4.3 rule 3); it still blocks the
-    // host queue, so it becomes this chat's problem the moment it sends a command.
-    if (!forThisChat && session.owner !== undefined) return undefined;
-    const title = (session.model as { title?: string } | undefined)?.title?.trim();
+    const title = (session.model as { title?: string } | undefined)?.title?.trim() || undefined;
+    if (!forThisChat) {
+      // Nobody in this chat was ever shown the question, so pressing Esc would throw away
+      // another chat's - or the terminal's - decision. It still blocks the host queue: say so
+      // rather than let the command sit there unseen.
+      if (this.canDrive(session)) {
+        brokerLog.debug("command blocked by a dialog owned elsewhere", { title: title ?? null, chatId });
+        return { kind: "blocked", title };
+      }
+      return { kind: "nothing" };
+    }
     const info = this.deps.focus.current();
     if (!this.canDrive(session) && info.kind === "editor") {
       // The question is already off screen: the host answered or discarded it, and the session
@@ -553,8 +572,8 @@ export class DialogBroker {
       this.forgetPending(session);
       session.telegram = undefined;
       this.retire(session, info);
-      brokerLog.debug("dialog already closed", { title: title || null, chatId });
-      return undefined;
+      brokerLog.debug("dialog already closed", { title: title ?? null, chatId });
+      return { kind: "nothing" };
     }
     if (this.canDrive(session)) {
       const subject = (session.subject ?? session.focus) as Record<string, unknown>;
@@ -571,8 +590,8 @@ export class DialogBroker {
     }
     session.telegram = undefined;
     this.retire(session, this.deps.focus.current());
-    brokerLog.debug("dialog abandoned", { title: title || null, chatId });
-    return title || undefined;
+    brokerLog.debug("dialog abandoned", { title: title ?? null, chatId });
+    return { kind: "closed", title };
   }
 
   // --- plumbing --------------------------------------------------------------

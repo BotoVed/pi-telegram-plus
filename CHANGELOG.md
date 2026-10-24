@@ -156,11 +156,13 @@ missing or mislabelled cannot be published.
 
 - **A command no longer waits behind a dialog nobody answered.** The host queues every later
   command behind an unanswered dialog, so one abandoned question turned the next command into
-  a 30-second silence. Sending a command now closes that dialog for you - as you would press
-  `Esc` in the terminal - and the chat is told which question was closed. Only the dead
-  keyboard is stripped from the old message, never written over: the command that arrived
-  answers on that same message. A dialog another chat was shown is left alone, and one the
-  terminal had already answered is closed without a word.
+  a 30-second silence. A command now closes only the dialog *this chat* was shown - as you would
+  press `Esc` yourself - and the chat is told which question was closed; only the dead keyboard is
+  stripped from the old message, never written over, because the command answers on that same
+  message. A question the terminal opened, or one no chat was ever shown, is no longer answered on
+  anyone's behalf: the command is refused with "there is an unfinished dialog in the terminal -
+  handle it there, or send /stop" rather than queueing silently behind it. A dialog the terminal
+  had already answered is closed without a word.
 
 - **Choices work on lists the terminal has filtered or paged.** When a host keeps its rows in
   private fields, the highlighted row is only visible in the frame the dialog draws; the count

@@ -424,7 +424,7 @@ describe("dialog broker", () => {
     expect(keys).toEqual(["\x1b[B", "\r"]);
   });
 
-  it("closes the dialog a new command leaves behind", async () => {
+  it("refuses to answer a dialog this chat was never shown", async () => {
     const entry: EntryInfo = {
       kind: "select",
       title: "Pick env",
@@ -438,16 +438,17 @@ describe("dialog broker", () => {
     await settle();
     expect(broker.hasActive()).toBe(true);
 
-    // Nobody was ever shown this question (§4.3 rule 3), yet the host queues every later
-    // command behind it: the command that arrives now is answered with an Esc.
-    expect(broker.abandonFor(42)).toBe("Pick env");
+    // The terminal opened this question and nobody in this chat was ever shown it (§4.3 rule 3).
+    // The host queues every later command behind it, so the arriving command is refused with an
+    // explanation; the broker must not press Esc on a question this chat does not own.
+    expect(broker.abandonFor(42)).toEqual({ kind: "blocked", title: "Pick env" });
     await settle();
 
-    expect(keys).toContain("\x1b");
-    expect(broker.current()).toBeUndefined();
-    // Nothing was drawn, so nothing had to be edited away either.
+    expect(keys).toEqual([]);
     expect(transport.sent).toHaveLength(0);
-    expect(broker.abandonFor(42)).toBeUndefined();
+    expect(broker.hasActive()).toBe(true);
+    // Still blocked: nothing was answered, so the next command is refused the same way.
+    expect(broker.abandonFor(42)).toEqual({ kind: "blocked", title: "Pick env" });
   });
 
   it("leaves an abandoned message for the command that arrived", async () => {
@@ -464,7 +465,7 @@ describe("dialog broker", () => {
     await settle();
     expect(transport.sent).toHaveLength(1);
 
-    expect(broker.abandonFor(42)).toBe("Bot name");
+    expect(broker.abandonFor(42)).toEqual({ kind: "closed", title: "Bot name" });
     await settle();
 
     // The command that arrived draws its own answer on this very message (one scope, one
@@ -485,7 +486,7 @@ describe("dialog broker", () => {
     // that it closed a question - the notice would land where the command's own answer goes.
     focus.closeToEditor();
     await settle();
-    expect(broker.abandonFor(42)).toBeUndefined();
+    expect(broker.abandonFor(42)).toEqual({ kind: "nothing" });
     await settle();
 
     expect(keys).toEqual([]);
@@ -496,12 +497,18 @@ describe("dialog broker", () => {
 
   it("leaves another chat's dialog alone when this one sends a command", async () => {
     const { broker, transport, focus } = makeBroker({ turns: [turn(7)] });
-    const { component } = selector(focus);
+    const { component, keys } = selector(focus);
     focus.openDialog(component);
     await settle();
     expect(transport.sent[0]?.chatId).toBe(7);
 
-    expect(broker.abandonFor(42)).toBeUndefined();
+    // Not this chat's question: no Esc, no keyboard taken away, and the arriving command is
+    // refused instead of queued behind a dialog it may not answer.
+    expect(broker.abandonFor(42).kind).toBe("blocked");
+    await settle();
+
+    expect(keys).toEqual([]);
+    expect(transport.removed).toEqual([]);
     expect(broker.hasActive()).toBe(true);
   });
 });

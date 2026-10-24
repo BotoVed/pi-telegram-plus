@@ -1916,9 +1916,19 @@ export function createTelegramController(deps: {
     // (§4.5 rule 6), otherwise the chat only ever sees a timeout.
     if (scope) {
       const abandoned = dialogBroker.abandonFor(chatId, messageThreadId);
-      if (abandoned !== undefined) {
+      if (abandoned.kind === "blocked") {
+        // The question belongs to another chat or to the terminal, and this chat may not answer
+        // it for them. Submitting the command would only queue behind it for 30 seconds, so tell
+        // the user where to act and end the scope without submitting.
+        originTracker.end(scope, "error");
         void deps.transport
-          .sendText(chatId, `⚠️ 已关闭未回答的对话框：<b>${escapeHtml(abandoned)}</b>`, messageThreadId, sourceMessageId)
+          .sendText(chatId, "终端上有一个未完成的对话框，请先在终端处理，或发 /stop。", messageThreadId, sourceMessageId)
+          .catch(ctrlLog.swallow("debug", "sendText blocked-dialog notice failed", { chatId }));
+        return;
+      }
+      if (abandoned.kind === "closed" && abandoned.title !== undefined) {
+        void deps.transport
+          .sendText(chatId, `⚠️ 已关闭未回答的对话框：<b>${escapeHtml(abandoned.title)}</b>`, messageThreadId, sourceMessageId)
           .catch(ctrlLog.swallow("debug", "sendText abandoned-dialog notice failed", { chatId }));
       }
     }
