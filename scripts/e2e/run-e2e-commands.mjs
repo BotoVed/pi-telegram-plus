@@ -423,6 +423,24 @@ async function runHost(host, label, phase = "main") {
     }
   }
 
+  // ── Stage 3: OMP /agents dashboard reaches the chat as read-only text ─
+  if (host === "omp") {
+    const bodyText = (entry) => String(entry?.body?.text ?? "");
+    const label = "stage3 /agents dashboard reaches the chat";
+    try {
+      const since = await cursor();
+      await dispatch("/agents");
+      const body = await waitFor(label, (state) =>
+        state.calls.slice(since).find((entry) =>
+          (entry.method === "sendMessage" || entry.method === "editMessageText")
+          && /Agents[\s\S]*<pre>[\s\S]*All agents/.test(bodyText(entry))) ?? false, 15_000).catch(() => undefined);
+      record(label, Boolean(body),
+        bodyText(body).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
+    } catch (error) {
+      record(label, false, String(error.message).slice(0, 200));
+    }
+  }
+
   // ── Scripted `ask` tool round trip ─────────────────────────────────────
   // The mock provider answers the marker message with a real tool_call for the
   // host's `ask` tool, so the model→tool→UI→answer→model loop is exercised.

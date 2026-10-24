@@ -9,12 +9,12 @@
  *
  * The dialog here is pi's real component; only the mode that builds it is faked.
  */
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import * as host from "@earendil-works/pi-coding-agent";
 import { pickAdapter } from "../tui/adapters/index.ts";
 import { extensionInputAdapter } from "../tui/adapters/extension.ts";
 import { entryFromCall, hookEntryMethods, OMP_ENTRY_SPECS, PI_ENTRY_SPECS } from "../tui/entry.ts";
-import { FocusTracker } from "../tui/focus.ts";
+import { FocusTracker, type FocusKind } from "../tui/focus.ts";
 import type { AdapterContext, EntryInfo } from "../tui/model.ts";
 
 beforeAll(() => {
@@ -162,5 +162,84 @@ describe("OMP read-only panels are recorded as panel entries (§4.6.5 #12)", () 
     expect(panelEntry("showDebugSelector", [])).toMatchObject({ kind: "panel", title: "Debug" });
     expect(panelEntry("showExtensionsDashboard", [])).toMatchObject({ kind: "panel", title: "Extensions" });
     expect(panelEntry("showAgentsDashboard", [])).toMatchObject({ kind: "panel", title: "Agents" });
+  });
+});
+
+describe("a dashboard that takes focus after its entry returns inherits the panel entry (T3.1)", () => {
+  const panelEntry = { kind: "panel", title: "Agents", source: "omp", method: "showAgentsDashboard" } as EntryInfo;
+
+  /** A host UI the test drives directly, starting on the editor. */
+  function fakeHost() {
+    const editor = { render: () => "", handleInput: () => undefined };
+    const ui: { focused: unknown; setFocus: (component: unknown) => void } = {
+      focused: undefined,
+      setFocus(component) { ui.focused = component; },
+    };
+    const tracker = new FocusTracker();
+    // `attach` is private; drive it directly like the gateway tests do.
+    const attached = tracker as unknown as { attach(state: unknown): void };
+    attached.attach({ host: "omp", ui, editor, mode: {} });
+    const kinds: FocusKind[] = [];
+    tracker.onChange((info) => kinds.push(info.kind));
+    return { tracker, ui, editor, kinds };
+  }
+
+  /** OMP's agents dashboard: keys, a render, a cancellation signal, no shape. */
+  const dashboard = () => ({ signal: {}, render: () => "", handleInput: () => undefined });
+
+  it("binds the dashboard that takes focus right after the entry call returns", () => {
+    const { tracker, ui, kinds } = fakeHost();
+    const record = tracker.pushEntry(panelEntry, false);
+    // showAgentsDashboard is synchronous: the entry is retired before focus moves.
+    tracker.popEntry(record);
+    const panel = dashboard();
+
+    ui.setFocus(panel);
+
+    expect(kinds.at(-1)).toBe("dialog");
+    expect(tracker.entryFor(panel)).toMatchObject({ kind: "panel", title: "Agents" });
+  });
+
+  it("lets the editor take focus meanwhile without consuming the entry", () => {
+    const { tracker, ui, editor, kinds } = fakeHost();
+    const record = tracker.pushEntry(panelEntry, false);
+    tracker.popEntry(record);
+    const panel = dashboard();
+
+    ui.setFocus(editor);
+    ui.setFocus(panel);
+
+    expect(kinds.at(-1)).toBe("dialog");
+    expect(tracker.entryFor(panel)?.kind).toBe("panel");
+  });
+
+  it("leaves a component that takes focus after the handoff window alone", () => {
+    const { tracker, ui, kinds } = fakeHost();
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const record = tracker.pushEntry(panelEntry, false);
+      tracker.popEntry(record);
+      now.mockReturnValue(1_000_000 + 1_001);
+      const panel = dashboard();
+
+      ui.setFocus(panel);
+
+      expect(kinds.at(-1)).toBe("progress");
+      expect(tracker.entryFor(panel)).toBeUndefined();
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("keeps retiring a non-panel entry exactly as before", () => {
+    const { tracker, ui, kinds } = fakeHost();
+    const record = tracker.pushEntry({ kind: "select", title: "Pick env", options: ["dev"], source: "omp" } as EntryInfo, false);
+    tracker.popEntry(record);
+    const widget = dashboard();
+
+    ui.setFocus(widget);
+
+    expect(kinds.at(-1)).toBe("progress");
+    expect(tracker.entryFor(widget)).toBeUndefined();
   });
 });

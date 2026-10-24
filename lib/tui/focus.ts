@@ -44,6 +44,9 @@ const MAX_PENDING_ENTRIES = 8;
 const ENTRY_TTL_MS = 5_000;
 /** How long focus must stay off a dialog before it counts as closed (§4.1.3). */
 const FOCUS_CLOSE_GRACE_MS = 250;
+/** How long a panel entry waits for the component that takes focus right after its
+ *  entry call returns (T3.1). */
+const PANEL_HANDOFF_MS = 1_000;
 
 function ctorName(value: Record<string, unknown>): string {
   try {
@@ -87,6 +90,9 @@ export class FocusTracker {
   private pending: PendingEntry[] = [];
   /** The pending entry a component has already claimed (§4.1.2). */
   private boundEntry?: PendingEntry;
+  /** A panel entry just retired by its own call, waiting for the component that
+   *  takes focus next - OMP's `/agents` dashboard returns before it gets focus. */
+  private recentPanel?: { info: EntryInfo; until: number };
   /** A dialog whose close is waiting to be confirmed by the next focus event. */
   private closeGrace?: { component: Record<string, unknown>; timer: NodeJS.Timeout };
   private readonly localInput = new Map<object, number>();
@@ -173,6 +179,11 @@ export class FocusTracker {
     const index = this.pending.indexOf(record as PendingEntry);
     if (index < 0) return;
     const [removed] = this.pending.splice(index, 1);
+    // A read-only dashboard's entry call returns before the dashboard takes focus,
+    // so keep its panel entry for the component that gets focus next (T3.1).
+    if (removed.info.kind === "panel" && removed !== this.boundEntry) {
+      this.recentPanel = { info: removed.info, until: Date.now() + PANEL_HANDOFF_MS };
+    }
     if (removed === this.boundEntry) this.boundEntry = undefined;
   }
 
@@ -380,6 +391,18 @@ export class FocusTracker {
 
   private update(component: Record<string, unknown>, source: FocusInfo["source"]): void {
     const previous = this.info;
+    // A read-only dashboard returns from its entry call before it takes focus (OMP
+    // `showAgentsDashboard`): the next non-editor component to take focus within a
+    // second is that dashboard, so it inherits the panel entry (T3.1).
+    const recent = this.recentPanel;
+    if (recent) {
+      if (Date.now() > recent.until) this.recentPanel = undefined;
+      else if (!this.isEditorComponent(component) && !this.entryByComponent.has(component)) {
+        this.entryByComponent.set(component, recent.info);
+        this.recentPanel = undefined;
+      }
+    }
+
     const kind = this.classify(component);
     if (previous.kind === kind && previous.component === component) return;
     // A host that redraws an open dialog can drop focus to the editor for one
@@ -447,13 +470,19 @@ export class FocusTracker {
     return undefined;
   }
 
-  private classify(component: Record<string, unknown>): FocusKind {
+  /** True for the editor itself or the text input nested inside it. */
+  private isEditorComponent(component: Record<string, unknown>): boolean {
     const editor = this.editor;
-    if (editor) {
-      if (component === editor) return "editor";
-      const editorInner = editor.editor;
-      if (isHostObject(editorInner) && component === editorInner) return "editor";
-    }
+    if (!editor) return false;
+    if (component === editor) return true;
+    const editorInner = editor.editor;
+    return isHostObject(editorInner) && component === editorInner;
+  }
+
+  private classify(component: Record<string, unknown>): FocusKind {
+    if (this.isEditorComponent(component)) return "editor";
+    // Explicitly bound to a panel entry: a dialog whatever its shape (T3.1).
+    if (this.entryByComponent.get(component)?.kind === "panel") return "dialog";
     if (typeof component.render !== "function") return "inert";
     if (typeof component.handleInput !== "function") {
       // A loader or a read-only view still owns focus, so chat text must not

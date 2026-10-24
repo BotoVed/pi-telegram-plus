@@ -40,8 +40,10 @@ const PI_OUTPUT_ONLY = new Set([
  * OMP output/report commands, grown one at a time as each is verified end to
  * end (T3.2). `/mcp` draws a titled report on the main screen
  * (`showCommandReport`), which OutputCapture returns as command output (T3.1).
+ * `/agents` opens a dashboard that takes focus after its entry call returns; the
+ * FocusTracker hands it the panel entry and the Broker sends its text (T3.1).
  */
-const OMP_OUTPUT_ONLY = new Set<string>(["mcp"]);
+const OMP_OUTPUT_ONLY = new Set<string>(["mcp", "agents"]);
 
 export function isOutputOnlyCommand(host: TuiHost, name: string): boolean {
   if (host === "pi") return PI_OUTPUT_ONLY.has(name);
