@@ -311,6 +311,7 @@ async function main() {
       ["/probe-input-secret", [["-l", "probe-secret"], ["Enter"]]],
       ["/probe-editor", [["-l", "probe editor text"], ["Enter"]]],
       ["/probe-custom", [["Down"], ["Enter"]]],
+      ["/probe-ask", [["Enter"], ["Enter"]]],
       ["/probe-notify", []],
     ]) {
       tmux("send-keys", "-t", SESSION, "-l", name);

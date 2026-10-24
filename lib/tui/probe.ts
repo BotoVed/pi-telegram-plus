@@ -26,6 +26,7 @@ type Snap = {
   keys?: string[];
   fields?: Record<string, Snap>;
   items?: Snap[];
+  shapes?: string[];
   size?: number;
   getter?: true;
   error?: string;
@@ -237,13 +238,64 @@ function snapshot(value: unknown, depth = 2, seen?: WeakSet<object>, textLimit =
     }
     // Container plumbing must not consume the depth/visited budget before the
     // component's own data fields: pi's SessionSelectorComponent holds
-    // sessionList as both a direct field and inside children.
-    const deferred = new Set(["children", "tui", "theme", "terminal", "session", "settingsManager", "modelRuntime", "keybindings"]);
-    const childDepth = deferred.has(key) ? 0 : (rawKind === "object" ? depth - 1 : depth);
-    fields[key] = snapshot(raw, childDepth, visited, textLimit);
+    // sessionList as both a direct field and inside children. The rows still
+    // matter - that is where an adapter would read labels - so a deferred array
+    // is recorded as a per-row shape summary instead of being dropped.
+    const deferred: Record<string, true> = {
+      children: true, tui: true, theme: true, terminal: true, session: true,
+      settingsManager: true, modelRuntime: true, keybindings: true,
+    };
+    if (key in deferred) {
+      fields[key] = Array.isArray(raw) ? summarizeRows(raw, visited) : snapshot(raw, 0, visited, textLimit);
+      kept += 1;
+      continue;
+    }
+    fields[key] = snapshot(raw, rawKind === "object" ? depth - 1 : depth, visited, textLimit);
     kept += 1;
   }
   return { type: "object", ctor: ctorName(value), keys: keys.slice(0, 80), fields };
+}
+
+/**
+ * A deferred container is not walked, but its rows carry exactly what an adapter
+ * needs: labels, the current index, the key handler. Each row is recorded as a
+ * shape summary - constructor, own field names, detected shapes, and the row's
+ * own scalar / short-string fields - so the structure is reviewable without
+ * dumping the host's whole subtree.
+ */
+function summarizeRows(value: unknown[], visited: WeakSet<object>): Snap {
+  const items = value.slice(0, 12).map((item) => {
+    if (!isRecord(item)) return snapshot(item);
+    if (visited.has(item)) return { type: "circular" };
+    visited.add(item);
+    const fields: Record<string, Snap> = {};
+    for (const name of ownNames(item).slice(0, 16)) {
+      const raw = safeGet(item, name);
+      if (typeof raw === "function") {
+        fields[name] = { type: "function", name: (raw as (...args: unknown[]) => unknown).name || "(anonymous)" };
+      } else if (typeof raw === "string") {
+        fields[name] = { type: "string", value: clipString(raw, 120) };
+      } else if (typeof raw === "number" || typeof raw === "boolean") {
+        fields[name] = { type: typeof raw, value: raw };
+      } else if (Array.isArray(raw)) {
+        fields[name] = { type: "array", ctor: ctorName(raw), length: raw.length };
+      } else if (raw === null) {
+        fields[name] = { type: "null", value: null };
+      } else if (raw && typeof raw === "object") {
+        fields[name] = { type: "object", ctor: ctorName(raw) };
+      } else {
+        fields[name] = { type: typeof raw };
+      }
+    }
+    return {
+      type: "object",
+      ctor: ctorName(item),
+      keys: ownNames(item).slice(0, 40),
+      shapes: focusShapes(item),
+      fields,
+    };
+  });
+  return { type: "array", ctor: ctorName(value), length: value.length, items };
 }
 
 function focusShapes(value: unknown): string[] {
@@ -483,23 +535,29 @@ function installEntryMethods(mode: AnyRecord): void {
   }
 }
 
+/** Colours would make a captured frame unreadable in JSON, so drop them. */
+const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|[\x07\x08]/g;
+
+/** What a component draws at 80 columns without colours, or a note about why it could not. */
+function renderOf(component: unknown): string {
+  const render = safeGet(component, "render");
+  if (typeof render !== "function") return "";
+  try {
+    const value = (render as (width: number) => unknown).call(component, 80);
+    const text = Array.isArray(value) ? value.map((line) => String(line)).join("\n") : typeof value === "string" ? value : "";
+    return text.replace(ANSI_PATTERN, "");
+  } catch (error) {
+    return `[render failed: ${String(error)}]`;
+  }
+}
+
 function recordCustomComponent(component: unknown, entrySeq: number, source: string): void {
   if (!isRecord(component)) {
     push(document().entryCalls, "custom-no-component", { source, component: snapshot(component, 1) });
     return;
   }
   rememberEntryTarget(component, entrySeq);
-  let rendered = "";
-  const render = safeGet(component, "render");
-  if (typeof render === "function") {
-    try {
-      const value = (render as (width: number) => unknown).call(component, 80);
-      if (Array.isArray(value)) rendered = value.map((line) => String(line)).join("\n");
-      else if (typeof value === "string") rendered = value;
-    } catch (error) {
-      rendered = `[render failed: ${String(error)}]`;
-    }
-  }
+  const rendered = renderOf(component);
   push(document().customComponents, "custom-component", {
     source,
     entrySeq,
@@ -530,6 +588,9 @@ function installFocus(ui: AnyRecord): void {
         hookInput: snapshot(safeGet(liveMode, "hookInput"), 2, undefined, 5000),
         hookEditor: snapshot(safeGet(liveMode, "hookEditor"), 2, undefined, 5000),
         editorFocused: focused === safeGet(liveMode, "editor") || focused === safeGet(liveMode, "defaultEditor"),
+        // Some hosts keep a dialog's labels in private fields, so the frame it draws
+        // is the only label source T3.0's adapters can use; record it per focus.
+        rendered: clipString(renderOf(focused), 4000),
       };
       const recent = document().entryCalls.slice(-4).map((entry) => ({
         name: entry.data.name,

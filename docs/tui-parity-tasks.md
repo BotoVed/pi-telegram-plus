@@ -29,11 +29,11 @@
 
 ## 阶段 3：列表、设置、登录
 
-前置条件：阶段 2 已验收。如果阶段 2 结束时 OMP 的 select/input/`ask` 仍然只能走旧路径（`hostOwnsPrompts` 里还限制只对 pi 打开），先做 T3.0；否则跳过 T3.0。
+前置条件：阶段 2 已验收。OMP 的 broker 开关目前仍只对 pi 打开（方案 §9 决定 27），所以 T3.0 是必做项；若届时开关已放开、OMP 对话框已走 broker，则跳过 T3.0。
 
 | # | 任务 | 依赖 | 状态 | 提交 |
 |---|---|---|---|---|
-| T3.0 | OMP 对话框识别不依赖焦点（条件任务） | — | ☐ | |
+| T3.0 | OMP 对话框分类与读取（条件任务） | — | ☐ | |
 | T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☐ | |
 | T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
@@ -48,15 +48,16 @@
 | T3.12 | 所有命令切到 Gateway，删除三个命令集合 | T3.2–T3.11 | ☐ | |
 | T3.13 | 阶段 3 验收 | T3.12 | ☐ | |
 
-### T3.0 OMP 对话框识别不依赖焦点（条件任务）
+### T3.0 OMP 对话框分类与读取（条件任务）
 
-- **背景**：阶段 2 实测发现 OMP 的 select/input/`ask` 渲染在 overlay 里且不调用 `setFocus`，FocusTracker 看不到对话框；`hostOwnsPrompts()` 因此只对 pi 打开。
+- **背景（阶段 2 收尾复测更正）**：OMP 的 hook 对话框**会**切换焦点——`docs/host-probe/omp-18.12.5.json` 的 `focusEvents` 里，`select`/`confirm`/`input` 入口调用之后紧接 `via:"setFocus"`，焦点组件是只有 `children` 的容器（`QT`、`FD`、`Fy`）；`askDialog` 的组件带 `callbacks`+`options`（`Ej`）；扩展自定义对话框是带 `render`/`handleInput` 的普通对象。原先记录的"不调用 `setFocus`"来自插件绕过宿主 gate 自行渲染时采到的场景，不成立。真正的缺口有两个：① OMP 把行标签放在私有字段里（行组件 own keys 为空），`lib/tui/focus.ts` 的 `classify` 形状判定全部落空、构造函数名又是压缩产物，于是对话框被分成 `"progress"`；② 现有适配器按 `items`/`filtered*`/`selectedIndex` 字段读条目，这类组件读不到。
 - **要做**：
-  - 对 OMP，以**入口调用**（UI 上下文的 `select/confirm/input/editor/custom`、工具上下文的 `askDialog/approve`）作为对话框打开的信号，题目和选项取自入口参数（方案 §4.6.5 #1–#4、#10 已经这样设计）；
-  - hook `showOverlay`/`hideOverlay`，从 overlay 子树中找到真正接收按键的组件，作为 `act()` 的注入目标；
-  - 对话框关闭以入口调用的 Promise 结束为准（不是焦点离开）；
-  - 去掉 `hostOwnsPrompts` 对 OMP 的限制——broker 与它是同一个开关（方案 §9 决定 27），去掉后 broker 同时在 OMP 打开。
-- **这是接口变更**（方案 §4.1.3"按焦点识别"的前提不成立），开工前先按规则 5 找架构确认方案，确认后在 §9 记录。
+  - 分类：焦点组件绑定或紧邻一条**未结束**的入口条目即判为 `dialog`。pi 侧 `EntrySpec.componentField` 已经把组件直接绑上（`FocusTracker.entryFor`）；OMP 的 UI 上下文入口没有组件字段，用"入口调用之后、Promise 结束之前"的待决条目关联（probe 的 `recentEntries` 就是这个时序）；两种情况都不再依赖类名或形状猜测；
+  - 读取：新增按帧读取的适配器——用 `render(80)` 去色文本解析标题、行（`❯`/`>` 标当前行）与页脚按键；`conclusions.dialogFrames` 记录了每种组件形状的真实帧，`Ej` 这类带 `options`/`callbacks` 的组件仍优先读字段；
+  - 操作：继续走 `act()` 的按键注入（上下移动 + `Enter`，取消 `Esc`），不要求宿主暴露私有字段；
+  - 关闭：以入口调用的 Promise 结束为准；焦点回到编辑器只作为需要持续 1.5 秒的兜底信号；
+  - 放开 `hostOwnsPrompts` 对 OMP 的限制——broker 与它是同一个开关（方案 §9 决定 27），去掉后 broker 同时在 OMP 打开。
+- **不是接口变更**：方案 §4.1.3"按焦点识别对话框"保持，改的是判定条件（形状 → 是否有入口条目）；按规则 5 仍需在 §9 记一条决定。
 - **完成标准**：OMP 上扩展 `select/input` 和 `ask` 多问题从 Telegram 作答走 broker 方言（`tgplus:dlg:`），并且终端先作答时 Telegram 键盘被撤销；`npm run test:e2e:dialogs` OMP 部分全绿；打开 OMP 的 broker 后，`run-e2e-commands.mjs --host omp` 不得低于阶段 1 基线 132/132（方案 §9 决定 27）。
 - **不做**：OMP 内置选择器（T3.11）。
 

@@ -192,6 +192,21 @@ export default function probeExtension(pi: {
     record("extension-result", { name: "custom", value: describe(value) });
   });
 
+  // OMP's `ask` dialog: two questions, one recommended, one multi-select, so the
+  // captured component is in its richest form (T3.0 needs the row structure).
+  register("probe-ask", async (ctx) => {
+    const ask = ctx.ui.askDialog as ((questions: unknown[], options?: unknown) => Promise<unknown>) | undefined;
+    if (typeof ask !== "function") {
+      record("extension-result", { name: "askDialog", value: { type: "undefined" } });
+      return;
+    }
+    const value = await ask([
+      { id: "colour", question: "PROBE_ASK_Q1", options: [{ label: "red" }, { label: "green", description: "PROBE_ASK_RECOMMENDED" }, { label: "blue" }], recommended: 1 },
+      { id: "topping", question: "PROBE_ASK_Q2", options: [{ label: "cheese" }, { label: "mushroom" }], multi: true },
+    ]);
+    record("extension-result", { name: "askDialog", value: describe(value) });
+  });
+
   register("probe-notify", async (ctx) => {
     ctx.ui.notify?.("PROBE_NOTIFY_INFO", "info");
     ctx.ui.notify?.("PROBE_NOTIFY_WARNING", "warning");

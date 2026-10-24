@@ -65,6 +65,13 @@ function compactFocus(doc) {
     delete data.hookSelector;
     delete data.hookInput;
     delete data.hookEditor;
+    // A drawn frame is the only label source for hosts that keep dialog rows in
+    // private fields, so keep one frame per component shape rather than per event.
+    if (data.rendered) {
+      const shape = `${data.constructor ?? "?"}|${(data.ownKeys ?? []).join(",")}`;
+      if (types[shape] && types[shape].rendered === undefined) types[shape].rendered = data.rendered;
+      delete data.rendered;
+    }
   }
   doc.focusTypes = types;
   doc.chatChildren = (doc.chatChildren ?? []).map((event) => ({
@@ -141,6 +148,33 @@ const sessionAccessors = (main.prototype?.session ?? [])
 
 compactFocus(main);
 
+// Framed dialogs on some hosts keep their rows in private fields: the frame is
+// the label source T3.0's adapters parse, so record what each shape draws.
+const ROW_MARKER = /^\s*(?:│\s*)?[→❯▸>]\s+\S/;
+// A key-hint line lists at least two bindings ("↑/↓ navigate  ⏎ select  ⎋ cancel");
+// one hit is usually a title or a tab label.
+const KEY_HINTS = /navigate|submit|cancel|escape|ctrl\+c|enter|⎋|⏎|↑|↓|tab/i;
+const keyHints = (line) => (line.match(new RegExp(KEY_HINTS, "gi")) ?? []).length;
+const isKeyLine = (line) => keyHints(line) >= 2;
+const isRule = (line) => line.trim() !== "" && /^[\s─━│|╭╮╰╯┌┐└┘]+$/.test(line);
+const dialogFrames = Object.entries(main.focusTypes ?? {})
+  .filter(([, snapshot]) => typeof snapshot?.rendered === "string" && snapshot.rendered.trim() !== "")
+  .map(([key, snapshot]) => {
+    const lines = snapshot.rendered.split("\n");
+    const boxed = lines[0]?.match(/^[╭┌][─\s]*(.*?)[─\s]*[╮┐]$/);
+    const plainTitle = lines.find(
+      (line) => line.trim() !== "" && !isRule(line) && !ROW_MARKER.test(line) && !isKeyLine(line),
+    );
+    return {
+      key,
+      ctor: snapshot.ctor,
+      keys: snapshot.keys,
+      title: (boxed?.[1] ?? plainTitle ?? "").replace(/[─\s]+$/, "").trim() || undefined,
+      rows: lines.filter((line) => ROW_MARKER.test(line)).slice(0, 8),
+      footer: lines.find(isKeyLine)?.trim(),
+    };
+  });
+
 main.conclusions = {
   host: HOST,
   hostVersion: main.hostVersion,
@@ -162,6 +196,7 @@ main.conclusions = {
       ? "OMP 的 setFocus 直接收到组件, 未观察到 {component, overlayFocusRestore} 包装。"
       : "overlay 的 setFocusInternal 收到 {component, overlayFocusRestore} 包装; 分类前要取 .component。",
   },
+  dialogFrames,
   mainLoop: HOST === "omp"
     ? {
         pendingUserInputs: modeKeys.includes("pendingUserInputs"),
