@@ -178,7 +178,8 @@
 | T4.5 | OMP 确认类与网络类命令 | — | ☐ | |
 | T4.6 | 未知 custom 组件走快照 | — | ☐ | |
 | T4.7 | 密钥脱敏覆盖三个发送源 | — | ☐ | |
-| T4.8 | 阶段 4 验收 | T4.1–T4.7 | ☐ | |
+| T4.8 | 删除 `/tg-*` 命令，只保留 `/tg` 入口 | — | ☐ | |
+| T4.9 | 阶段 4 验收 | T4.1–T4.8 | ☐ | |
 
 ### T4.1 `/copy`
 
@@ -217,9 +218,27 @@
 - **背景**：方案 §4.7.4 要求在 OutputCapture、Broker、`lib/renderer.ts` 三个发送源转换成 HTML 之前替换。阶段 2 可能已经完成一部分，本任务负责核对并补齐。
 - **完成标准**：单测覆盖方案 §7.1"密钥"一条的全部用例：三个来源都被脱敏；含 `& < >` 的密钥替换后 HTML 结构完好；短于 8 个字符的不登记；`/new` 后清空；Telegram turn 中输入的密钥同样生效。已有的测试直接引用，不用重写。
 
-### T4.8 阶段 4 验收
+### T4.8 删除 `/tg-*` 命令，只保留 `/tg` 入口
 
-- 按方案 §6 阶段 4 的验收标准逐条报告。
+- **背景**（用户决定，2026-10-24）：插件自身的管理功能只通过 `/tg` 菜单进入。`/tg` 菜单（`lib/commands/tg-menu.ts`）已覆盖全部 `/tg-*` 功能：Bots（添加、列表、设为默认/清除默认、更新、删除）、Project（绑定/解绑、Enabled 开关即连接/断开）。
+- **要删除的命令**：`/tg-bot-add`、`/tg-bot-list`、`/tg-bot-update`、`/tg-bot-remove`、`/tg-bot-default`、`/tg-bind-cwd`、`/tg-unbind-cwd`、`/tg-cwd-connect`、`/tg-cwd-disconnect`。
+- **要做**：
+  - 删除 `lib/commands/telegram-commands.ts` 中这些命令的 `registerCommand` 注册；菜单调用的业务函数保留（菜单靠它们工作）；
+  - 删除 `lib/menu-commands.ts` 中对应的菜单项；
+  - 所有提示文字中出现的 `/tg-xxx`，改成菜单路径，例如"/tg → Bots → Add bot"（`telegram-commands.ts` 的 `notify` 文本、`lib/config.ts`、`index.ts` 中的引用）；
+  - 测试：`lib/__tests__/telegram-commands.test.ts`、`menu-commands.test.ts` 改为测菜单路径或业务函数；`scripts/e2e/run-e2e-commands.mjs`、`audit-parity.mjs` 中用到 `/tg-*` 的步骤改为走 `/tg` 菜单；
+  - 文档：`README.md`、`docs/compatibility.md` 中的命令说明改成菜单路径；CHANGELOG 以"行为变更"列出被删除的命令和对应的菜单路径；
+  - 在方案 §9 追加一条决定记录。
+- **完成标准**：
+  - 除 CHANGELOG 的变更说明外，仓库中 `grep` 不到 `tg-bot-`、`tg-bind-cwd`、`tg-unbind-cwd`、`tg-cwd-connect`、`tg-cwd-disconnect`；
+  - 在 Telegram 发被删除的命令时，提示"未知命令，请使用 /tg"，不会转发给宿主；
+  - E2E：从 Telegram 和终端各用 `/tg` 菜单完成一次"添加 Bot → 设为默认 → 绑定当前项目 → 断开 → 重新连接"，配置文件结果与原 `/tg-*` 命令一致；
+  - 终端里 `/tg` 仍然可用（项目断开 Telegram 后只能从终端重新连接）。
+- **不做**：`/status`、`/debug` 与宿主命令重名的问题、`/tg` 菜单里仿造宿主功能的 Thinking level 选项（另行处理，需在方案 §10 待办中补记，本任务不动）。
+
+### T4.9 阶段 4 验收
+
+- 按方案 §6 阶段 4 的验收标准逐条报告，加上 T4.8 的完成标准。
 
 ---
 
