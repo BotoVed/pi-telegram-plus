@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +25,7 @@ import {
   updateBotFlow,
   type TelegramCommandDeps,
 } from "../commands/telegram-commands.ts";
-import { readBotRegistry, readProjectBinding, addBot } from "../config.ts";
+import { readBotRegistry, readProjectBinding, addBot, readResolvedTelegramConfig, enableConfiguredTelegramOnStartup } from "../config.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
 
 function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
@@ -336,5 +336,75 @@ describe("Telegram management flows (bot registry + project binding)", () => {
 
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.enabled).toBe(false);
+  });
+
+  // ── T4.8a: disconnect must persist across config re-reads and restarts ──
+
+  it("disableProjectFlow on an unbound project writes {enabled:false} and survives re-read + startup", async () => {
+    const bot = makeBot({ name: "default", token: "tok-d" });
+    await addBot(bot); // first bot becomes the default
+
+    const ctx = makeCtx();
+    await disableProjectFlow(ctx.ui, deps, projectDir);
+
+    // Durable disconnect record: no botId (still means "default bot").
+    const raw = await readFile(join(projectDir, ".pi", "telegram.json"), "utf8");
+    expect(JSON.parse(raw)).toEqual({ enabled: false });
+
+    // Re-reading the resolved config keeps disabled + default bot.
+    const resolved = await readResolvedTelegramConfig(projectDir);
+    expect(resolved.config.telegramEnabled).toBe(false);
+    expect(resolved.bot?.id).toBe(bot.id);
+
+    // Startup enable-on-configured must not flip the explicit false.
+    expect(enableConfiguredTelegramOnStartup(resolved.config).telegramEnabled).toBe(false);
+  });
+
+  it("disableProjectFlow on a bound project keeps disabled across re-read + startup, botId unchanged", async () => {
+    const bot = makeBot({ name: "mybot", token: "tok-x" });
+    await addBot(bot);
+    const ctx = makeCtx();
+    await bindProjectFlow(ctx.ui, deps, projectDir, "mybot");
+
+    await disableProjectFlow(ctx.ui, deps, projectDir);
+
+    const raw = await readFile(join(projectDir, ".pi", "telegram.json"), "utf8");
+    const binding = JSON.parse(raw);
+    expect(binding.enabled).toBe(false);
+    expect(binding.botId).toBe(bot.id);
+
+    const resolved = await readResolvedTelegramConfig(projectDir);
+    expect(resolved.config.telegramEnabled).toBe(false);
+    expect(resolved.bot?.id).toBe(bot.id);
+
+    expect(enableConfiguredTelegramOnStartup(resolved.config).telegramEnabled).toBe(false);
+  });
+
+  it("enableProjectFlow after a default-bot disconnect removes the binding", async () => {
+    const bot = makeBot({ name: "default", token: "tok-d" });
+    await addBot(bot);
+
+    const ctx = makeCtx();
+    await disableProjectFlow(ctx.ui, deps, projectDir);
+    await enableProjectFlow(ctx.ui, deps, projectDir);
+
+    expect(await readProjectBinding(projectDir)).toBeUndefined();
+    const resolved = await readResolvedTelegramConfig(projectDir);
+    expect(resolved.config.telegramEnabled).toBe(true);
+    expect(resolved.bot?.id).toBe(bot.id);
+  });
+
+  it("enableProjectFlow after a bound-project disconnect re-enables, keeping botId", async () => {
+    const bot = makeBot({ name: "mybot", token: "tok-x" });
+    await addBot(bot);
+    const ctx = makeCtx();
+    await bindProjectFlow(ctx.ui, deps, projectDir, "mybot");
+
+    await disableProjectFlow(ctx.ui, deps, projectDir);
+    await enableProjectFlow(ctx.ui, deps, projectDir);
+
+    const binding = await readProjectBinding(projectDir);
+    expect(binding?.binding.enabled).toBe(true);
+    expect(binding?.binding.botId).toBe(bot.id);
   });
 });

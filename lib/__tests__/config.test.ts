@@ -36,11 +36,16 @@ function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
 }
 
 describe("enableConfiguredTelegramOnStartup", () => {
-  it("enables a configured bot", () => {
-    expect(enableConfiguredTelegramOnStartup({ botToken: "tok", telegramEnabled: false })).toEqual({
+  it("enables a configured bot whose enabled flag was never decided", () => {
+    expect(enableConfiguredTelegramOnStartup({ botToken: "tok" })).toEqual({
       botToken: "tok",
       telegramEnabled: true,
     });
+  });
+
+  it("keeps an explicit disconnect (telegramEnabled: false) across startup", () => {
+    const config = { botToken: "tok", telegramEnabled: false };
+    expect(enableConfiguredTelegramOnStartup(config)).toBe(config);
   });
 
   it("leaves an unconfigured bot disabled", () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
-import { addBot, bindProjectTelegram, clearDefaultBot, findBotByIdOrName, readBotRegistry, removeBot, setDefaultBot, unbindProjectTelegram, updateBot, updateProjectBindingLocked, readProjectBinding, readResolvedTelegramConfig } from "../config.ts";
+import { addBot, bindProjectTelegram, clearDefaultBot, findBotByIdOrName, readBotRegistry, removeBot, removeProjectBinding, setDefaultBot, unbindProjectTelegram, updateBot, updateProjectBindingLocked, readProjectBinding, readResolvedTelegramConfig, withTelegramConfigLock } from "../config.ts";
 import { escapeHtml } from "../html.ts";
 import { getTelegramBotUsername } from "../telegram-api.ts";
 import { createTelegramPairingCode, ensureTelegramPairingCode, formatPairingInstructions } from "../pairing.ts";
@@ -327,7 +327,15 @@ export async function enableProjectFlow(
   const workspacePath = resolve(cwd);
   const project = await readProjectBinding(workspacePath);
   if (project) {
-    await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: true }));
+    if (project.binding.botId === undefined) {
+      // Disconnect record for the default bot (written by disableProjectFlow
+      // with no botId): re-enabling means "back to plain default-bot
+      // behavior" → remove the binding entirely. Under the config lock so a
+      // concurrent runtime-state persist cannot resurrect the file.
+      await withTelegramConfigLock(() => removeProjectBinding(project.path));
+    } else {
+      await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: true }));
+    }
   } else {
     if (!registry.defaultBotId) {
       ui.notify("No default bot set. Use /tg → Bots → Bot list → Set as default.", "error");
@@ -366,7 +374,11 @@ export async function disableProjectFlow(
   if (project) {
     await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: false }));
   } else {
-    deps.setConfig({ ...deps.getConfig(), telegramEnabled: false });
+    // No binding: write a disconnect record WITHOUT botId — "still uses the
+    // default bot, but disconnected" — so the readResolvedTelegramConfig
+    // re-read below sees enabled=false instead of materializing the default
+    // enabled=true (an in-memory setConfig would be reverted by that re-read).
+    await updateProjectBindingLocked(workspacePath, () => ({ enabled: false }));
   }
   deps.switchResolvedConfig(await readResolvedTelegramConfig(workspacePath));
   await deps.getPolling().stop();

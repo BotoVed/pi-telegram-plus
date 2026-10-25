@@ -24,8 +24,14 @@ function emptyRegistry(): BotRegistry {
   return { version: 3, bots: [] };
 }
 
+/**
+ * On startup, default a configured bot to enabled ONLY when the enabled flag
+ * was never decided (`undefined`). An explicit `false` — written by
+ * disableProjectFlow into the project binding — means "user disconnected this
+ * project" and must survive restarts, so it is left untouched.
+ */
 export function enableConfiguredTelegramOnStartup(config: TelegramConfig): TelegramConfig {
-  if (!config.botToken || config.telegramEnabled === true) return config;
+  if (!config.botToken || config.telegramEnabled !== undefined) return config;
   return { ...config, telegramEnabled: true };
 }
 
