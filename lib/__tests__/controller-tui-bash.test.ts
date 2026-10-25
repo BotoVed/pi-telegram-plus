@@ -265,14 +265,6 @@ describe("Mirror text fitting", () => {
 });
 
 describe("Host capability routing", () => {
-  const piLikeSession = () => createSession({
-    modelRuntime: {
-      getProviders: () => [],
-      login: async () => undefined,
-      logout: async () => undefined,
-    },
-  });
-
   it("hands prompts to the host whenever the bridge serves them", () => {
     const adapter = (host: string, available = true) => ({ isAvailable: () => available, getHost: () => host });
     const asBridge = (value: unknown) => value as unknown as TuiBridgeAdapter; // only the two probed members matter
@@ -334,18 +326,5 @@ describe("Host capability routing", () => {
       text,
     });
   };
-
-  it("runs the native fork handler on pi-like hosts", async () => {
-    const fork = vi.fn(async () => undefined);
-    const harness = createHarness({
-      session: piLikeSession(),
-      isOmpHost: () => false,
-      telegramCommands: new Map([["fork", fork]]),
-    });
-
-    await send(harness, "/fork");
-
-    await vi.waitFor(() => expect(fork).toHaveBeenCalled());
-  });
 
 });

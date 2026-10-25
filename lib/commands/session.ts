@@ -1,7 +1,7 @@
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import type { SessionManager, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { SessionManager } from "@earendil-works/pi-coding-agent";
 import type { SessionDeps, CommandRegistry } from "./register.ts";
 import { escapeHtml } from "../html.ts";
 import { log } from "../logger.ts";
@@ -40,23 +40,6 @@ async function loadSessionManager(): Promise<SessionManagerClass | undefined> {
 }
 
 const SESSION_MANAGER = await loadSessionManager();
-
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : text.slice(0, max - 1) + "…";
-}
-
-function isMessageEntry(entry: SessionEntry): entry is SessionEntry & { type: "message"; message: { role: string; content?: unknown } } {
-  return entry.type === "message";
-}
-
-function getEntryText(entry: { role: string; content?: unknown }): string {
-  if (!entry.content || !Array.isArray(entry.content)) return "(empty)";
-  return (entry.content as Array<{ type?: string; text?: string }>)
-    .filter((c) => c.type === "text" && typeof c.text === "string")
-    .map((c) => c.text!)
-    .join(" ")
-    .replace(/\n/g, " ") || "(empty)";
-}
 
 function stripMatchingQuotes(input: string): string {
   if ((input.startsWith('"') && input.endsWith('"')) || (input.startsWith("'") && input.endsWith("'"))) {
@@ -101,88 +84,6 @@ export function registerSessionCommands(
           : { setup: async () => { ui.notify("✅ New session started.", "info"); } },
       );
       if (result.cancelled) ui.notify("Cancelled.", "info");
-    },
-  });
-
-  // ── /fork ────────────────────────────────────────────────────────────
-  registry.registerCommand("fork", {
-    description: "Fork from a previous user message",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-      if (typeof ctx.fork !== "function") {
-        ui.notify("Fork is not available on this host. Run /fork in the terminal.", "error");
-        return;
-      }
-
-      if (args) {
-        await checkpointCurrentUpdateCursor();
-        await ctx.fork(args, { position: "before" });
-        ui.notify("✅ Forked session.", "info");
-        return;
-      }
-
-      const entries = session.sessionManager.getEntries();
-      const userEntries = entries.filter(isMessageEntry).filter((e) => e.message.role === "user");
-      if (userEntries.length === 0) {
-        ui.notify("No user messages to fork from.", "info");
-        return;
-      }
-
-      const shown = userEntries;
-      const labels = shown.map((e) => truncate(getEntryText(e.message), 50));
-      const choice = await ui.select("Fork from message", labels);
-      if (!choice) return;
-      const index = labels.indexOf(choice);
-      if (index < 0) return;
-      await checkpointCurrentUpdateCursor();
-      await ctx.fork(shown[index].id, { position: "before" });
-      ui.notify("✅ Forked session.", "info");
-    },
-  });
-
-  // ── /clone ────────────────────────────────────────────────────────────
-  registry.registerCommand("clone", {
-    description: "Clone at a previous user message",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-      if (typeof ctx.fork !== "function") {
-        ui.notify("Clone is not available on this host. Run it in the terminal.", "error");
-        return;
-      }
-
-      if (args) {
-        await checkpointCurrentUpdateCursor();
-        await ctx.fork(args, { position: "at" });
-        ui.notify("✅ Cloned session.", "info");
-        return;
-      }
-
-      const entries = session.sessionManager.getEntries();
-      const userEntries = entries.filter(isMessageEntry).filter((e) => e.message.role === "user");
-      if (userEntries.length === 0) {
-        ui.notify("No user messages to clone from.", "info");
-        return;
-      }
-
-      const shown = userEntries;
-      const labels = shown.map((e) => truncate(getEntryText(e.message), 50));
-      const choice = await ui.select("Clone at message", labels);
-      if (!choice) return;
-      const index = labels.indexOf(choice);
-      if (index < 0) return;
-      await checkpointCurrentUpdateCursor();
-      await ctx.fork(shown[index].id, { position: "at" });
-      ui.notify("✅ Cloned session.", "info");
     },
   });
 

@@ -641,7 +641,7 @@ const TUI_SCREEN_WIDTH = 100;
 // submission reloads the extension runtime outside pi's withSession sequencing.
 // copy/hotkeys/quit/exit are terminal-only mappings (stage 4 revisits them).
 const NATIVE_HANDLER_COMMANDS: Record<string, true> = {
-  new: true, reload: true, fork: true, clone: true, import: true,
+  new: true, reload: true, import: true,
   copy: true, hotkeys: true, quit: true, exit: true,
 };
 

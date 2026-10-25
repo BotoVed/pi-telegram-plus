@@ -126,6 +126,30 @@ describe("Command routing after the mirror removal (D2)", () => {
     run.mockRestore();
   });
 
+  it("routes /fork and /clone to the gateway, not the plugin handler", async () => {
+    const run = vi.spyOn(CommandGateway.prototype, "run").mockResolvedValue(true);
+    const fork = vi.fn(async () => undefined);
+    const clone = vi.fn(async () => undefined);
+    const harness = createHarness({
+      bridge: createBridge({
+        getCommands: async () => [
+          { name: "fork", description: "Fork from a message", source: "builtin" as const },
+          { name: "clone", description: "Clone at a message", source: "builtin" as const },
+        ],
+      }),
+      telegramCommands: new Map([["fork", fork], ["clone", clone]]),
+    });
+
+    await send(harness.controller, "/fork");
+    await send(harness.controller, "/clone m42");
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "fork", args: "" }));
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "clone", args: "m42" }));
+    expect(fork).not.toHaveBeenCalled();
+    expect(clone).not.toHaveBeenCalled();
+    run.mockRestore();
+  });
+
   it("answers an unknown tg_ command with the /tg notice", async () => {
     const harness = createHarness();
 

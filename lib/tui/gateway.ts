@@ -149,6 +149,11 @@ export class CommandGateway {
       ackHtml,
     });
 
+    // Session-replacing commands (/fork, /clone, /resume, ...) reactivate the
+    // plugin in-process; the replacement runtime re-reads the on-disk cursor and
+    // Telegram re-serves this update while it is still unconfirmed, re-running the
+    // command. Commit the cursor before submitting. No-op outside an update.
+    await checkpointCurrentUpdateCursor();
     const submit = this.deps.bridge.submitResult ?? ((text: string) => ({ ok: this.deps.bridge.submit(text) }));
     let result: { ok: boolean; result?: unknown };
     try {
