@@ -3,31 +3,11 @@ import { checkpointCurrentUpdateCursor } from "../polling.ts";
 
 /**
  * All command handlers capture ctx.ui at entry and use the captured reference.
- * See model.ts for explanation.
- *
- * For /compact specifically: ctx.compact() is fire-and-forget with async
- * callbacks. The captured ui reference keeps TelegramUi alive via its closure
- * over chatId + transport, so onComplete/onError always reach Telegram
- * even after runner.uiContext has been restored to TUI.
+ * ctx.ui is a getter that reads runner.uiContext, which resets to the TUI UI
+ * after a session replacement; the captured reference keeps the TelegramUi
+ * alive via its closure over chatId + transport.
  */
 export function registerLifecycleCommands(registry: CommandRegistry): void {
-  // ── /compact ──────────────────────────────────────────────────────────
-  registry.registerCommand("compact", {
-    description: "Compact current session context",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      ctx.compact({
-        customInstructions: args || undefined,
-        onComplete: () => {
-          ui.notify("✅ Compaction completed.", "info");
-        },
-        onError: (error: Error) => {
-          ui.notify(`Compaction failed: ${error.message}`, "error");
-        },
-      });
-      ui.notify("Compaction started.", "info");
-    },
-  });
 
   // ── /reload ────────────────────────────────────────────────────────────
   registry.registerCommand("reload", {

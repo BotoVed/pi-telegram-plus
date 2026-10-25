@@ -6,7 +6,7 @@
 import { escapeHtml } from "../html.ts";
 import { markdownToTelegramHtml } from "../markdown.ts";
 import { splitTelegramHtml } from "../text-split.ts";
-import { stripAnsi } from "../custom-dialogs.ts";
+import { stripAnsi } from "../ansi.ts";
 import { log } from "../logger.ts";
 import type { TelegramTransport } from "../types.ts";
 import { hookMethod, isHostObject, onHostState, type HostState } from "./host.ts";

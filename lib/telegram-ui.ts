@@ -1,6 +1,5 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { encodeUiCallback } from "./callback-protocol.ts";
-import { bridgeCustomDialog } from "./custom-dialogs.ts";
 import { escapeHtml } from "./html.ts";
 import type { CapturedAgentSession, PendingInputResolver, TelegramTransport } from "./types.ts";
 
@@ -237,34 +236,12 @@ export function createTelegramUiRuntime(deps: {
           }
         },
         closeMenu: async () => { releaseMenu(); },
-        // custom: bridge pi-goal dialogs to Telegram buttons (Layer B). Does NOT
-        // forward to base — see the modals comment above for why racing the TUI is
-        // structurally un-dismissible and would leave the local TUI stuck.
-        custom: async <T>(factory: (tui: any, theme: any, keybindings: any, done: (result: T) => void) => any | Promise<any>, _options?: any): Promise<T> => {
-          releaseMenu();
-          const flowId = beginFlow();
-          activeFlowByTarget.set(target, flowId);
-          let promptMessageId: number | undefined;
-          const result = await bridgeCustomDialog<T>({
-            factory,
-            theme: base?.theme,
-            width: 80,
-            sendButtons: async (text, rows) => {
-              const encodedRows = rows.map((row) => row.map((btn) => ({ text: btn.text, value: cb(flowId, btn.value) })));
-              const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, text, encodedRows, flowId);
-              promptMessageId = sent.message_id;
-              return sent;
-            },
-            waitInput: (acceptsText = false, sensitive = false) =>
-              waitInput(chatId, messageThreadId, flowId, sensitive, acceptsText, promptMessageId),
-            notify: notifyFn,
-            removeKeyboard: async () => { if (promptMessageId) await deps.transport.removeInlineKeyboard(chatId, promptMessageId); },
-          });
-          activeFlowByTarget.delete(target);
-          // pi-goal accesses result.cancelled/answers without an undefined-guard, so
-          // never resolve undefined: fall back to a structured cancelled result.
-          return (result ?? ({ questions: [], answers: [], cancelled: true } as unknown as T)) as T;
-        },
+        // custom: opaque host components are drawn by the host and presented to
+        // this chat by the DialogBroker (§0.1 #4, 决定 48). The plugin no longer
+        // re-implements them as Telegram buttons (the old custom-dialogs bridge
+        // parsed rendered text, violating plan §2 principle 2).
+        custom: ((...args: unknown[]) =>
+          (base!.custom as (...a: unknown[]) => unknown)(...args)) as ExtensionUIContext["custom"],
 
         // ---- Persistent/stateful UI: forward to TUI base (keeps TUI accurate) ----
         setStatus: (key: string, text: string | undefined) => { base?.setStatus?.(key, text); },

@@ -81,7 +81,9 @@ export function buildStatusSnapshot(session: CapturedAgentSession): string {
 
 /**
  * All command handlers capture ctx.ui at entry and use the captured reference.
- * See model.ts for explanation.
+ * ctx.ui is a getter that reads runner.uiContext, which resets to the TUI UI
+ * after a session replacement; the captured reference keeps the TelegramUi
+ * alive via its closure over chatId + transport.
  */
 export function registerInfoCommands(
   registry: CommandRegistry,
@@ -136,30 +138,6 @@ export function registerInfoCommands(
     },
   });
 
-  // ── /export ────────────────────────────────────────────────────────────
-  registry.registerCommand("export", {
-    description: "Export session to HTML or JSONL",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-      try {
-        if (args?.endsWith(".jsonl")) {
-          const path = session.exportToJsonl(args);
-          ui.notify(`Exported to: ${path}`, "info");
-        } else {
-          const path = await session.exportToHtml(args || undefined);
-          ui.notify(`Exported to: ${escapeHtml(path)}`, "info");
-        }
-      } catch (error) {
-        ui.notify(`Export failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
-
   // ── /import ───────────────────────────────────────────────────────────
   registry.registerCommand("import", {
     description: "Import a session JSONL file (path on server)",
@@ -183,42 +161,6 @@ export function registerInfoCommands(
       } catch (error) {
         ui.notify(`Import failed: ${error instanceof Error ? error.message : String(error)}`, "error");
       }
-    },
-  });
-
-  // ── /share ────────────────────────────────────────────────────────────
-  registry.registerCommand("share", {
-    description: "Export session for sharing (requires gh CLI on server)",
-    handler: async (_args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-      try {
-        const path = await session.exportToHtml();
-        ui.notify(
-          [
-            `Session exported to: ${escapeHtml(path)}`,
-            "",
-            "To share via GitHub Gist, run on the server:",
-            `gh gist create --public=false "${path}"`,
-          ].join("\n"),
-          "info",
-        );
-      } catch (error) {
-        ui.notify(`Export failed: ${error instanceof Error ? error.message : String(error)}`, "error");
-      }
-    },
-  });
-
-  // ── /changelog ────────────────────────────────────────────────────────
-  registry.registerCommand("changelog", {
-    description: "Show changelog link",
-    handler: async (_args, ctx) => {
-      const ui = ctx.ui;
-      ui.notify("Changelog: https://github.com/earendil-works/pi-coding-agent/releases", "info");
     },
   });
 

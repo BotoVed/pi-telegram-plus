@@ -2,9 +2,8 @@ import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { SessionManager, SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { SessionNameDeps, CommandRegistry } from "./register.ts";
+import type { SessionDeps, CommandRegistry } from "./register.ts";
 import { escapeHtml } from "../html.ts";
-import type { CapturedAgentSession } from "../types.ts";
 import { log } from "../logger.ts";
 import { checkpointCurrentUpdateCursor } from "../polling.ts";
 
@@ -17,7 +16,7 @@ const sessionLog = log.child("session");
  * pi-codemode 1.2.0 while pi still declares a caret range, so a lockfile-less install
  * can float past what pi supports and throw at load time. The pi CLI masks this via its
  * virtual-module alias table; plain Node consumers do not. Resolution is guarded so a
- * missing class disables /cwd and /resume with a clear message instead of breaking the
+ * missing class disables /cwd with a clear message instead of breaking the
  * whole extension.
  */
 type SessionManagerClass = typeof SessionManager;
@@ -29,11 +28,11 @@ async function loadSessionManager(): Promise<SessionManagerClass | undefined> {
     if (typeof candidate === "function" && typeof (candidate as SessionManagerClass).create === "function") {
       return candidate as SessionManagerClass;
     }
-    sessionLog.warn("SessionManager has no create(); /cwd and /resume disabled", {
+    sessionLog.warn("SessionManager has no create(); /cwd disabled", {
       type: typeof candidate,
     });
   } catch (error) {
-    sessionLog.warn("SessionManager unavailable; /cwd and /resume disabled", {
+    sessionLog.warn("SessionManager unavailable; /cwd disabled", {
       error: error instanceof Error ? error.message : String(error),
     });
   }
@@ -76,11 +75,13 @@ function resolveTargetCwd(input: string, cwd: string): string {
 
 /**
  * All command handlers capture ctx.ui at entry and use the captured reference.
- * See model.ts for explanation.
+ * ctx.ui is a getter that reads runner.uiContext, which resets to the TUI UI
+ * after a session replacement; the captured reference keeps the TelegramUi
+ * alive via its closure over chatId + transport.
  */
 export function registerSessionCommands(
   registry: CommandRegistry,
-  deps: SessionNameDeps,
+  deps: SessionDeps,
 ): void {
   // ── /new ──────────────────────────────────────────────────────────────
   registry.registerCommand("new", {
@@ -185,44 +186,6 @@ export function registerSessionCommands(
     },
   });
 
-  // ── /tree ─────────────────────────────────────────────────────────────
-  registry.registerCommand("tree", {
-    description: "Navigate session tree to a previous message",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-
-      if (args) {
-        const wantsSummary = await ui.confirm("Navigate", "Summarize the abandoned branch?");
-        await ctx.navigateTree(args, { summarize: wantsSummary });
-        ui.notify("✅ Navigated to selected point.", "info");
-        return;
-      }
-
-      const entries = session.sessionManager.getEntries();
-      const userEntries = entries.filter(isMessageEntry).filter((e) => e.message.role === "user");
-      if (userEntries.length === 0) {
-        ui.notify("No entries to navigate to.", "info");
-        return;
-      }
-
-      const shown = userEntries;
-      const labels = shown.map((e) => truncate(getEntryText(e.message), 50));
-      const choice = await ui.select("Navigate to message", labels);
-      if (!choice) return;
-      const index = labels.indexOf(choice);
-      if (index < 0) return;
-      const entry = shown[index];
-      const wantsSummary = await ui.confirm("Navigate", "Summarize the abandoned branch?");
-      await ctx.navigateTree(entry.id, { summarize: wantsSummary });
-      ui.notify("✅ Navigated to selected point.", "info");
-    },
-  });
-
   // ── /cwd ──────────────────────────────────────────────────────────────
   registry.registerCommand("cwd", {
     description: "Show current working directory",
@@ -272,73 +235,4 @@ export function registerSessionCommands(
     },
   });
 
-  // ── /resume ───────────────────────────────────────────────────────────
-  registry.registerCommand("resume", {
-    description: "Resume a previous session",
-    handler: async (_args, ctx) => {
-      const ui = ctx.ui;
-      const SessionManagerClass = SESSION_MANAGER;
-      if (!SessionManagerClass) {
-        ui.notify("Session management is unavailable in this pi build.", "error");
-        return;
-      }
-      const sessions = await SessionManagerClass.list(ctx.cwd);
-      if (sessions.length === 0) {
-        ui.notify("No sessions found.", "info");
-        return;
-      }
-
-      const shown = sessions;
-      const labels = shown.map((s) => truncate(s.name ?? s.id, 50));
-      const choice = await ui.select("Resume session", labels);
-      if (!choice) return;
-      const index = labels.indexOf(choice);
-      if (index < 0) return;
-      await ctx.switchSession(shown[index].path);
-      ui.notify("✅ Switched session.", "info");
-    },
-  });
-
-  // ── /name ──────────────────────────────────────────────────────────────
-  registry.registerCommand("name", {
-    description: "Set or show session name",
-    handler: async (args, ctx) => {
-      const ui = ctx.ui;
-      if (args) {
-        deps.setSessionName(args);
-        ui.notify(`Session name set: ${args}`, "info");
-        return;
-      }
-      const name = deps.getSessionName();
-      ui.notify(name ? `Session name: ${name}` : "No session name set. Use /name <name> to set one.", "info");
-    },
-  });
-
-  // ── /session ──────────────────────────────────────────────────────────
-  registry.registerCommand("session", {
-    description: "Show session statistics",
-    handler: async (_args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-      const stats = session.getSessionStats();
-      const usage = session.getContextUsage();
-      const lines = [
-        `Session Info`,
-        `id: ${escapeHtml(stats.sessionId)}`,
-        `file: ${escapeHtml(stats.sessionFile ?? "ephemeral")}`,
-        `messages: ${stats.userMessages}u / ${stats.assistantMessages}a`,
-        `tool calls: ${stats.toolCalls}`,
-        `tokens: ${stats.tokens.total}`,
-        `cost: ${stats.cost.toFixed(4)}`,
-      ];
-      if (usage) {
-        lines.push(`context: ${usage.tokens ?? "?"} / ${usage.contextWindow}`);
-      }
-      ui.notify(lines.join("\n"), "info");
-    },
-  });
 }

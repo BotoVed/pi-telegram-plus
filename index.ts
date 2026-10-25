@@ -194,11 +194,6 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
 
   const telegramCommands = new Map<string, TelegramCommandHandler>();
   const sessionDeps = { getSession: getActiveSession };
-  const sessionNameDeps = {
-    ...sessionDeps,
-    setSessionName: (name: string) => { const s = getActiveSession(); if (s) pi.setSessionName(name); },
-    getSessionName: () => pi.getSessionName(),
-  };
   const tgConfigDeps = {
     ...sessionDeps,
     getConfig: () => config,
@@ -224,7 +219,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
         pi.registerCommand(name, { description: options.description, handler: options.handler });
       }
     },
-  }, sessionDeps, sessionNameDeps, {
+  }, sessionDeps, {
     getTransport: () => transport,
     getActiveChatId: () => config.activeChatId,
     getActiveTurn: getCurrentActiveTurn,

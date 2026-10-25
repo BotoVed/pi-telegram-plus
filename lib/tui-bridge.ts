@@ -1,4 +1,4 @@
-import { stripAnsi } from "./custom-dialogs.ts";
+import { stripAnsi } from "./ansi.ts";
 import { log } from "./logger.ts";
 import { probeCapture } from "./tui/probe.ts";
 import { setOmpVersion } from "./tui/adapters/utils.ts";

@@ -17,7 +17,7 @@ import type { TelegramUiRuntime } from "./telegram-ui.ts";
 import type { TuiBridgeAdapter } from "./tui-bridge.ts";
 import { tuiBridge as defaultTuiBridge, hostOwnsPrompts } from "./tui-bridge.ts";
 import { escapeHtml } from "./html.ts";
-import { stripAnsi } from "./custom-dialogs.ts";
+import { stripAnsi } from "./ansi.ts";
 import { recordCommandUsage } from "./command-usage.ts";
 import { getTelegramMenuOverflow } from "./menu-commands.ts";
 import { log } from "./logger.ts";
