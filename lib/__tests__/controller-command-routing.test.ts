@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTelegramController, EXPIRED_TUI_CALLBACK_PREFIX, type TelegramController } from "../controller.ts";
 import { CommandGateway } from "../tui/gateway.ts";
+import { DialogBroker } from "../tui/broker.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
@@ -174,5 +175,61 @@ describe("Command routing after the mirror removal (D2)", () => {
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 5)).toBe(true);
     expect(key).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
+  });
+});
+
+describe("§4.5 rule 6: a command settles this chat's open dialog before the gateway", () => {
+  const settingsBridge = (overrides: Partial<TuiBridgeAdapter> = {}): TuiBridgeAdapter => createBridge({
+    getCommands: async () => [{ name: "settings", description: "Open settings", source: "builtin" as const }],
+    ...overrides,
+  });
+
+  it("abandons this chat's open dialog before handing a gateway command to the host", async () => {
+    const abandon = vi.spyOn(DialogBroker.prototype, "abandonFor").mockReturnValue({ kind: "closed", title: "Settings" });
+    const run = vi.spyOn(CommandGateway.prototype, "run").mockResolvedValue(true);
+    const harness = createHarness({ bridge: settingsBridge() });
+
+    await send(harness.controller, "/settings");
+
+    expect(abandon).toHaveBeenCalledWith(42, undefined);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "settings" }));
+    // The Esc must land before the submission - submitting first would queue the
+    // command behind the very dialog the chat just abandoned.
+    expect(abandon.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
+    const notice = harness.calls.find((call) => call.text?.includes("已关闭未回答的对话框"));
+    expect(notice?.text).toContain("Settings");
+    abandon.mockRestore();
+    run.mockRestore();
+  });
+
+  it("does not hand a gateway command to the host when another chat's dialog blocks it", async () => {
+    const abandon = vi.spyOn(DialogBroker.prototype, "abandonFor").mockReturnValue({ kind: "blocked", title: "Confirm" });
+    const run = vi.spyOn(CommandGateway.prototype, "run").mockResolvedValue(true);
+    const submit = vi.fn(() => true);
+    const harness = createHarness({ bridge: settingsBridge({ submit }) });
+
+    await send(harness.controller, "/settings");
+
+    expect(run).not.toHaveBeenCalled();
+    // Treated as handled: the command text may not fall through to the editor either.
+    expect(submit).not.toHaveBeenCalled();
+    expect(harness.session.prompt).not.toHaveBeenCalled();
+    expect(harness.calls.some((call) => call.text?.includes("终端上有一个未完成的对话框"))).toBe(true);
+    abandon.mockRestore();
+    run.mockRestore();
+  });
+
+  it("still runs the gateway command with no notice when no dialog is open", async () => {
+    const abandon = vi.spyOn(DialogBroker.prototype, "abandonFor").mockReturnValue({ kind: "nothing" });
+    const run = vi.spyOn(CommandGateway.prototype, "run").mockResolvedValue(true);
+    const harness = createHarness({ bridge: settingsBridge() });
+
+    await send(harness.controller, "/settings");
+
+    expect(abandon).toHaveBeenCalledWith(42, undefined);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "settings" }));
+    expect(harness.calls.some((call) => call.text?.includes("对话框"))).toBe(false);
+    abandon.mockRestore();
+    run.mockRestore();
   });
 });

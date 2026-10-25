@@ -1151,6 +1151,28 @@ export function createTelegramController(deps: {
     setTail(key, task);
   };
 
+  // §4.5 rule 6: a command arriving while a dialog is still waiting is the remote user
+  // abandoning it - the host queues every later command behind an open dialog, so press Esc
+  // for them and say so, otherwise the chat only ever sees a timeout. A question belonging to
+  // another chat, or to the terminal, is not this chat's to discard: report it as a blocker
+  // and "blocked" so the caller answers the user instead of submitting a command that would
+  // only queue behind it for 30 seconds.
+  const settleOpenDialog = (chatId: number, messageThreadId?: number, sourceMessageId?: number): "proceed" | "blocked" => {
+    const abandoned = dialogBroker.abandonFor(chatId, messageThreadId);
+    if (abandoned.kind === "blocked") {
+      void deps.transport
+        .sendText(chatId, "终端上有一个未完成的对话框，请先在终端处理，或发 /stop。", messageThreadId, sourceMessageId)
+        .catch(ctrlLog.swallow("debug", "sendText blocked-dialog notice failed", { chatId }));
+      return "blocked";
+    }
+    if (abandoned.kind === "closed" && abandoned.title !== undefined) {
+      void deps.transport
+        .sendText(chatId, `⚠️ 已关闭未回答的对话框：<b>${escapeHtml(abandoned.title)}</b>`, messageThreadId, sourceMessageId)
+        .catch(ctrlLog.swallow("debug", "sendText abandoned-dialog notice failed", { chatId }));
+    }
+    return "proceed";
+  };
+
   const runCommandHandler = (handler: TelegramCommandHandler, args: string, session: CapturedAgentSession, chatId: number, messageThreadId?: number, sourceMessageId?: number, label = "command") => {
     // Commands run immediately — they do not acquire a turn and are never
     // blocked by an active agent prompt.  Fast config / status commands
@@ -1172,26 +1194,11 @@ export function createTelegramController(deps: {
     const scope = hostPrompts
       ? originTracker.begin({ chatId, messageThreadId, sourceMessageId }, label, "", "")
       : undefined;
-    // The host queues every later command behind an open dialog, so a command arriving while
-    // one is waiting is the remote user abandoning it: press Esc for them and say so
-    // (§4.5 rule 6), otherwise the chat only ever sees a timeout.
-    if (scope) {
-      const abandoned = dialogBroker.abandonFor(chatId, messageThreadId);
-      if (abandoned.kind === "blocked") {
-        // The question belongs to another chat or to the terminal, and this chat may not answer
-        // it for them. Submitting the command would only queue behind it for 30 seconds, so tell
-        // the user where to act and end the scope without submitting.
-        originTracker.end(scope, "error");
-        void deps.transport
-          .sendText(chatId, "终端上有一个未完成的对话框，请先在终端处理，或发 /stop。", messageThreadId, sourceMessageId)
-          .catch(ctrlLog.swallow("debug", "sendText blocked-dialog notice failed", { chatId }));
-        return;
-      }
-      if (abandoned.kind === "closed" && abandoned.title !== undefined) {
-        void deps.transport
-          .sendText(chatId, `⚠️ 已关闭未回答的对话框：<b>${escapeHtml(abandoned.title)}</b>`, messageThreadId, sourceMessageId)
-          .catch(ctrlLog.swallow("debug", "sendText abandoned-dialog notice failed", { chatId }));
-      }
+    // Settle this chat's own open dialog before the handler runs; when the question belongs
+    // elsewhere the command is not submitted and the scope ends as failed.
+    if (scope && settleOpenDialog(chatId, messageThreadId, sourceMessageId) === "blocked") {
+      originTracker.end(scope, "error");
+      return;
     }
     // In telegram-native mode the command's own prompts (e.g. /new's confirm) are pinned
     // to the Telegram UI, and a host with no UI-context setter needs the same treatment
@@ -1340,6 +1347,12 @@ export function createTelegramController(deps: {
     // ctx.newSession() control API (runNewSession) instead of editor submission.
     if (NATIVE_HANDLER_COMMANDS[name] && handler) {
       if (name === "new" && !hostIsOmp()) {
+        // §4.5 rule 6: the gateway submits to the host editor, which queues behind any open
+        // dialog - settle this chat's dialog first, and never submit behind another's.
+        if (settleOpenDialog(chatId, messageThreadId, sourceMessageId) === "blocked") {
+          ctrlLog.debug("command route", { name, route: "blocked-by-dialog" });
+          return true;
+        }
         const handled = await commandGateway.run({
           name,
           args,
@@ -1377,6 +1390,11 @@ export function createTelegramController(deps: {
     const known = catalog.some((command) => candidates.has(command.name)
       || (command.aliases ?? []).some((alias) => candidates.has(alias)));
     if (known) {
+      // §4.5 rule 6: same as the /new gateway path above.
+      if (settleOpenDialog(chatId, messageThreadId, sourceMessageId) === "blocked") {
+        ctrlLog.debug("command route", { name, route: "blocked-by-dialog" });
+        return true;
+      }
       const handled = await commandGateway.run({
         name,
         args,
