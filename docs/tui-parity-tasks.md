@@ -105,7 +105,7 @@
 | P2 | pi `/settings`（`SettingsList`：当前值、切换、子菜单） | P1 | ☑ | `8230047` |
 | P3 | pi `/resume`（`SessionSelectorComponent`） | P1 | ☑ | `2b2bd41`；切换范围后列表异步加载，broker 是否会重绘留到 3E 核对 |
 | P4 | pi `/tree`（`TreeSelectorComponent`） | P1 | ☑ | `9a964e3` |
-| P5 | pi 登录对话框（`LoginDialog`：API key 输入按 secret 处理） | P1 | ☐ | |
+| P5 | pi 登录对话框（`LoginDialog`：API key 输入按 secret 处理） | P1 | ☑ | `0106164`；**3D 编码完成**（2026-10-25，单测 664/664、0 skip） |
 
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
 | T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
