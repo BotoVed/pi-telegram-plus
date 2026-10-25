@@ -50,6 +50,10 @@ type PickerProps = {
   total?: unknown;
   /** The chip strip docked above the action bar; null when absent. */
   strip?: unknown;
+  /** Shown in place of the list when it holds no visible items (`TspText`). */
+  empty?: unknown;
+  /** Status line above the list (`TspText`); fallback for `empty`. */
+  message?: unknown;
 };
 
 type PickerItemLike = { id?: unknown; label?: unknown; detail?: unknown; disabled?: unknown };
@@ -260,6 +264,18 @@ export const tspPickerAdapter: DialogAdapter = {
         focused: props.selected === item.id,
       };
     });
+    if (items.length === 0) {
+      // Nothing to choose (e.g. `/hub` with no running agents): show the
+      // picker's own empty-state text instead of a "0 items" list. Close is
+      // the only action; `act` maps cancel onto the picker's `close` event.
+      const text = tspText(props.empty) || tspText(props.message) || "Nothing to show";
+      return {
+        kind: "info",
+        title: typeof props.title === "string" ? props.title : "Select",
+        text,
+        closable: true,
+      };
+    }
     return {
       kind: "select",
       title: typeof props.title === "string" ? props.title : "Select",

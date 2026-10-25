@@ -94,6 +94,8 @@ const asSelect = (model: DialogModel) => (model.kind === "select" ? model : expe
 
 const asSettings = (model: DialogModel) => (model.kind === "settings" ? model : expect.fail(`not settings: ${model.kind}`));
 
+const asInfo = (model: DialogModel) => (model.kind === "info" ? model : expect.fail(`not info: ${model.kind}`));
+
 describe("tsp picker keypath", () => {
   it("uses the empty keypath when the component's root node is the picker", () => {
     const component = makeComponent({ k: "picker", p: pickerProps });
@@ -209,6 +211,25 @@ describe("tsp picker read", () => {
     expect(list.items.map((item) => item.key)).toEqual(["a", "b"]);
     const nulled = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: { ...pickerProps, strip: null } }), ctxFor()));
     expect(nulled.title).toBe("Models");
+  });
+
+  it("shows the picker's empty text as a closable info model when no item is visible", () => {
+    const component = makeComponent({ k: "picker", p: { title: "Agents", items: [], empty: "No agents are running." } });
+    const model = asInfo(tspPickerAdapter.read(component, ctxFor()));
+    expect(model).toEqual({ kind: "info", title: "Agents", text: "No agents are running.", closable: true });
+    // A list that is only disabled rows is invisible too.
+    const disabled = asInfo(tspPickerAdapter.read(makeComponent({ k: "picker", p: { items: [{ id: "a", label: "a", disabled: true }] } }), ctxFor()));
+    expect(disabled.text).toBe("Nothing to show");
+  });
+
+  it("prefers empty over message, flattens span text, and keeps a non-empty list a select", () => {
+    const both = asInfo(tspPickerAdapter.read(makeComponent({ k: "picker", p: { items: [], empty: "Empty wins", message: "M" } }), ctxFor()));
+    expect(both.text).toBe("Empty wins");
+    const viaMessage = asInfo(tspPickerAdapter.read(makeComponent({ k: "picker", p: { items: [], message: [{ t: "No " }, { t: "agents" }] } }), ctxFor()));
+    expect(viaMessage.text).toBe("No agents");
+    expect(viaMessage.title).toBe("Select");
+    const list = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: pickerProps }), ctxFor()));
+    expect(list.kind).toBe("select");
   });
 });
 

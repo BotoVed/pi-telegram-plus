@@ -8,7 +8,7 @@ import { escapeHtml } from "../html.ts";
 import { markdownToTelegramHtml } from "../markdown.ts";
 import { splitTelegramHtml } from "../text-split.ts";
 import { stripAnsi } from "../ansi.ts";
-import { log } from "../logger.ts";
+import { log, type LogFields } from "../logger.ts";
 import type { TelegramTransport } from "../types.ts";
 import { hookMethod, isHostObject, onHostState, type HostState } from "./host.ts";
 import type { CommandScope, OriginTracker } from "./origin.ts";
@@ -170,6 +170,7 @@ export class OutputCapture {
     if (this.bashPushed.has(child)) return;
     this.bashPushed.add(child);
     const html = renderComponent(child, (raw) => this.redact(raw));
+    this.logCaptured(child, html);
     if (!html || this.binding !== binding || binding.finished) return;
     // At scope end `push` refuses (the scope no longer owns output), so the
     // final render goes straight into the entries the final flush drains.
@@ -183,6 +184,28 @@ export class OutputCapture {
     if (!binding || !this.secrets) return text;
     const { chatId, messageThreadId } = binding.telegram;
     return this.secrets.redact(`${chatId}:${messageThreadId ?? "main"}`, text);
+  }
+
+  /** Debug trace of one claimed component: what it was and what the render
+   * produced. The sample is ANSI-free and redacted, first 80 chars only; the
+   * full content never lands in the log. A `lines: 0` record is the blank-ack
+   * signature: a claimed component whose render produced nothing. */
+  private logCaptured(child: Record<string, unknown>, html: string | undefined): void {
+    const fields: LogFields = {
+      ctor: ctorName(child),
+      lines: html ? html.split("\n").length : 0,
+      sample: this.sample(html),
+    };
+    const children = child.children;
+    if (Array.isArray(children)) fields.children = children.length;
+    outputLog.debug("captured component", fields);
+  }
+
+  /** The sample is redacted here as well, so the no-secret guarantee holds
+   * locally even if a render path ever hands back raw text. */
+  private sample(html: string | undefined): string {
+    if (!html) return "";
+    return stripAnsi(this.redact(html)).slice(0, 80);
   }
 
   private attach(state: HostState): void {
@@ -247,6 +270,7 @@ export class OutputCapture {
         const mode = state.mode;
         if (isAgentComponent(child, mode)) return;
         const html = renderComponent(child, (raw) => this.redact(raw));
+        this.logCaptured(child, html);
         if (!html) return;
         this.push(html);
       });
@@ -280,6 +304,7 @@ export class OutputCapture {
   }
 
   private push(html: string): void {
+    outputLog.debug("output push", { length: html.length });
     const binding = this.binding;
     if (!binding || binding.finished) return;
     if (this.origin.active() !== binding.scope || binding.scope.ended) return;
