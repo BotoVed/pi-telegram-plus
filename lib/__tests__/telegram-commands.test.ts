@@ -168,7 +168,7 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     await listBotsFlow(ctx.ui);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("No bots registered. Use /tg → Bots → Add bot"),
+      expect.stringContaining("还没有注册 Bot。请在 /tg → Bots → ➕ 添加 Bot 中添加。"),
       "info",
     );
   });

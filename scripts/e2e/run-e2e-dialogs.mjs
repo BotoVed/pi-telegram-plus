@@ -71,6 +71,9 @@ const dialectOf = (call) => {
   return "none";
 };
 const isDrivable = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:"));
+// Brokered dialog keyboards: `x` is cancel, the only button an unsupported
+// dialog is allowed to offer (§4.6.5 #13).
+const DIALOG_CANCEL = /^tgplus:dlg:[^:]+:\d+:x$/;
 
 function killSession(session) {
   tmux("pipe-pane", "-t", session);
@@ -565,6 +568,38 @@ async function runHost(host, servers) {
     }
   } catch (error) {
     record("custom overlay resolves", false, String(error.message).slice(0, 200));
+  }
+  await clearDialog();
+
+  // ── unknown custom dialog: announced, never mirrored (T4.6) ────────────
+  // A `ctx.ui.custom` component no adapter recognises must not be mirrored: the
+  // chat gets a notice naming it plus one way out, and pressing that way out
+  // sends Escape to the component.
+  try {
+    const since = await cursor();
+    await injectText("/probe-custom-unknown");
+    const notice = await waitFor("unsupported dialog notice", (state) =>
+      state.calls.slice(since).findLast((entry) =>
+        /Telegram 无法处理的对话框/.test(String(entry.body?.text ?? ""))
+        && Array.isArray(rowsOf(entry))) ?? false, { timeoutMs: 25_000 })
+      .catch(() => undefined);
+    if (!notice) throw new Error("no unsupported-dialog notice for /probe-custom-unknown");
+    const buttons = buttonsOf(notice);
+    const labels = buttons.map((b) => String(b.text ?? "")).join(" / ");
+    const cancel = buttons.find((b) => DIALOG_CANCEL.test(String(b.callback_data ?? "")));
+    if (!cancel) throw new Error(`no cancel button on the notice; buttons: ${labels || "(none)"}`);
+    await clickButton(cancel, notice.body?.message_id ?? notice.message_id);
+    const result = await waitForExtensionResult(probePath, "custom-unknown", "cancelled", 20_000);
+    const state = await controlGet();
+    const mirrored = state.calls.slice(since)
+      .filter((entry) => JSON.stringify(entry.body ?? {}).includes("PROBE UNKNOWN WIDGET"));
+    record("unknown custom dialog is announced, not mirrored",
+      Boolean(result) && buttons.length === 1 && mirrored.length === 0,
+      `${dialectOf(notice)} · ${buttons.length} button(s): ${labels || "(none)"}`
+      + `${result ? ` · resolved ${JSON.stringify(result.data?.value)}` : " · never resolved"}`
+      + (mirrored.length > 0 ? ` · MIRRORED in ${mirrored.length} call(s)` : ""));
+  } catch (error) {
+    record("unknown custom dialog is announced, not mirrored", false, String(error.message).slice(0, 200));
   }
   await clearDialog();
 

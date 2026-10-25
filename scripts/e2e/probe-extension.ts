@@ -127,6 +127,24 @@ function makeCustomComponent(done: (value: unknown) => void): Record<string, unk
   };
 }
 
+/**
+ * A component no adapter recognises (T4.6): it has `render`/`handleInput`/
+ * `invalidate`, so it is a real focused dialog, but it is neither a goal frame,
+ * a list, an input, an editor, nor a read-only panel. The plugin must announce
+ * it and offer one way out, never mirror its text.
+ */
+function makeUnknownComponent(done: (value: unknown) => void): Record<string, unknown> {
+  return {
+    render(_width: number): string[] {
+      return ["PROBE UNKNOWN WIDGET", "press Esc to close"];
+    },
+    invalidate(): void {},
+    handleInput(data: string): void {
+      if (data === "\x1b") done({ cancelled: true });
+    },
+  };
+}
+
 export default function probeExtension(pi: {
   registerCommand: (name: string, options: { description?: string; handler: (args: string, ctx: ProbeCtx) => Promise<void> }) => void;
 }): void {
@@ -190,6 +208,14 @@ export default function probeExtension(pi: {
       return makeCustomComponent(done);
     }, { overlay: true });
     record("extension-result", { name: "custom", value: describe(value) });
+  });
+
+  register("probe-custom-unknown", async (ctx) => {
+    const value = await ctx.ui.custom?.(
+      (_tui: unknown, _theme: unknown, _keybindings: unknown, done: (result: unknown) => void) => makeUnknownComponent(done),
+      { overlay: true },
+    );
+    record("extension-result", { name: "custom-unknown", value: describe(value) });
   });
 
   // OMP's `ask` dialog: two questions, one recommended, one multi-select, so the

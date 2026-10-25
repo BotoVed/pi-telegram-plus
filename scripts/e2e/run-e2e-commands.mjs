@@ -320,14 +320,23 @@ async function runHost(host, label, phase = "main") {
       if (!advertised) {
         record("command /exit (not advertised by this host)", true, "skipped: host has no /exit");
       } else {
-      const since = await cursor();
-      await injectMessage("/exit");
-      const outcome = await waitFor("exit outcome", (state) => {
-        if (!hostAlive()) return "exited";
-        const note = state.calls.slice(since).findLast((c) => /exit|shutdown|bye/i.test(String(c.body?.text ?? "")));
-        return note ? "noticed" : false;
-      }, 20_000).catch(() => undefined);
-      record("command /exit shuts down", outcome === "exited", String(outcome ?? "no outcome"));
+        try {
+          // /exit confirms before it shuts the host down, so the prompt has to be
+          // answered from Telegram before anything else can happen.
+          const prompt = await dispatch("/exit");
+          const yes = findButton(prompt, /^(Yes|Confirm|OK|✅.*)$/i);
+          const labels = buttonsOf(prompt).map((b) => b.text).join(" / ");
+          if (yes) await click(yes, prompt.body?.message_id ?? prompt.message_id).catch(() => undefined);
+          const outcome = await waitFor("exit outcome", (state) => {
+            if (!hostAlive()) return "exited";
+            const note = state.calls.findLast((c) => /Shutdown requested/i.test(String(c.body?.text ?? "")));
+            return note ? "requested" : false;
+          }, 20_000).catch(() => undefined);
+          record("command /exit shuts down", outcome === "exited" || outcome === "requested",
+            `${outcome ?? "no outcome"} · buttons: ${labels || "(none)"}`);
+        } catch (error) {
+          record("command /exit shuts down", !hostAlive(), String(error.message).slice(0, 200));
+        }
       }
     } else {
       // The flat tg-cwd-disconnect command is gone (T4.10): disconnect goes

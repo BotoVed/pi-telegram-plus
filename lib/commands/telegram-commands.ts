@@ -52,7 +52,7 @@ export type MenuUi = {
 export async function listBotsFlow(ui: MenuUi): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("No bots registered. Use /tg → Bots → Add bot to add one.", "info");
+    ui.notify("还没有注册 Bot。请在 /tg → Bots → ➕ 添加 Bot 中添加。", "info");
     return;
   }
   const lines = registry.bots.map((bot) => {
@@ -153,7 +153,7 @@ export async function clearBotDefaultFlow(
 ): Promise<boolean> {
   const registry = await readBotRegistry();
   if (!registry.defaultBotId) {
-    ui.notify("No default bot is set.", "info");
+    ui.notify("没有设置全局默认 Bot。", "info");
     return false;
   }
   // 没有 botId 的绑定 = 跟随全局默认 Bot（包括 disableProjectFlow 写下的
@@ -373,7 +373,7 @@ export async function enableProjectFlow(
 ): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("No Telegram bot registered. Use /tg → Bots → Add bot first.", "error");
+    ui.notify("还没有注册 Bot。请先在 /tg → Bots → ➕ 添加 Bot 中添加。", "error");
     return;
   }
   const workspacePath = resolve(cwd);
