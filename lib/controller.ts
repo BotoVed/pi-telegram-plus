@@ -17,7 +17,6 @@ import type { TelegramUiRuntime } from "./telegram-ui.ts";
 import type { TuiBridgeAdapter } from "./tui-bridge.ts";
 import { tuiBridge as defaultTuiBridge, hostOwnsPrompts } from "./tui-bridge.ts";
 import { escapeHtml } from "./html.ts";
-import { stripAnsi } from "./ansi.ts";
 import { recordCommandUsage } from "./command-usage.ts";
 import { getTelegramMenuOverflow } from "./menu-commands.ts";
 import { log } from "./logger.ts";
@@ -635,8 +634,6 @@ async function holdThroughEnqueuedTurns(ctx: unknown, wasIdle: boolean): Promise
   }
 }
 
-const BASH_TIMEOUT_MS = 120_000;
-const BASH_STREAM_DEBOUNCE_MS = 700;
 const TUI_SCREEN_WIDTH = 100;
 
 // Host-control and terminal-only mappings (§9 决定 21/22, §4.8): these run the
@@ -676,28 +673,7 @@ const DANGEROUS_BASH_PATTERNS: readonly RegExp[] = [
   /\b(?:diskutil|fdisk|parted)\b/i,
 ];
 
-type BashResult = {
-  exitCode?: number;
-  cancelled?: boolean;
-  truncated?: boolean;
-  output?: string;
-  fullOutputPath?: string;
-};
-
-type BashExecutor = (
-  command: string,
-  onChunk: (chunk: string) => void,
-  options?: { excludeFromContext?: boolean },
-) => Promise<BashResult>;
-
 type BashAbort = () => unknown;
-
-function readBashExecutor(session: CapturedAgentSession): BashExecutor | undefined {
-  // `executeBash` is a host runtime API not present in the shared AgentSession
-  // type; both supported hosts expose it under this exact name.
-  const candidate = (session as unknown as Record<string, unknown>).executeBash;
-  return typeof candidate === "function" ? candidate as BashExecutor : undefined;
-}
 
 function readBashAbort(session: CapturedAgentSession): BashAbort | undefined {
   const candidate = (session as unknown as Record<string, unknown>).abortBash;
@@ -714,10 +690,6 @@ function isDangerousBash(command: string): boolean {
 
 function preformatted(text: string): string {
   return `<pre>${escapeHtml(text)}</pre>`;
-}
-
-function tailText(text: string, maxChars = 3200): string {
-  return text.length <= maxChars ? text : `…${text.slice(-(maxChars - 1))}`;
 }
 
 // editText/editButtons only deliver the first split chunk, so a full-screen
@@ -893,8 +865,7 @@ export function createTelegramController(deps: {
     }
 
     const session = deps.getSession();
-    const executor = session ? readBashExecutor(session) : undefined;
-    if (!session || !executor) {
+    if (!session) {
       await deps.transport.sendText(chatId, "Shell execution is not available in this session.", messageThreadId, sourceMessageId);
       return;
     }
@@ -912,77 +883,28 @@ export function createTelegramController(deps: {
       }
     }
 
-    const status = await deps.transport.sendText(
-      chatId,
-      `<b>▶️ bash</b>\n${preformatted(`$ ${command}`)}`,
-      messageThreadId,
-      sourceMessageId,
-    ).catch(ctrlLog.swallow("warn", "sendText bash status failed", { chatId }));
-    const messageId = status?.[0]?.message_id;
-    let output = "";
-    let lastEditAt = 0;
-    let editChain: Promise<void> = Promise.resolve();
-
-    const editProgress = (final: boolean, result?: BashResult): void => {
-      if (messageId === undefined) return;
-      const clean = stripAnsi(output || result?.output || "").replace(/\r\n/g, "\n");
-      const header = final ? "bash finished" : "bash";
-      const exitLine = final
-        ? `\nexit: ${result?.cancelled ? "cancelled" : result?.exitCode ?? "unknown"}${result?.truncated ? " · output truncated" : ""}`
-        : "";
-      const pathLine = final && result?.fullOutputPath ? `\nfull output: ${result.fullOutputPath}` : "";
-      const body = `<b>▶️ ${header}</b>\n${preformatted(`$ ${command}`)}\n${preformatted(tailText(clean || "(no output)"))}${exitLine}${pathLine}`;
-      editChain = editChain
-        .then(() => deps.transport.editText(chatId, messageId, body))
-        .catch(ctrlLog.swallow("debug", "editText bash progress failed", { chatId, messageId }));
-    };
-
-    const onChunk = (chunk: string): void => {
-      output += chunk;
-      const now = Date.now();
-      if (now - lastEditAt < BASH_STREAM_DEBOUNCE_MS) return;
-      lastEditAt = now;
-      editProgress(false);
-    };
-
-    let timedOut = false;
-    const abort = readBashAbort(session);
-    let timeoutTimer: NodeJS.Timeout | undefined;
-    const timeout = new Promise<BashResult>((resolve) => {
-      timeoutTimer = setTimeout(() => {
-        timedOut = true;
-        void Promise.resolve(abort?.()).catch(ctrlLog.swallow("debug", "abortBash after timeout failed"));
-        resolve({ exitCode: 124, cancelled: true });
-      }, BASH_TIMEOUT_MS);
-      timeoutTimer.unref?.();
+    // D3b (决定 51): the host editor executes. The raw `!`/`!!` text is
+    // submitted through the gateway exactly like a host slash command; the
+    // host's own user_bash pipeline decides context inclusion and runs the
+    // command, and OutputCapture returns the BashExecutionComponent's final
+    // render to the ack message.
+    const text = `${excludeFromContext ? "!!" : "!"}${command}`;
+    const submitted = await commandGateway.runText({
+      text,
+      label: "!",
+      origin: { chatId, messageThreadId, sourceMessageId },
+      transport: deps.transport,
     });
-
-    let result: BashResult;
-    try {
-      result = await Promise.race([
-        executor.call(session, command, onChunk, { excludeFromContext }),
-        timeout,
-      ]);
-    } catch (err) {
-      ctrlLog.warn("telegram bash failed", { chatId, command, err });
-      await deps.transport.sendText(chatId, `⚠️ Shell command failed: ${commandErrorMessage(err)}`, messageThreadId, sourceMessageId);
+    if (!submitted) {
+      await deps.transport.sendText(chatId, "Shell execution is not available in this session.", messageThreadId, sourceMessageId);
       return;
-    } finally {
-      clearTimeout(timeoutTimer);
     }
-
-    if (timedOut) output += `\n[timed out after ${Math.round(BASH_TIMEOUT_MS / 1000)}s]`;
-    editProgress(true, result);
-    await editChain;
-    ctrlLog.info("telegram bash executed", {
+    ctrlLog.info("telegram bash submitted", {
       chatId,
       userId,
       cwd: process.cwd(),
-      command,
+      text,
       excludeFromContext,
-      exitCode: result.exitCode,
-      cancelled: result.cancelled,
-      timedOut,
     });
   };
 

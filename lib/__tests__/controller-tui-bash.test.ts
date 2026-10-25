@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { clipScreen, createTelegramController } from "../controller.ts";
+import { clipScreen, createTelegramController, type TelegramController } from "../controller.ts";
+import { CommandGateway } from "../tui/gateway.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import { hostOwnsPrompts, type TuiBridgeAdapter } from "../tui-bridge.ts";
 
@@ -113,117 +114,136 @@ function createHarness(options: {
 }
 
 describe("Telegram shell commands", () => {
-  it("executes !cmd with context enabled and streams the result", async () => {
-    const harness = createHarness();
-    await harness.controller.handleMessage({
-      message_id: 10,
-      chat: { id: 42, type: "private" },
+  const send = (controller: TelegramController, text: string, messageId: number, chatType = "private") => (
+    controller.handleMessage({
+      message_id: messageId,
+      chat: { id: 42, type: chatType },
       from: { id: 7 },
-      text: "!echo hi",
-    });
+      text,
+    })
+  );
 
-    await vi.waitFor(() => {
-      expect(harness.session.executeBash).toHaveBeenCalledWith(
-        "echo hi",
-        expect.any(Function),
-        { excludeFromContext: false },
-      );
-      expect(harness.calls.some((call) => call.text?.includes("PTP_BASH_OK"))).toBe(true);
-      expect(harness.calls.some((call) => call.text?.includes("exit: 0"))).toBe(true);
-    });
+  it("submits !cmd to the host editor through the gateway", async () => {
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness();
+      await send(harness.controller, "!echo hi", 10);
+
+      await vi.waitFor(() => expect(runText).toHaveBeenCalledWith(expect.objectContaining({
+        text: "!echo hi",
+        label: "!",
+        origin: expect.objectContaining({ chatId: 42 }),
+      })));
+      expect(harness.session.executeBash).not.toHaveBeenCalled();
+      // The old direct-execution path edited its own status message with the
+      // streamed output; that must not happen any more.
+      expect(harness.calls.some((call) => call.text?.includes("PTP_BASH_OK"))).toBe(false);
+    } finally {
+      runText.mockRestore();
+    }
   });
 
-  it("executes !!cmd with context excluded", async () => {
-    const harness = createHarness();
-    await harness.controller.handleMessage({
-      message_id: 11,
-      chat: { id: 42, type: "private" },
-      from: { id: 7 },
-      text: "!!false",
-    });
+  it("keeps the !! prefix so the host excludes the output from context", async () => {
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness();
+      await send(harness.controller, "!!false", 11);
 
-    await vi.waitFor(() => expect(harness.session.executeBash).toHaveBeenCalledWith(
-      "false",
-      expect.any(Function),
-      { excludeFromContext: true },
-    ));
+      await vi.waitFor(() => expect(runText).toHaveBeenCalledWith(expect.objectContaining({
+        text: "!!false",
+        label: "!",
+      })));
+      expect(harness.session.executeBash).not.toHaveBeenCalled();
+    } finally {
+      runText.mockRestore();
+    }
   });
 
   it("asks before a destructive command under the dangerous policy", async () => {
-    const harness = createHarness({ confirmResult: false });
-    await harness.controller.handleMessage({
-      message_id: 12,
-      chat: { id: 42, type: "private" },
-      from: { id: 7 },
-      text: "!rm -rf /tmp/example",
-    });
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness({ confirmResult: false });
+      await send(harness.controller, "!rm -rf /tmp/example", 12);
 
-    expect(harness.confirm).toHaveBeenCalledWith(
-      "Run shell command?",
-      expect.stringContaining("rm -rf /tmp/example"),
-    );
-    expect(harness.session.executeBash).not.toHaveBeenCalled();
+      expect(harness.confirm).toHaveBeenCalledWith(
+        "Run shell command?",
+        expect.stringContaining("rm -rf /tmp/example"),
+      );
+      await vi.waitFor(() => expect(harness.calls.some((call) => call.text?.includes("cancelled"))).toBe(true));
+      expect(runText).not.toHaveBeenCalled();
+    } finally {
+      runText.mockRestore();
+    }
   });
 
   it("returns the update handler while a bash confirmation is pending", async () => {
-    let resolveConfirm: ((value: boolean) => void) | undefined;
-    const confirm = vi.fn(() => new Promise<boolean>((resolve) => { resolveConfirm = resolve; }));
-    const harness = createHarness({ confirm });
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const gate = Promise.withResolvers<boolean>();
+      const confirm = vi.fn(() => gate.promise);
+      const harness = createHarness({ confirm });
 
-    await expect(harness.controller.handleMessage({
-      message_id: 16,
-      chat: { id: 42, type: "private" },
-      from: { id: 7 },
-      text: "!rm -rf /tmp/example",
-    })).resolves.toBeUndefined();
+      await expect(harness.controller.handleMessage({
+        message_id: 16,
+        chat: { id: 42, type: "private" },
+        from: { id: 7 },
+        text: "!rm -rf /tmp/example",
+      })).resolves.toBeUndefined();
 
-    expect(confirm).toHaveBeenCalled();
-    resolveConfirm?.(false);
-    await vi.waitFor(() => expect(harness.session.executeBash).not.toHaveBeenCalled());
+      expect(confirm).toHaveBeenCalled();
+      gate.resolve(false);
+      await vi.waitFor(() => expect(harness.calls.some((call) => call.text?.includes("cancelled"))).toBe(true));
+      expect(runText).not.toHaveBeenCalled();
+    } finally {
+      runText.mockRestore();
+    }
   });
 
   it("always asks before a safe command", async () => {
-    const harness = createHarness({
-      config: { bashConfirm: "always", activeChatId: 42 },
-      confirmResult: false,
-    });
-    await harness.controller.handleMessage({
-      message_id: 14,
-      chat: { id: 42, type: "private" },
-      from: { id: 7 },
-      text: "!echo safe",
-    });
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness({
+        config: { bashConfirm: "always", activeChatId: 42 },
+        confirmResult: false,
+      });
+      await send(harness.controller, "!echo safe", 14);
 
-    expect(harness.confirm).toHaveBeenCalled();
-    expect(harness.session.executeBash).not.toHaveBeenCalled();
+      expect(harness.confirm).toHaveBeenCalled();
+      await vi.waitFor(() => expect(harness.calls.some((call) => call.text?.includes("cancelled"))).toBe(true));
+      expect(runText).not.toHaveBeenCalled();
+    } finally {
+      runText.mockRestore();
+    }
   });
 
   it("never asks before a dangerous command", async () => {
-    const harness = createHarness({
-      config: { bashConfirm: "never", activeChatId: 42 },
-    });
-    await harness.controller.handleMessage({
-      message_id: 15,
-      chat: { id: 42, type: "private" },
-      from: { id: 7 },
-      text: "!rm -rf /tmp/example",
-    });
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness({
+        config: { bashConfirm: "never", activeChatId: 42 },
+      });
+      await send(harness.controller, "!rm -rf /tmp/example", 15);
 
-    expect(harness.confirm).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(harness.session.executeBash).toHaveBeenCalled());
+      expect(harness.confirm).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(runText).toHaveBeenCalledWith(expect.objectContaining({
+        text: "!rm -rf /tmp/example",
+      })));
+    } finally {
+      runText.mockRestore();
+    }
   });
 
   it("rejects shell commands outside private chats", async () => {
-    const harness = createHarness();
-    await harness.controller.handleMessage({
-      message_id: 13,
-      chat: { id: -100, type: "supergroup" },
-      from: { id: 7 },
-      text: "!echo hi",
-    });
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness();
+      await send(harness.controller, "!echo hi", 13, "supergroup");
 
-    expect(harness.session.executeBash).not.toHaveBeenCalled();
-    expect(harness.calls.some((call) => call.text?.includes("private chats"))).toBe(true);
+      expect(runText).not.toHaveBeenCalled();
+      expect(harness.calls.some((call) => call.text?.includes("private chats"))).toBe(true);
+    } finally {
+      runText.mockRestore();
+    }
   });
 });
 

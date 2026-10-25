@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTelegramController } from "../controller.ts";
+import { CommandGateway } from "../tui/gateway.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
@@ -157,19 +158,25 @@ describe("dialog callback dispatch", () => {
   });
 
   it("keeps shell input on the bash path", async () => {
-    const harness = createHarness();
+    const runText = vi.spyOn(CommandGateway.prototype, "runText").mockResolvedValue(true);
+    try {
+      const harness = createHarness();
 
-    await harness.controller.handleMessage({
-      message_id: 61,
-      chat: { id: 42, type: "private" },
-      from: { id: 7 },
-      text: "!echo hi",
-    });
+      await harness.controller.handleMessage({
+        message_id: 61,
+        chat: { id: 42, type: "private" },
+        from: { id: 7 },
+        text: "!echo hi",
+      });
 
-    await vi.waitFor(() => expect(harness.session.executeBash).toHaveBeenCalledWith(
-      "echo hi",
-      expect.any(Function),
-      { excludeFromContext: false },
-    ));
+      await vi.waitFor(() => expect(runText).toHaveBeenCalledWith(expect.objectContaining({
+        text: "!echo hi",
+        label: "!",
+      })));
+      expect(harness.session.prompt).not.toHaveBeenCalled();
+      expect(harness.session.executeBash).not.toHaveBeenCalled();
+    } finally {
+      runText.mockRestore();
+    }
   });
 });

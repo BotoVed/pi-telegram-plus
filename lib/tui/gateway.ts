@@ -25,6 +25,15 @@ export type GatewayRequest = {
   transport: Pick<TelegramTransport, "sendText" | "editText">;
 };
 
+export type GatewayTextRequest = {
+  /** Raw editor text, submitted verbatim (e.g. `!ls`, `!!date`). */
+  text: string;
+  /** Scope label for the output capture; the shell path passes "!". */
+  label: string;
+  origin: Origin;
+  transport: Pick<TelegramTransport, "sendText" | "editText">;
+};
+
 export type GatewayDeps = {
   bridge: TuiBridgeAdapter;
   origin: OriginTracker;
@@ -82,36 +91,60 @@ export class CommandGateway {
     if (request.name === "new" && host === "pi" && this.deps.newSession) {
       return this.runNewSession(request);
     }
+    if (!(await this.hostReady(request.name))) return false;
+    const commandText = `/${request.name}${request.args.trim() ? ` ${request.args.trim()}` : ""}`;
+    return this.submitScoped(commandText, request.name, request.origin, request.transport);
+  }
+
+  /** Raw editor text (D3b: the Telegram `!`/`!!` shell path). The host editor
+   * decides what the prefix means (its own user_bash pipeline); the gateway
+   * only owns the ack, the scope, and the output capture. */
+  async runText(request: GatewayTextRequest): Promise<boolean> {
+    if (!(await this.hostReady(request.label))) return false;
+    return this.submitScoped(request.text, request.label, request.origin, request.transport);
+  }
+
+  private async hostReady(name: string): Promise<boolean> {
     const state = this.deps.hostState?.() ?? currentHostState();
     if (!state.mode || !state.editor) {
-      gatewayLog.debug("gateway unavailable: host not captured", { name: request.name });
+      gatewayLog.debug("gateway unavailable: host not captured", { name });
       return false;
     }
     await this.deps.bridge.ready().catch(() => undefined);
     if (!this.deps.bridge.isAvailable()) {
-      gatewayLog.debug("gateway unavailable: bridge not ready", { name: request.name });
+      gatewayLog.debug("gateway unavailable: bridge not ready", { name });
       return false;
     }
+    return true;
+  }
 
-    const commandText = `/${request.name}${request.args.trim() ? ` ${request.args.trim()}` : ""}`;
+  /** Shared submit path (run/runText): ack the text, open the scope under
+   * `label`, bind the output, submit to the editor, and let the scope settle
+   * on its own. */
+  private async submitScoped(
+    commandText: string,
+    label: string,
+    origin: Origin,
+    transport: GatewayRequest["transport"],
+  ): Promise<boolean> {
     const draft = (this.deps.readDraft ?? readEditorText)();
     const ackHtml = `<b>▶️ ${escapeHtml(commandText)}</b>`;
-    const sent = await request.transport.sendText(
-      request.origin.chatId,
+    const sent = await transport.sendText(
+      origin.chatId,
       ackHtml,
-      request.origin.messageThreadId,
-      request.origin.sourceMessageId,
+      origin.messageThreadId,
+      origin.sourceMessageId,
     ).catch((err) => {
-      gatewayLog.debug("send gateway ack failed", { err, name: request.name });
+      gatewayLog.debug("send gateway ack failed", { err, name: label });
       return undefined;
     });
     const messageId = sent?.[0]?.message_id;
     if (messageId === undefined) return true;
 
-    const scope = this.deps.origin.begin(request.origin, request.name, commandText, draft);
+    const scope = this.deps.origin.begin(origin, label, commandText, draft);
     this.deps.output.bind(scope, {
-      chatId: request.origin.chatId,
-      messageThreadId: request.origin.messageThreadId,
+      chatId: origin.chatId,
+      messageThreadId: origin.messageThreadId,
       messageId,
       ackHtml,
     });
@@ -122,16 +155,16 @@ export class CommandGateway {
       result = submit.call(this.deps.bridge, commandText);
     } catch (err) {
       result = { ok: false };
-      gatewayLog.debug("gateway submit threw", { err, name: request.name });
+      gatewayLog.debug("gateway submit threw", { err, name: label });
     }
     if (!result.ok) {
       this.deps.output.finish();
       this.deps.origin.end(scope, "error");
-      await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n❌ 宿主没有接受这个命令`).catch(() => undefined);
+      await transport.editText(origin.chatId, messageId, `${ackHtml}\n\n❌ 宿主没有接受这个命令`).catch(() => undefined);
       return true;
     }
     const value = result.result;
-    if (value && typeof (value as { then?: unknown }).then === "function") {
+    if (value && typeof value === "object" && "then" in value && typeof value.then === "function") {
       void Promise.resolve(value as Promise<unknown>).finally(() => {
         this.deps.origin.markSubmitDone(scope);
       });

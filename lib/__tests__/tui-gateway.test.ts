@@ -179,6 +179,42 @@ describe("command gateway", () => {
     expect(await disabled.run({ name: "settings", args: "", origin: { chatId: 1 }, transport })).toBe(false);
     expect(transport.sends).toHaveLength(1);
   });
+
+  it("runText submits raw editor text under its label and refuses without a host", async () => {
+    vi.useFakeTimers();
+    const transport = fakeTransport();
+    const origin = new OriginTracker({ isEditorFocused: () => true, readDraft: () => "", writeDraft: () => true });
+    const output = new OutputCapture(transport, origin);
+    const submitted: string[] = [];
+    const bridge = fakeBridge(Promise.resolve());
+    bridge.submitResult = (text: string) => {
+      submitted.push(text);
+      return { ok: true, result: Promise.resolve() };
+    };
+    const deps: Omit<GatewayDeps, "isEnabled"> = {
+      bridge,
+      origin,
+      output,
+      focus: new FocusTracker(),
+      hostName: () => "pi" as const,
+      hostState: () => ({ host: "pi", mode: {}, editor: {} }),
+      readDraft: () => "",
+    };
+    const gateway = new CommandGateway({ ...deps, isEnabled: () => true });
+    gateway.start();
+
+    const handled = await gateway.runText({ text: "!!date", label: "!", origin: { chatId: 7 }, transport });
+    expect(handled).toBe(true);
+    expect(submitted).toEqual(["!!date"]);
+    expect(transport.sends[0]?.text).toContain("!!date");
+    expect(origin.active()?.label).toBe("!");
+    await vi.advanceTimersByTimeAsync(IDLE_MS + 1000);
+    expect(transport.edits.at(-1)?.text).toContain("✓ 完成");
+    gateway.dispose();
+
+    const withoutHost = new CommandGateway({ ...deps, isEnabled: () => true, hostState: () => ({ host: "pi" }) });
+    expect(await withoutHost.runText({ text: "!date", label: "!", origin: { chatId: 7 }, transport })).toBe(false);
+  });
 });
 
 describe("OutputCapture command reports", () => {
@@ -235,6 +271,88 @@ describe("OutputCapture command reports", () => {
     output.finish();
     await vi.advanceTimersByTimeAsync(20);
     expect(transport.edits.every((edit) => !edit.text.includes("MCP"))).toBe(true);
+    origin.end(scope, "idle");
+  });
+});
+
+describe("OutputCapture shell scope", () => {
+  // The class name is part of the contract: the capture identifies the host's
+  // component by constructor name (BASH_EXECUTOR_CTORS).
+  class BashExecutionComponent {
+    constructor(private readonly lines: string[]) {}
+    render() { return ["$ echo hi", ...this.lines, "exit: 0"]; }
+    setComplete(_exitCode: number, _cancelled?: boolean): void {}
+  }
+
+  function attachedChat() {
+    const transport = fakeTransport();
+    const origin = new OriginTracker({ isEditorFocused: () => true, readDraft: () => "", writeDraft: () => true });
+    const output = new OutputCapture(transport, origin);
+    const chat = { addChild: (_child: unknown) => undefined };
+    // `attach` is private; drive it directly like the report cases above.
+    (output as unknown as { attach(state: unknown): void }).attach({ host: "pi", mode: {}, chat });
+    return { transport, origin, output, chat };
+  }
+
+  it("renders the bash component's final output into the ack inside a ! scope", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = origin.begin({ chatId: 1 }, "!", "!echo hi", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ !echo hi</b>" });
+    const component = new BashExecutionComponent(["hi"]);
+    chat.addChild(component);
+    component.setComplete(0);
+    await vi.advanceTimersByTimeAsync(1100);
+    const text = transport.edits.at(-1)?.text ?? "";
+    expect(text).toContain("<pre>");
+    expect(text).toContain("$ echo hi");
+    expect(text).toContain("exit: 0");
+    output.finish();
+    origin.end(scope, "idle");
+  });
+
+  it("renders the final content at scope end when setComplete never fires", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = origin.begin({ chatId: 1 }, "!", "!echo hi", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ !echo hi</b>" });
+    chat.addChild(new BashExecutionComponent(["late"]));
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    const text = transport.edits.at(-1)?.text ?? "";
+    expect(text).toContain("exit: 0");
+    expect(text).toContain("✓ 完成");
+    origin.end(scope, "idle");
+  });
+
+  it("keeps the bash component excluded outside a ! scope", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = origin.begin({ chatId: 1 }, "session", "/session", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ /session</b>" });
+    const component = new BashExecutionComponent(["nope"]);
+    chat.addChild(component);
+    component.setComplete(0);
+    await vi.advanceTimersByTimeAsync(1100);
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.every((edit) => !edit.text.includes("exit: 0"))).toBe(true);
+    origin.end(scope, "idle");
+  });
+
+  it("renders each bash component once even when setComplete repeats", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = origin.begin({ chatId: 1 }, "!", "!echo hi", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ !echo hi</b>" });
+    const component = new BashExecutionComponent(["once"]);
+    chat.addChild(component);
+    component.setComplete(0);
+    component.setComplete(0);
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    const text = transport.edits.at(-1)?.text ?? "";
+    expect(text.match(/exit: 0/g)?.length).toBe(1);
     origin.end(scope, "idle");
   });
 });

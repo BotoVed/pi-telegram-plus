@@ -21,6 +21,11 @@ const MAX_COMPONENTS = 20;
 const AGENT_CTORS = /^(AssistantMessageComponent|UserMessageComponent|ToolExecutionComponent|BashExecutionComponent|qs|_Te|Aw)$/;
 const AGENT_FIELDS = ["lastMessage", "hasToolCalls", "toolCallId"];
 
+/** The host's shell-execution component (D3b), claimed only by a "!" scope.
+ * Minified host builds rename constructors; this matches the unminified
+ * pi/OMP class name, same convention as AGENT_CTORS. */
+const BASH_EXECUTOR_CTORS = /^BashExecutionComponent$/;
+
 export type OutputTelegram = {
   chatId: number;
   messageThreadId?: number;
@@ -36,6 +41,8 @@ type Binding = {
   telegram: OutputTelegram;
   entries: string[];
   dropped: number;
+  /** BashExecutionComponents claimed by a "!" scope (D3b); final render once. */
+  bashComponents: Record<string, unknown>[];
   /** Output already rendered into the ack message (non-overflow case). */
   outputHtml: string;
   /** True once the ack message could not hold the output and tails were sent. */
@@ -58,6 +65,10 @@ export class OutputCapture {
   /** `attached` already holds `mode` from the status-hook loop; report hooks
    * need their own dedupe set. */
   private readonly reportHooked = new WeakSet<object>();
+  /** D3b: bash components claimed by the "!" scope, and the ones whose final
+   * render already went out. */
+  private readonly bashTracked = new WeakSet<object>();
+  private readonly bashPushed = new WeakSet<object>();
 
   constructor(
     private readonly transport: OutputTransport,
@@ -83,6 +94,7 @@ export class OutputCapture {
       telegram,
       entries: [],
       dropped: 0,
+      bashComponents: [],
       outputHtml: "",
       overflowed: false,
       lastEditAt: 0,
@@ -96,6 +108,9 @@ export class OutputCapture {
   finish(): void {
     const binding = this.binding;
     if (!binding || binding.finished) return;
+    // D3b: a bash component whose `setComplete` never reached us still owes
+    // its final render to the ack message.
+    for (const child of binding.bashComponents) this.emitBashOutput(child, binding, true);
     binding.finished = true;
     if (binding.timer) {
       clearTimeout(binding.timer);
@@ -104,6 +119,31 @@ export class OutputCapture {
     void this.flush(binding, true).finally(() => {
       if (this.binding === binding) this.binding = undefined;
     });
+  }
+
+  /** D3b: claim a BashExecutionComponent for the "!" scope. Its final render
+   * goes out exactly once: when the host calls `setComplete`, or when the
+   * scope ends without that call (the `finish` fallback). */
+  private trackBashComponent(child: Record<string, unknown>): void {
+    const binding = this.binding;
+    if (!binding || binding.finished || this.bashPushed.has(child)) return;
+    if (!binding.bashComponents.includes(child)) binding.bashComponents.push(child);
+    if (this.bashTracked.has(child)) return;
+    this.bashTracked.add(child);
+    hookMethod(child, "setComplete", "output-bash-complete", undefined, () => {
+      this.emitBashOutput(child, binding, false);
+    });
+  }
+
+  private emitBashOutput(child: Record<string, unknown>, binding: Binding, final: boolean): void {
+    if (this.bashPushed.has(child)) return;
+    this.bashPushed.add(child);
+    const html = renderComponent(child, (raw) => this.redact(raw));
+    if (!html || this.binding !== binding || binding.finished) return;
+    // At scope end `push` refuses (the scope no longer owns output), so the
+    // final render goes straight into the entries the final flush drains.
+    if (final || binding.scope.ended) binding.entries.push(html);
+    else this.push(html);
   }
 
   /** Secrets never ride the output path (§4.7.4): raw text is masked first. */
@@ -164,7 +204,13 @@ export class OutputCapture {
         const child = args[0];
         if (!isHostObject(child)) return;
         const mode = state.mode;
-        if (isAgentComponent(child, mode)) return;
+        if (isAgentComponent(child, mode)) {
+          // D3b: inside a "!" scope the host's BashExecutionComponent is the
+          // command's own output, not agent history; everywhere else it stays
+          // excluded as before.
+          if (this.binding?.scope.label === "!" && BASH_EXECUTOR_CTORS.test(ctorName(child))) this.trackBashComponent(child);
+          return;
+        }
         const html = renderComponent(child, (raw) => this.redact(raw));
         if (!html) return;
         this.push(html);
@@ -289,15 +335,17 @@ export class OutputCapture {
   }
 }
 
+function ctorName(child: Record<string, unknown>): string {
+  try {
+    return Object.getPrototypeOf(child)?.constructor?.name ?? child.constructor?.name ?? "";
+  } catch {
+    return "";
+  }
+}
+
 function isAgentComponent(child: Record<string, unknown>, mode: Record<string, unknown> | undefined): boolean {
   if (mode && child === mode.streamingComponent) return true;
-  let name = "";
-  try {
-    name = Object.getPrototypeOf(child)?.constructor?.name ?? child.constructor?.name ?? "";
-  } catch {
-    name = "";
-  }
-  if (AGENT_CTORS.test(name)) return true;
+  if (AGENT_CTORS.test(ctorName(child))) return true;
   for (const field of AGENT_FIELDS) {
     try {
       if (Object.prototype.hasOwnProperty.call(child, field)) return true;
