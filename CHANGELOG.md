@@ -52,6 +52,15 @@ reimplementation and several settings, so read **Breaking changes** before upgra
     with search and submenus, project trust, login providers) are read from the components' own fields.
   - OMP's built-in pickers and settings pages (including `/model`'s role assignment step) are read from
     the components' semantic description and answered with structured events.
+  - OMP lists show their tabs, scopes and action bar as buttons (for example `/tree`'s Default / No tools /
+    User only / Labeled / All filters and its Switch / Summarize / Label actions), and text sent to a
+    searchable list becomes its search term. An empty list keeps these buttons, so a filter that hides
+    every entry can still be switched.
+  - Every OMP settings control can be changed from the chat: on/off and choice rows, numbers (a short
+    range cycles, a long one opens an input), text (secret rows are masked), multi-select and action rows.
+    Only key bindings stay in the terminal. While a search is active the page shows only the matches.
+  - OMP's own text prompts, such as the API key field of `/login`, are answered from the chat; key-like
+    fields are treated as secrets.
   - OMP's settings page takes a typed word as its search term, so the chat can start a search the way
     the terminal does ("Type to search").
   - A dialog the plugin cannot model gets a plain "answer it in the terminal" notice with one Cancel
@@ -77,6 +86,8 @@ reimplementation and several settings, so read **Breaking changes** before upgra
   command from the same chat closes that chat's open dialog first.
 - **E2E suites skip commands that reach external services** (`/share`, `/collab`, `/join`, `/leave`,
   `/update`, `/upgrade`).
+- **`/tg` → Config → Thinking level is shown on OMP only.** pi has its own `/thinking` picker, which now
+  reaches Telegram directly.
 
 ### Fixed
 
@@ -96,6 +107,8 @@ reimplementation and several settings, so read **Breaking changes** before upgra
   reported instead of typed into the terminal behind the dialog, and the field stays open for a retry;
   a row whose change the host dropped no longer reports a successful press. Reopening the settings page
   starts on the rows instead of the input the previous visit left open.
+- **Dialogs with many buttons are delivered.** Footer buttons wrap at three per row; Telegram rejects a row
+  of more than eight, which used to make lists like OMP `/agents` never appear in the chat.
 - Several dialog, focus and output-capture fixes found by the end-to-end suites on both hosts.
 
 ## [0.0.12] — 2026-10-19

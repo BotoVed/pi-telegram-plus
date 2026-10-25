@@ -176,7 +176,7 @@ Quoted attachments are represented as metadata (`[telegram quoted attachment]`, 
 These are the host's own commands, run by the host (see **Host Commands, Run by the Host**). Their pickers and prompts appear in Telegram as described in **Dialogs in Telegram**:
 
 - Sessions: `/new`, `/resume`, `/tree`, `/fork`, `/clone`, `/compact`, `/name`, `/session`, `/export`, `/import`, `/share`
-- Models: `/model`, `/scoped-models` (pi), `/thinking` (pi); the thinking level is also under `/tg` → Config
+- Models: `/model`, `/scoped-models` (pi), `/thinking` (pi); on OMP the thinking level is under `/tg` → Config
 - Authentication: `/login`, `/logout` — API keys typed in Telegram are deleted from the chat after use
 
 `/new` and `/reload` replace the host session in-process; the plugin saves its Telegram position first so the command is never run twice.
@@ -193,7 +193,7 @@ Opens an inline-keyboard menu with four submenus (each with a **⬅️ Back** op
 |------|--------|
 | **🤖 Bots** | **➕ Add bot** — prompt for name + token, create a pairing code · **Bot list** — every registered bot with `⭐ default` and `paired` / `not paired` markers; pick one for **Update** (token / name / allowedUserId / apiBase), **Pairing** (show the pairing code and issue a new one, or **Unpair** after a confirmation — the chat stops working until you pair again) and **Remove** (confirm; warns if it is the default) · **⭐ Default bot: <name>** — pick the bot every unbound project uses, or **Clear default** |
 | **📁 Project** | **Bot: <name>** (or `<name> (default)` when the folder follows the default bot) — bind this folder to another bot or **Unbind** · the connection state, read from the running instance: **🟢 Connected → Disconnect**, **🔄 Connecting → Disconnect**, **🟡 In use by another instance**, **⚪ Disconnected → Connect**. Disconnecting asks first, is saved (also for folders that follow the default bot) and survives restarts; Telegram then stops responding, so you reconnect from the terminal with `/tg` |
-| **⚙️ Config** | **🔧 Tool** — hidden / brief / full · **💭 Thinking** — hidden / brief / full · **🧠 Thinking level** — model reasoning effort (shown when the model supports it) · **🔄 Retry** — 0–10 · **🐚 Shell confirm** — dangerous / always / never |
+| **⚙️ Config** | **🔧 Tool** — hidden / brief / full · **💭 Thinking** — hidden / brief / full · **🧠 Thinking level** — model reasoning effort (OMP only, shown when the model supports it; on pi use `/thinking`) · **🔄 Retry** — 0–10 · **🐚 Shell confirm** — dangerous / always / never |
 | **🔄 Switch instance** | List live pi instances sharing this bot token; select one to switch. Must be run on the currently active instance. |
 | **🛠 Debug info** | The plugin's own diagnostics (model, thinking, streaming, entries, cwd). `/debug` itself runs the host's command. |
 | **❌ Close** | Exit the menu. |

@@ -1151,11 +1151,13 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 - [x] ~~清理 `off` 模式~~：v6 改为立即删除，见 §0.1 第 4 条与任务 D1–D4。
 
 - [x] ~~E2E：`settings mirror matches the host screen`（OMP）偶发失败~~：屏幕镜像已在 D2 删除，该步骤不再存在。
-- [ ] **运行时被替换时，队列里未发出的 Telegram 调用被静默丢弃。** `lib/active-transport.ts` 在 `isActive()` / lease 不匹配时直接返回兜底结果（`sendButtons` 返回 `message_id: 0`），调用方拿不到错误，看起来像"菜单没发出去"。2026-10-24 S5 测量时每个阶段结束的最后一秒都有几条。应改为显式失败或在新运行时补发。
+- [x] ~~**运行时被替换时，队列里未发出的 Telegram 调用被静默丢弃。** `lib/active-transport.ts` 在 `isActive()` / lease 不匹配时直接返回兜底结果（`sendButtons` 返回 `message_id: 0`），调用方拿不到错误，看起来像"菜单没发出去"。2026-10-24 S5 测量时每个阶段结束的最后一秒都有几条。应改为显式失败或在新运行时补发。~~：Z1 `736e794`：`/new`、`/reload` 的结果改由新运行时发出（`lib/pending-notices.ts`）；丢弃规则本身保留（防止非活跃实例发消息）。
 
-- [ ] **OMP 内置选择器剩余核对**（T3.2e/T3.2f）：`/model`、`/settings`、`/login`、`/agents`、`/hub` 已在 E2E 证实；OMP 的 `/resume`、`/tree` 以及内置对话框里的文字输入框（TSP `edit` 事件）尚未专门验证。
-- [ ] **OMP 设置页的其他控件**：数字、文字、多选、快捷键类设置在 Telegram 上只显示"请在终端修改"。
-- [ ] **插件命令与宿主同名**：`/status`、`/debug` 由插件处理，会遮住宿主的同名命令；`/tg → Config` 的 Thinking level 与宿主自己的 `/thinking` 重复。
+- [x] ~~**OMP 内置选择器剩余核对**（T3.2e/T3.2f）：`/model`、`/settings`、`/login`、`/agents`、`/hub` 已在 E2E 证实；OMP 的 `/resume`、`/tree` 以及内置对话框里的文字输入框（TSP `edit` 事件）尚未专门验证。~~：Z2 `f346ee3`（标签页、范围、动作栏、搜索）、Z4 `704c595` + Z4b `a5ab7cf`（内置文字输入框）；E2E 已覆盖 `/tree` 切换标签、有历史会话时的 `/resume`（Z6 `23cf7ab`）。
+- [x] ~~**OMP 设置页的其他控件**：数字、文字、多选、快捷键类设置在 Telegram 上只显示"请在终端修改"。~~：Z3 `ec48a21` + Z3b `a8be6ba` + Z8 `f0a8b27`：数字、文字、多选、动作类均可在 Telegram 修改，设置页可搜索；快捷键类仍只在终端修改（只在终端有意义）。
+- [x] ~~**插件命令与宿主同名**：`/status`、`/debug` 由插件处理，会遮住宿主的同名命令；`/tg → Config` 的 Thinking level 与宿主自己的 `/thinking` 重复。~~：`/debug` 移入 `/tg`（N1 `fd4cb1f`）；两个宿主都没有顶层 `/status`（只有 OMP 子命令），不冲突；pi 上隐藏 Config 的 Thinking level（Z5 `2dabd41`），OMP 没有 `/thinking` 命令，保留。
+
+- [x] ~~对话框底部按钮一行超过 8 个时 Telegram 拒收~~：Z7 `c7b4da0` 每行最多 3 个，渲染出口再保证不超过 8 个；E2E 断言改为跳过被拒收的调用（Z7、Z8）。
 
 ---
 
