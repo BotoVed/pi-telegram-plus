@@ -60,7 +60,8 @@ function seed(host, runDir) {
   mkdirSync(agentDir, { recursive: true });
   mkdirSync(join(projectDir, ".pi"), { recursive: true });
   if (host === "pi") {
-    writeFileSync(join(agentDir, "settings.json"), "{}\n");
+    // clearDialog() sends Escape twice; with an empty editor pi would open the Session Tree.
+    writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ doubleEscapeAction: "none" })}\n`);
     writeFileSync(join(agentDir, "models.json"), JSON.stringify({
       providers: { mock: { baseUrl: `http://127.0.0.1:${PROVIDER_PORT}/v1`, api: "openai-completions", apiKey: "mock", models: [{ id: "mock-model" }] } },
     }, null, 2) + "\n");

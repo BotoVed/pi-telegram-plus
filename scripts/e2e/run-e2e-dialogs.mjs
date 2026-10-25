@@ -200,7 +200,8 @@ function seed(host, runDir, probePath) {
   mkdirSync(join(projectDir, ".pi"), { recursive: true });
 
   if (host === "pi") {
-    writeFileSync(join(agentDir, "settings.json"), "{}\n");
+    // clearDialog() sends Escape twice; with an empty editor pi would open the Session Tree.
+    writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ doubleEscapeAction: "none" })}\n`);
     writeFileSync(join(agentDir, "models.json"), JSON.stringify({
       providers: {
         mock: {

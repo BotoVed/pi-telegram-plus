@@ -91,8 +91,8 @@ function seedEnvironment(runDir, tgBase) {
   mkdirSync(agentDir, { recursive: true });
   mkdirSync(join(projectDir, ".pi"), { recursive: true });
 
-  // Empty settings keeps the run free of the user's real config.
-  writeFileSync(join(agentDir, "settings.json"), "{}\n");
+  // Minimal settings keep the run free of the user's real config; doubleEscapeAction "none" stops a double Escape from opening the Session Tree.
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({ doubleEscapeAction: "none" })}\n`);
 
   // OpenAI-compatible mock provider. pi needs a registered provider + model; without
   // SSE the stream aborts with "Stream ended without finish_reason".
