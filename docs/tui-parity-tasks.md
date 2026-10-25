@@ -81,13 +81,17 @@
 | T3.0 | OMP 对话框分类与读取（条件任务） | — | ☑ | `558d574`（版本限制）及之前各提交，见下方完成记录 |
 | T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☐ | |
 | T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
-| T3.2a | OMP collab 桥接：select | T3.1 | ☐ | |
-| T3.2b | OMP collab 桥接：editor 与 approve | T3.2a | ☐ | |
-| T3.2c | OMP collab 桥接：ask（逐题、伪选项）与 `/collab` 让位 | T3.2b | ☐ | |
-| T3.2d | OMP TSP 适配器：读取 + select/confirm 操作（扩展 confirm 改走 TSP） | T3.2a | ☐ | |
+| ~~T3.2a–c~~ | ~~OMP collab 桥接~~：由 3B 扩展 UI 竞答取代（决定 53） | — | 作废 | |
+| S25 | 可行性验证：扩展 UI 竞答（两个宿主） | 3A | ☑ | 无提交（S25、S25b 2026-10-25：两个宿主证实；pi confirm 失败查明为测试脚本双击 Escape 打开 Session Tree） |
+| B0 | 测试脚本：E2E 用的 pi agent 设置写 `doubleEscapeAction: "none"`，避免 `clearDialog()` 打开 Session Tree | S25 | ☐ | |
+| B1 | 竞答核心 + `select`（两个宿主）：按调用参数建 broker 会话，先答者生效，另一方关闭；竞答占用的组件不再由焦点路径建会话 | B0 | ☐ | |
+| B2 | 竞答：`confirm`、`input`（两个宿主） | B1 | ☐ | |
+| B3 | 竞答：OMP 的 `editor`、`askDialog`（ask 工具，逐题与自定义答案）、`approve` | B2 | ☐ | |
+| B4 | 删除被竞答取代的焦点路径适配器分支（扩展 select/confirm/input；OMP 读画面部分仍留给 T3.2g） | B3 | ☐ | |
+| T3.2d | OMP TSP 适配器：读取 + 操作（内置选择器与 `custom` 的基础） | 3B | ☐ | |
 | T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | ☐ | |
-| T3.2f | OMP TSP 文本输入：验证 `edit` 事件并切换 input | T3.2d | ☐ | |
-| T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二） | T3.2c、T3.2e、T3.2f | ☐ | |
+| T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | ☐ | |
+| T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二） | B4、T3.2e、T3.2f | ☐ | |
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
 | T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
 | T3.5 | pi `/settings` 子菜单 | T3.4 | ☐ | |
@@ -142,13 +146,11 @@
 - **完成标准**：E2E（OMP）对这 18 个命令逐个断言：不进入 `runTuiCommand`（返回的不是旧镜像键盘）、收到的正文非空且不只是 ack。任何一个命令只回 ack，就从白名单中移除，并在 §9 记录原因。
 - **不做**：选择器类命令（T3.11）。
 
-### T3.2a–T3.2g OMP 结构化通道（方案 §4.11，v5）
+### T3.2a–T3.2g OMP 结构化通道（方案 §4.11 v5；扩展对话框部分由 §4.12 竞答取代）
 
-- 设计见方案 §4.11 与决定 41–45；每个子任务由主控拆成单独的任务书派发，完成标准以 E2E 为准：
-  - T3.2a：dialogs 套件 OMP 的 "select answered from Telegram" 经 collab 通过；终端先答时 Telegram 键盘撤销；本地发起的 select 不推到 Telegram。
-  - T3.2b：editor、approve 经 collab 往返通过。
-  - T3.2c：`ask` 单题、多题、"Other" 自定义答案经 collab 通过；开启 `/collab` 期间 Telegram 发起的这类对话框得到明确提示，结束后桥接恢复。
-  - T3.2d：扩展 confirm 经 TSP 往返通过；`TspAdapter` 单测覆盖 picker/卡片/只读三种转换。
+- 设计见方案 §4.11、§4.12 与决定 41–45、53；每个子任务由主控拆成单独的任务书派发，完成标准以 E2E 为准：
+  - T3.2a–c：作废，由 3B 扩展 UI 竞答取代（方案 §4.12、决定 53）。3B 各任务（B0–B4）的验收：dialogs 套件两个宿主的 select、confirm、input、ask 步骤走竞答路径通过；终端先答时 Telegram 键盘撤销；本地发起的对话框不推到 Telegram。E2E 按阶段 3 策略在 3E 统一跑。
+  - T3.2d：`TspAdapter` 单测覆盖 picker/卡片/只读三种转换。
   - T3.2e：`/model` 在 Telegram 上显示原生列表并能切换模型，结果与终端一致；其余内置选择器至少能读出列表并选择/关闭。
   - T3.2f：input 经 TSP 完成文本输入与提交，或证明 `edit` 事件不可用并保留现有输入路径（写入 §9）。
   - T3.2g：OMP 路径上不再调用 `frameRows`/`frameCursor`/`parseLegend`，删除"版本不符退回快照"的代码，改为 §4.11.4 的启动报错；dialogs 与 commands 套件 OMP 全绿。

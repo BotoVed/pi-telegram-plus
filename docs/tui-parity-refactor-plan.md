@@ -863,17 +863,14 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 | OMP 对话框 | 通道 | 读取 | 操作 |
 |---|---|---|---|
-| 扩展 `select`、`editor`、`askDialog`、`approve` | collab | `requestGuestUi(request, signal)` 收到的请求（select：`title`、`options`、`initialIndex`、`selectionMarker`、`checkedIndices`、`markableCount`、`helpText`；editor：`title`、`prefill`） | 返回 `{ kind: "answered", value }`：select 为选项文字，editor 为文本，`undefined` 为取消 |
-| 扩展 `confirm`（OMP 内部是 Yes/No 选择器）、`input`、`custom`；内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents` 等） | TSP | 焦点组件或其子组件的 `describe(cx)` 语义树 | `handleNativeEvent(event)`：`select`、`activate`、`action`（`confirm`、`close`、`submit`、`cancel` 等）、`change`、`edit` |
+| 扩展 `select`、`confirm`、`input`、`editor`、`askDialog`、`approve` | 扩展 UI 竞答（§4.12，v7 取代 collab） | 调用参数 | 先回答的一方生效，另一方被关闭 |
+| 扩展 `custom`；内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents` 等） | TSP | 焦点组件或其子组件的 `describe(cx)` 语义树 | `handleNativeEvent(event)`：`select`、`activate`、`action`（`confirm`、`close`、`submit`、`cancel` 等）、`change`、`edit` |
 | 报告（`showCommandReport`） | 输出截获（§4.4，S17/S19） | 入口参数 `title` + `body` 渲染 | — |
-| 没有 `describe()` 的组件 | 屏幕镜像（决定 34），broker 不建会话 | — | — |
+| 没有 `describe()` 的组件 | `UnsupportedAdapter`：明确告知 + 取消（决定 47） | — | 取消 = Esc |
 
-#### 4.11.2 collab 桥接
+#### 4.11.2 collab 桥接（v7 作废）
 
-- **安装**：宿主为 OMP 且 `mode.collabHost` 为空时，插件把桥接对象挂到 `mode.collabHost`。FocusTracker 的每秒 tick 检查：被真实 collab 宿主替换（用户执行了 `/collab`）时停止接管；这期间 Telegram 发起的 select/editor/ask/approve 不另找路径，直接在 Telegram 回复"终端正在 /collab 协作，请在终端或协作端处理"。collab 结束、属性变回空后重新挂上。
-- **归属**：`requestGuestUi` 被调用时，只有存在 Telegram 发起的命令作用域或 Telegram turn（§4.3）才接管并返回 Promise；否则返回 `null`，OMP 只在终端显示（谁发起谁显示）。
-- **渲染**：请求交给 broker 建会话。select 渲染为按钮（多选按 `selectionMarker`/`checkedIndices`）；editor 渲染为文本输入（§4.5.1）；approve 在 OMP 内部就是一次 select（审批选项文字）。`ask` 由 OMP 逐题发 select；伪选项 "Other (type your own)" 被选中后 OMP 会再发一个 editor 请求（标题 "Custom answer: …"），"Chat about this" 作为普通选项原样显示。
-- **结束**：Telegram 先回答 → resolve `answered`，OMP 自动取消终端对话框；终端先回答 → OMP 中止 `signal`，桥接撤掉 Telegram 键盘并写摘要；桥接回答后 OMP 不会中止 `signal`，由桥接自己收尾；插件停用时对未决请求返回 `{ kind: "unavailable" }`。
+由 §4.12 扩展 UI 竞答取代（决定 53）。S22 证明 collab 可用，但竞答不占用 `mode.collabHost`，用户自己开 `/collab` 时不需要让位，并且 pi 与 OMP 共用一套做法。
 
 #### 4.11.3 TSP 适配器（`TspAdapter`）
 
@@ -894,7 +891,23 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 - §4.6.6 例外二：OMP 的 select、confirm、approve 改走 collab/TSP 之后删除相应代码（`OMP_FRAME_VERSIONS`、OMP 路径上的 `frameRows`/`frameCursor`、approve 读按键说明）。过渡期保留，T3.2g 删除。
 - 决定 18 作废；决定 25、28、35、36 中关于 OMP 按焦点/按画面识别与操作的部分被取代。决定 30、40（progress 与 loader 的区分）不受影响。
-- broker 保留为会话和 Telegram 渲染的唯一中枢；会话来源从"焦点变化"扩展为"焦点变化 + collab 请求"。OMP 上的适配器只剩：collab 模型、`TspAdapter`、`infoPanelAdapter`（无 `describe()` 的仪表盘）和屏幕镜像。
+- broker 保留为会话和 Telegram 渲染的唯一中枢；会话来源从"焦点变化"扩展为"焦点变化 + 竞答请求"（§4.12）。OMP 上的适配器只剩：竞答模型、`TspAdapter`、`infoPanelAdapter`（无 `describe()` 的仪表盘）和 `UnsupportedAdapter`。
+
+### 4.12 扩展 UI 竞答（v7，2026-10-25，pi 与 OMP 共用）
+
+依据：S25（OMP，pi）与 S25b（pi）实测，以及 pi 1.4.0 `core/extensions/types.ts` 的 `ExtensionUIDialogOptions.signal`（"AbortSignal to programmatically dismiss the dialog"）。宿主收到 abort 后关闭自己的对话框，原调用以 `undefined` 结束。
+
+- **支持竞答的方法**：pi 1.4.0 为 `select`、`confirm`、`input`（`editor` 不接受 `opts`）；OMP 18.12.x 为 `select`、`confirm`、`input`、`editor`、`askDialog`、`approve`。不接受 signal 的方法（pi 的 `editor`、两个宿主的 `custom`）不竞答，按现有适配器处理（`custom` 按 §4.6.5 明确告知，pi-goal 走例外一）。
+- **拦截位置**：扩展实际拿到的 UI 上下文对象（`extensionRunner.getUIContext()`，FocusTracker 的 `attachEntryHooks` 已经在这里挂钩入口）。
+- **归属**：调用发生时，只有存在 Telegram 发起的命令作用域或 Telegram turn（§4.3）才竞答；否则原样调用宿主方法，只在终端显示（谁发起谁显示，决定 42 保留）。
+- **流程**：
+  1. 用调用方的 signal 加上插件自己的 `AbortController`（`AbortSignal.any`）调用宿主方法，终端照常画出对话框；
+  2. 同时 broker 按**调用参数**建会话并发到 Telegram（标题、选项、提示文字、默认值），不读画面、不按焦点识别；
+  3. Telegram 先回答 → 插件以该值 resolve 调用，再 abort 宿主（宿主返回的 `undefined` 丢弃）；
+  4. 终端先回答 → 以宿主的值 resolve，broker 撤掉 Telegram 键盘并写摘要；
+  5. 调用方的 signal 先中止 → 两边一起关闭，调用以 `undefined` 结束；
+  6. 同一个对话框不能再由焦点路径建第二个会话：竞答期间宿主入栈的组件（pi 的 `pushExtensionDialog`、OMP 的焦点组件）标记为已由竞答占用，broker 的焦点路径跳过它。
+- **实测结论**：两个宿主上，插件的答案都送达了扩展，宿主对话框在 abort 后约 2ms 关闭，后续 input、secret、custom、ask 步骤照常通过。S25 里 pi 的 confirm 步骤失败，S25b 查明是测试脚本的问题：`clearDialog()` 在约 400ms 内连发两次 Escape，pi 编辑器为空时这会触发双击 Escape 动作（`doubleEscapeAction`，默认 `tree`，pi 1.4.0 `interactive-mode.ts` 第 3036–3050 行），打开 Session Tree；之后发来的命令被插件按设计拒绝（"终端上有一个未完成的对话框"）。不加竞答的基线运行也打开了 6 次 Session Tree，只是时机没有挡住后续步骤。3B 第一项任务修测试脚本：在测试用的 agent 设置里写 `doubleEscapeAction: "none"`。
 
 ## 5. 文件改动清单
 
@@ -1126,6 +1139,7 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 | 50 | 宿主行为以什么为准 | **以宿主源码为准**：先读 pi `1.4.0` / OMP `18.12.5` 源码确定前提，运行时实验只用于验证（此前两次在未读源码的情况下靠运行时实验摸索，浪费多轮）。 |
 | 51 | Telegram 发来的 `!命令` / `!!命令` 由谁执行 | **交给宿主执行，插件只保留危险命令确认**（用户 2026-10-25 同意）。pi 1.4.0 与 OMP 的编辑器都原生支持 `!`/`!!`，宿主执行前会先发 `user_bash` 事件让扩展接管或拒绝（pi `interactive-mode.ts` 的 `handleBashCommand`）；插件直接调用 `session.executeBash` 会**绕过这个扩展钩子**（例如沙箱、权限类扩展）。因此插件不再直接调用 bash 执行器，而是先按 `bashConfirm` 策略在 Telegram 确认（插件自己的远程执行安全闸门，宿主没有对应概念），确认后经 gateway 把原文提交给宿主编辑器，输出照常回传。任务 D3b。 |
 | 52 | `/fork`、`/clone` 交给谁 | **交给宿主执行**（用户 2026-10-25 同意；修订决定 21）。决定 21 的理由（编辑器提交会替换运行时、轮询单例冲突）已被 `e046a98`（同进程锁接管）与 `bf81fd5`（破坏性调用前提交游标）消除。规则统一为：有选择界面的命令（`/fork`、`/clone`）交给宿主，其选择器由适配器接管（pi：`UserMessageSelectorComponent`；OMP：TSP），之后删除插件自带的消息列表；没有界面、只调用控制接口的命令（`/new`、`/reload`、`/import`）继续调用宿主控制 API。分别并入 3C、3D，3E 用 E2E 验证运行时替换。 |
+| 53 | 扩展对话框在两个宿主上怎么接到 Telegram | **扩展 UI 竞答（§4.12），取代 collab 桥接**（用户 2026-10-24 选定竞答方向；S25/S25b 2026-10-25 在两个宿主上证实）。修订决定 41：扩展 select/confirm/input/editor/ask/approve 走竞答，TSP 只用于内置选择器、`custom` 与仪表盘。决定 43（`/collab` 让位）作废：竞答不占用 `collabHost`。 |
 
 "谁发起，谁显示"与"共享所有权"的关系：Telegram 发起的对话框由宿主画在终端里，所以终端上一定也能看到并操作（共享，先操作者生效）；但终端上的变化不会主动推到 Telegram，本地发起的对话框也不会出现在 Telegram。
 
