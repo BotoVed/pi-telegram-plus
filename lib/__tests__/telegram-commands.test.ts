@@ -168,12 +168,12 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     await listBotsFlow(ctx.ui);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      expect.stringContaining("还没有注册 Bot。请在 /tg → Bots → ➕ 添加 Bot 中添加。"),
+      expect.stringContaining("No bots registered. Add one in /tg → Bots → ➕ Add bot."),
       "info",
     );
   });
 
-  it("listBotsFlow marks only the default bot with ⭐ 默认", async () => {
+  it("listBotsFlow marks only the default bot with ⭐ default", async () => {
     const alpha = makeBot({ name: "alpha", token: "t1" });
     await addBot(alpha);
     await addBot(makeBot({ name: "beta", token: "t2" }));
@@ -184,8 +184,8 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
     const [body] = vi.mocked(ctx.ui.notify).mock.calls[0];
     const lines = String(body).split("\n");
-    expect(lines.find((line) => line.includes("alpha"))).toContain("⭐ 默认");
-    expect(lines.find((line) => line.includes("beta"))).not.toContain("⭐ 默认");
+    expect(lines.find((line) => line.includes("alpha"))).toContain("⭐ default");
+    expect(lines.find((line) => line.includes("beta"))).not.toContain("⭐ default");
     expect(body).not.toContain("★ default");
   });
 
@@ -356,7 +356,7 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     expect(binding?.binding.enabled).toBe(true);
   });
 
-  it("enableProjectFlow without a default bot points at the ⭐ 全局默认 Bot menu row", async () => {
+  it("enableProjectFlow without a default bot points at the ⭐ Default bot menu row", async () => {
     await addBot(makeBot({ name: "orphan", token: "tok-o" }));
     await clearDefaultBot();
 
@@ -364,7 +364,7 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     await enableProjectFlow(ctx.ui, deps, projectDir);
 
     expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "没有全局默认 Bot。请先在 /tg → Bots → ⭐ 全局默认 Bot 中设置。",
+      "No default bot. Set one in /tg → Bots → ⭐ Default bot.",
       "error",
     );
     expect(await readProjectBinding(projectDir)).toBeUndefined();
@@ -484,7 +484,7 @@ describe("Telegram management flows (bot registry + project binding)", () => {
 
     await unpairBotFlow(ctx.ui, deps, bot.id);
 
-    expect(ctx.ui.confirm).toHaveBeenCalledWith("解除配对？", expect.stringContaining("解除后当前聊天将无法继续使用"));
+    expect(ctx.ui.confirm).toHaveBeenCalledWith("Unpair?", expect.stringContaining("This chat will stop working"));
     const after = (await readBotRegistry()).bots[0];
     expect(after.allowedUserId).toBeUndefined();
     expect(after.pairingCode).toBe("654321");

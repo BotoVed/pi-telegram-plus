@@ -44,14 +44,14 @@ describe("registerLifecycleCommands /quit and /exit", () => {
   });
 
   for (const name of ["quit", "exit"] as const) {
-    it(`/${name} shuts down after the Chinese confirmation`, async () => {
+    it(`/${name} shuts down after the confirmation`, async () => {
       const { registry, handlers } = makeRegistry();
       registerLifecycleCommands(registry);
       const { ctx, confirm, shutdown } = makeCtx(true);
 
       await handlers.get(name)!.handler("", ctx);
 
-      expect(confirm).toHaveBeenCalledWith("退出 pi？", "确认后 pi 将退出，Telegram 也会停止响应。");
+      expect(confirm).toHaveBeenCalledWith("Quit pi?", "pi will exit and Telegram will stop responding.");
       expect(shutdown).toHaveBeenCalledTimes(1);
     });
 

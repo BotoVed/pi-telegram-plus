@@ -297,7 +297,7 @@ describe("registerInfoCommands /copy handler", () => {
     expect(notify).toHaveBeenCalledWith("这是上一条回复。\n第二行", "info");
   });
 
-  it("shows the Chinese empty notice when there is no reply", async () => {
+  it("shows the empty notice when there is no reply", async () => {
     const session = makeSession({ lastAssistantText: undefined });
     const { registry, handlers } = makeRegistry();
     const { ui, notify } = makeUi();
@@ -305,7 +305,7 @@ describe("registerInfoCommands /copy handler", () => {
 
     await handlers.get("copy")!.handler("", { ui });
 
-    expect(notify).toHaveBeenCalledWith("没有可复制的内容。", "info");
+    expect(notify).toHaveBeenCalledWith("Nothing to copy.", "info");
   });
 });
 
@@ -322,10 +322,10 @@ describe("registerInfoCommands /hotkeys handler", () => {
     expect(notify).toHaveBeenCalledTimes(1);
     const [text, level] = notify.mock.calls[0];
     expect(level).toBe("info");
-    expect(text).toContain("按钮");
+    expect(text).toContain("buttons");
     expect(text).toContain("/stop");
-    expect(text).toContain("!命令");
-    expect(text).toContain("终端快捷键只在终端里有效");
+    expect(text).toContain("!cmd");
+    expect(text).toContain("Terminal shortcuts only work in the terminal");
     expect(text).toContain("/tg");
     expect(text).not.toContain("Keyboard Shortcuts");
   });

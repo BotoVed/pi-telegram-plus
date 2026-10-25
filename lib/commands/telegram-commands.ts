@@ -52,11 +52,11 @@ export type MenuUi = {
 export async function listBotsFlow(ui: MenuUi): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("还没有注册 Bot。请在 /tg → Bots → ➕ 添加 Bot 中添加。", "info");
+    ui.notify("No bots registered. Add one in /tg → Bots → ➕ Add bot.", "info");
     return;
   }
   const lines = registry.bots.map((bot) => {
-    const defaultMarker = registry.defaultBotId === bot.id ? " ⭐ 默认" : "";
+    const defaultMarker = registry.defaultBotId === bot.id ? " ⭐ default" : "";
     const username = bot.botUsername ? `@${bot.botUsername}` : "no username";
     const paired = bot.allowedUserId !== undefined ? `paired (user ${bot.allowedUserId})` : bot.pairingCode ? `pairing: ${bot.pairingCode}` : "not paired";
     return `- ${escapeHtml(bot.name)} (${bot.id.slice(0, 8)}) · ${username} · ${paired}${defaultMarker}`;
@@ -153,7 +153,7 @@ export async function clearBotDefaultFlow(
 ): Promise<boolean> {
   const registry = await readBotRegistry();
   if (!registry.defaultBotId) {
-    ui.notify("没有设置全局默认 Bot。", "info");
+    ui.notify("No default bot is set.", "info");
     return false;
   }
   // 没有 botId 的绑定 = 跟随全局默认 Bot（包括 disableProjectFlow 写下的
@@ -162,7 +162,7 @@ export async function clearBotDefaultFlow(
   const followsDefault = !binding?.binding.botId;
   ui.notify(
     followsDefault
-    ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg → Project → 绑定 Bot) or set a default in the TUI to reconnect."
+    ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg → Project → Bot) or set a default in the TUI to reconnect."
       : "Default bot cleared.",
     followsDefault ? "warning" : "info",
   );
@@ -295,7 +295,7 @@ export async function unpairBotFlow(ui: MenuUi, deps: TelegramCommandDeps, botId
     ui.notify(`Bot not found: ${botId.slice(0, 8)}`, "error");
     return;
   }
-  const confirmed = await ui.confirm("解除配对？", "解除后当前聊天将无法继续使用，需要用新的配对码重新配对。");
+  const confirmed = await ui.confirm("Unpair?", "This chat will stop working until you pair again with the new code.");
   if (!confirmed) return;
   const pairingCode = createTelegramPairingCode();
   await updateBot(bot.id, { allowedUserId: undefined, pairingCode });
@@ -373,7 +373,7 @@ export async function enableProjectFlow(
 ): Promise<void> {
   const registry = await readBotRegistry();
   if (registry.bots.length === 0) {
-    ui.notify("还没有注册 Bot。请先在 /tg → Bots → ➕ 添加 Bot 中添加。", "error");
+    ui.notify("No bots registered. Add one in /tg → Bots → ➕ Add bot.", "error");
     return;
   }
   const workspacePath = resolve(cwd);
@@ -390,7 +390,7 @@ export async function enableProjectFlow(
     }
   } else {
     if (!registry.defaultBotId) {
-      ui.notify("没有全局默认 Bot。请先在 /tg → Bots → ⭐ 全局默认 Bot 中设置。", "error");
+      ui.notify("No default bot. Set one in /tg → Bots → ⭐ Default bot.", "error");
       return;
     }
     await updateProjectBindingLocked(workspacePath, () => ({ botId: registry.defaultBotId, enabled: true }));
@@ -403,7 +403,7 @@ export async function enableProjectFlow(
   deps.startStatusHeartbeat();
   await deps.awaitReconcile();
   deps.refreshStatus();
-  ui.notify(`已连接当前目录的 Telegram。`, "info");
+  ui.notify("Telegram connected for this folder.", "info");
 }
 
 export async function disableProjectFlow(
@@ -417,7 +417,7 @@ export async function disableProjectFlow(
   // role, the active transport suppresses outbound sends, so this is the last
   // message Telegram will deliver for this project. Reconnect is terminal-only
   // from here on (/tg → Project → 连接).
-  ui.notify(`已断开当前目录的 Telegram。Telegram 将不再响应，只能在终端用 /tg 重新连接。`, "info");
+  ui.notify("Telegram disconnected for this folder. It will stop responding; reconnect from the terminal with /tg.", "info");
   if (project) {
     await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: false }));
   } else {

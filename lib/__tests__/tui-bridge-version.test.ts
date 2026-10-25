@@ -191,6 +191,20 @@ describe("controller sends the version refusal instead of the generic outage not
     expect(sent.some((m) => m.text === `${REASON}. The plugin has stopped.`)).toBe(true);
   });
 
+  it("does not double the period when the reason already ends with one", async () => {
+    const { controller, sent } = createHarness(createDownBridge({ getUnsupportedReason: () => `${REASON}.` }));
+
+    await controller.handleMessage({
+      message_id: 9,
+      chat: { id: 42, type: "private" },
+      from: { id: 7 },
+      text: "summarize the failing test",
+    });
+
+    expect(sent.some((m) => m.text === `${REASON}. The plugin has stopped.`)).toBe(true);
+    expect(sent.some((m) => m.text.includes(".."))).toBe(false);
+  });
+
   it("keeps the generic outage notice when no version reason is set", async () => {
     const { controller, sent } = createHarness(createDownBridge());
 

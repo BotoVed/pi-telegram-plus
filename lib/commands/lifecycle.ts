@@ -40,7 +40,7 @@ export function registerLifecycleCommands(registry: CommandRegistry): void {
   // so an accidental tap should not kill the host silently.
   const shutdownAfterConfirm = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
     const ui = ctx.ui;
-    const confirmed = await ui.confirm("退出 pi？", "确认后 pi 将退出，Telegram 也会停止响应。");
+    const confirmed = await ui.confirm("Quit pi?", "pi will exit and Telegram will stop responding.");
     if (confirmed) {
       ctx.shutdown();
       ui.notify("Shutdown requested. If pi keeps running, stop it from the TUI/terminal.", "info");

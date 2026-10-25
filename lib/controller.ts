@@ -785,7 +785,7 @@ export function createTelegramController(deps: {
   // names the version problem instead of the generic "run interactively" hint.
   const bridgeOutageNotice = (): string => {
     const reason = bridge.getUnsupportedReason?.();
-    if (reason !== undefined) return `${reason}. The plugin has stopped.`;
+    if (reason !== undefined) return `${reason.replace(/\.$/, "")}. The plugin has stopped.`;
     return `The host bridge is unavailable (${bridge.getHost()}), so the plugin cannot work. Run pi/OMP interactively in a terminal.`;
   };
   const hostIsOmp = deps.isOmpHost ?? isOmpHost;

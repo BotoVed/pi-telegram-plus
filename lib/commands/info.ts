@@ -108,7 +108,7 @@ export function registerInfoCommands(
         return;
       }
       const text = session.getLastAssistantText();
-      ui.notify(text ? text : "没有可复制的内容。", "info");
+      ui.notify(text ? text : "Nothing to copy.", "info");
     },
   });
 
@@ -171,12 +171,12 @@ export function registerInfoCommands(
       const ui = ctx.ui;
       ui.notify(
         [
-          "终端快捷键只在终端里有效。在 Telegram 上：",
-          "• 对话框会以按钮出现，点按钮作答；需要输入文字时直接发一条消息",
-          "• /stop：停止当前回合，并取消本聊天打开的对话框",
-          "• !命令 / !!命令：在宿主上执行 shell 命令（!! 的输出不进入上下文）",
-          "• /tg：管理 Bot、项目连接和设置",
-          "• 其他 / 命令与终端里的同名命令一致",
+          "Terminal shortcuts only work in the terminal. In Telegram:",
+          "• Dialogs appear as buttons; tap to answer, or send a message when text is needed",
+          "• /stop: stop the current turn and cancel this chat's open dialog",
+          "• !cmd / !!cmd: run a shell command on the host (!! keeps the output out of context)",
+          "• /tg: manage bots, project connection and settings",
+          "• Other / commands work like the terminal commands of the same name",
         ].join("\n"),
         "info",
       );
