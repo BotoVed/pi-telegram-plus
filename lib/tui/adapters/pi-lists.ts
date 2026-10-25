@@ -152,3 +152,93 @@ export const piListAdapter: DialogAdapter = {
     return selectRow(ctx.sendKey, rows.cursor, target);
   },
 };
+
+/**
+ * `/resume` (P3): `SessionSelectorComponent` delegates keys to its inner
+ * `SessionList`, whose rows are `{ session, depth }` tree nodes. The table
+ * specs above cover flat components with a top-level cursor, so this one
+ * adapter is dedicated: rows live one level down, labels concatenate two
+ * fields, and Tab toggles the folder scope (§4.1.4).
+ */
+const SESSION_LABEL_MAX = 50;
+
+const sessionLabel = (session: HostRecord): string => {
+  let base = text(session.name);
+  if (base === "") {
+    base = text(session.firstMessage).replace(/\n/g, " ");
+    if (base.length > SESSION_LABEL_MAX) base = `${base.slice(0, SESSION_LABEL_MAX)}…`;
+  }
+  return `${base} · ${readNumber(session.messageCount)} 条`;
+};
+
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
+/** `modified` as local `YYYY-MM-DD HH:mm`; empty when the host has no date. */
+const sessionTime = (session: HostRecord): string => {
+  const modified = session.modified;
+  if (!(modified instanceof Date) || Number.isNaN(modified.getTime())) return "";
+  return `${modified.getFullYear()}-${pad2(modified.getMonth() + 1)}-${pad2(modified.getDate())}`
+    + ` ${pad2(modified.getHours())}:${pad2(modified.getMinutes())}`;
+};
+
+/** The inner `SessionList`, or undefined once the shape is gone. */
+function sessionListOf(component: object): HostRecord | undefined {
+  const list = asRecord((component as HostRecord).sessionList);
+  return Array.isArray(list.filteredSessions) ? list : undefined;
+}
+
+/** Live rows: tree nodes flattened to their sessions, plus the terminal cursor. */
+function sessionRows(list: HostRecord): { raw: HostRecord[]; labels: string[]; cursor: number } {
+  const raw = (list.filteredSessions as unknown[]).map((node) => asRecord(asRecord(node).session));
+  return { raw, labels: raw.map(sessionLabel), cursor: readNumber(list.selectedIndex) };
+}
+
+export const piSessionAdapter: DialogAdapter = {
+  id: "pi-session",
+
+  detect(component, ctx) {
+    if (ctx.host !== "pi") return false;
+    if (constructorName(component) !== "SessionSelectorComponent") return false;
+    // Rename mode swaps a text input in front of the list; the select model
+    // would offer rows the user cannot pick.
+    return (component as HostRecord).mode !== "rename" && sessionListOf(component) !== undefined;
+  },
+
+  read(component, ctx): DialogModel {
+    const record = component as HostRecord;
+    const list = sessionListOf(record);
+    if (!list) {
+      return { kind: "unsupported", what: "pi-session: component shape is gone" };
+    }
+    const { raw, labels, cursor } = sessionRows(list);
+    const currentPath = text(list.currentSessionCanonicalPath);
+    const items: DialogItem[] = raw.map((session, index) => ({
+      key: rowKey(index, labels[index]),
+      label: labels[index],
+      description: sessionTime(session),
+      current: currentPath !== "" && session.path === currentPath,
+      focused: index === cursor,
+    }));
+    const all = record.scope === "all";
+    return {
+      kind: "select",
+      title: all ? "恢复会话（全部）" : "恢复会话（当前目录）",
+      items,
+      total: items.length,
+      extraActions: [{ label: all ? "只看当前目录" : "查看全部", key: "tab" }],
+    };
+  },
+
+  act(component, action, ctx) {
+    const list = sessionListOf(component);
+    if (!list) return false;
+    if (action.type === "cancel") return ctx.sendKey("esc");
+    // Tab is the only advertised key: it flips current-folder / all scopes.
+    if (action.type === "key") return action.name === "tab" ? ctx.sendKey("tab") : false;
+    if (action.type !== "choose") return false;
+    const { labels, cursor } = sessionRows(list);
+    const target = resolveRowKey(labels, action.key);
+    if (target === undefined) return false;
+    return selectRow(ctx.sendKey, cursor, target);
+  },
+};
