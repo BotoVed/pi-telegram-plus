@@ -332,12 +332,25 @@ describe("OutputCapture command reports", () => {
 });
 
 describe("OutputCapture shell scope", () => {
-  // The class name is part of the contract: the capture identifies the host's
-  // component by constructor name (BASH_EXECUTOR_CTORS).
+  // The capture identifies the host's component by constructor name
+  // (BASH_EXECUTOR_CTORS) or, when the bundle minifies names, by its four
+  // bash methods (isBashExecutor).
   class BashExecutionComponent {
     constructor(public lines: string[]) {}
     render() { return ["$ echo hi", ...this.lines, "exit: 0"]; }
     setComplete(_exitCode: number, _cancelled?: boolean): void {}
+  }
+
+  // OMP's bundle minifies class names; `qs` is also in AGENT_CTORS, so this
+  // pins that the bash claim runs before the agent gate and wins inside a
+  // ! scope (3E: the running frame used to be pushed as plain output).
+  class qs {
+    constructor(public lines: string[]) {}
+    render() { return ["$ echo hi", ...this.lines, "exit: 0"]; }
+    setExpanded(_expanded: boolean): void {}
+    appendOutput(_chunk: string): void {}
+    setComplete(_exitCode: number, _cancelled?: boolean): void {}
+    getOutput(): string { return this.lines.join("\n"); }
   }
 
   function attachedChat() {
@@ -434,6 +447,28 @@ describe("OutputCapture shell scope", () => {
     await vi.advanceTimersByTimeAsync(20);
     const text = transport.edits.at(-1)?.text ?? "";
     expect(text.match(/exit: 0/g)?.length).toBe(1);
+    origin.end(scope, "idle");
+  });
+
+  it("tracks a minified bash component by its methods, pushing only after setComplete", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = origin.begin({ chatId: 1 }, "!", "!echo hi", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ !echo hi</b>" });
+    const component = new qs(["⠋ Running…"]);
+    chat.addChild(component);
+    expect(output.hasRunningBash()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1100);
+    // The running frame never reaches the transport while the command runs.
+    expect(transport.edits).toEqual([]);
+    component.lines = ["hi", "exit: 0"];
+    component.setComplete(0);
+    expect(output.hasRunningBash()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1100);
+    const text = transport.edits.at(-1)?.text ?? "";
+    expect(text).toContain("exit: 0");
+    expect(text).not.toContain("Running");
+    output.finish();
     origin.end(scope, "idle");
   });
 });

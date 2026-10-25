@@ -770,18 +770,35 @@ async function runHost(host, label, phase = "main") {
       } else {
         const clickCursor = await cursor();
         await click(option, dialogMessageId).catch(() => undefined);
+        // F5: OMP asks for a purpose after the model — the model click opens
+        // a second dialog ("Assign <model> to", first item `default`) and
+        // nothing applies until that is answered too (3E).
+        const purposeDialog = await waitFor("model purpose dialog", (state) =>
+          state.calls.slice(clickCursor).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry)
+            && (/Assign .* to/i.test(String(entry.body?.text ?? ""))
+              || buttonsOf(entry).some((b) => /^default\b/i.test(String(b.text ?? ""))))) ?? false,
+          4_000).catch(() => undefined);
+        let purposeMessageId;
+        if (purposeDialog) {
+          purposeMessageId = purposeDialog.body?.message_id ?? purposeDialog.message_id;
+          const purposeButton = buttonsOf(purposeDialog).find((b) => /^default\b/i.test(String(b.text ?? "")))
+            ?? buttonsOf(purposeDialog).find((b) => !DIALOG_CANCEL.test(String(b.callback_data ?? "")));
+          if (purposeButton) await click(purposeButton, purposeMessageId).catch(() => undefined);
+        }
         // Applied means either a host status message naming the new model, or
-        // the Broker retiring the dialog message (summary edit + strip).
+        // the Broker retiring the dialog message (summary edit + strip). With
+        // the purpose step the retired message can be the purpose dialog.
+        const dialogIds = [dialogMessageId, purposeMessageId];
         const applied = await waitFor("model selection applied", (state) => {
           const after = state.calls.slice(clickCursor);
           if (after.some((entry) => entry.method === "sendMessage" && /mock-model/.test(String(entry.body?.text ?? "")))) return true;
           return after.some((entry) =>
             (entry.method === "editMessageText" || entry.method === "editMessageReplyMarkup")
-            && entry.body?.message_id === dialogMessageId
+            && dialogIds.includes(entry.body?.message_id)
             && !buttonsOf(entry).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:")));
         }, 15_000).catch(() => undefined);
         record("menu /model selects", Boolean(applied),
-          applied ? `dialog · ${String(dialog.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60)}` : "selection not confirmed");
+          applied ? `dialog${purposeMessageId !== undefined ? " +purpose" : ""} · ${String(dialog.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60)}` : "selection not confirmed");
       }
     }
   } catch (error) {

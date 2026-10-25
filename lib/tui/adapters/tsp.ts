@@ -292,10 +292,17 @@ export const tspPickerAdapter: DialogAdapter = {
     if (typeof handle !== "function") return false;
     try {
       handle.call(owner, target);
-      return true;
     } catch {
       return false;
     }
+    // The native event mutates host state without a UI tick; ask the host to
+    // redraw so the terminal catches up with what Telegram just showed (3E).
+    try {
+      ctx.requestRender();
+    } catch {
+      // A host without a live renderer has nothing to redraw; the act landed.
+    }
+    return true;
   },
 };
 
@@ -425,9 +432,16 @@ export const tspPrefsAdapter: DialogAdapter = {
     if (typeof handle !== "function") return false;
     try {
       handle.call(owner, target);
-      return true;
     } catch {
       return false;
     }
+    // Same as the picker: the page/row state changed under the terminal; the
+    // host only repaints on request (3E).
+    try {
+      ctx.requestRender();
+    } catch {
+      // ignore
+    }
+    return true;
   },
 };

@@ -25,9 +25,11 @@ const AGENT_CTORS = /^(AssistantMessageComponent|UserMessageComponent|ToolExecut
 const AGENT_FIELDS = ["lastMessage", "hasToolCalls", "toolCallId"];
 
 /** The host's shell-execution component (D3b), claimed only by a "!" scope.
- * Minified host builds rename constructors; this matches the unminified
- * pi/OMP class name, same convention as AGENT_CTORS. */
+ * Minified host builds rename constructors, so the name match is only the
+ * unminified fast path; both pi's and OMP's bash components expose exactly
+ * these four methods, which is the rename-proof identity (3E). */
 const BASH_EXECUTOR_CTORS = /^BashExecutionComponent$/;
+const BASH_EXECUTOR_METHODS = ["setExpanded", "appendOutput", "setComplete", "getOutput"] as const;
 
 export type OutputTelegram = {
   chatId: number;
@@ -229,14 +231,18 @@ export class OutputCapture {
         if (this.rebuilding.has(chat) && !compactScope) return;
         const child = args[0];
         if (!isHostObject(child)) return;
-        const mode = state.mode;
-        if (isAgentComponent(child, mode)) {
-          // D3b: inside a "!" scope the host's BashExecutionComponent is the
-          // command's own output, not agent history; everywhere else it stays
-          // excluded as before.
-          if (this.binding?.scope.label === "!" && BASH_EXECUTOR_CTORS.test(ctorName(child))) this.trackBashComponent(child);
+        // D3b: inside a "!" scope the host's bash executor is the command's
+        // own output, not agent history; everywhere else it stays excluded as
+        // before. The method-shape check runs before the agent gate: a
+        // minified OMP build renames the ctor out of AGENT_CTORS too, and the
+        // old name-only match let its running frame fall through to the
+        // plain-output push (3E).
+        if (this.binding?.scope.label === "!" && isBashExecutor(child)) {
+          this.trackBashComponent(child);
           return;
         }
+        const mode = state.mode;
+        if (isAgentComponent(child, mode)) return;
         const html = renderComponent(child, (raw) => this.redact(raw));
         if (!html) return;
         this.push(html);
@@ -367,6 +373,14 @@ function ctorName(child: Record<string, unknown>): string {
   } catch {
     return "";
   }
+}
+
+/** Rename-proof identification of the host's bash executor: the four methods
+ * pi's and OMP's `BashExecutionComponent` share (pi 1.4.0 bash-execution.ts
+ * 68/83/101/213, OMP 18.12.5 bash-execution.ts 142/221/342/470). */
+function isBashExecutor(child: Record<string, unknown>): boolean {
+  if (BASH_EXECUTOR_CTORS.test(ctorName(child))) return true;
+  return BASH_EXECUTOR_METHODS.every((name) => typeof child[name] === "function");
 }
 
 function isAgentComponent(child: Record<string, unknown>, mode: Record<string, unknown> | undefined): boolean {

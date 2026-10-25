@@ -26,6 +26,14 @@ function racedCtx(host: "pi" | "omp" = "omp"): AdapterContext {
   };
 }
 
+/** ctx whose requestRender is counted: 3E pins that act asks the terminal to
+ * repaint after a native event lands (the host does not tick its UI itself). */
+function countingCtx(host: "pi" | "omp" = "omp") {
+  let renders = 0;
+  const ctx: AdapterContext = { host, sendKey: () => true, requestRender: () => { renders += 1; } };
+  return { ctx, renders: () => renders };
+}
+
 function makeComponent(tree: unknown, opts: { throws?: boolean } = {}) {
   const events: unknown[] = [];
   return {
@@ -270,6 +278,22 @@ describe("tsp picker act", () => {
     expect(tspPickerAdapter.act(component, { type: "choose", key: "b" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([{ type: "activate", key: "", item: "b" }]);
   });
+
+  it("asks the host to redraw after a native event lands, never after a refused one", () => {
+    const component = makeComponent({ k: "picker", p: pickerProps });
+    const ctx = countingCtx();
+    expect(tspPickerAdapter.act(component, { type: "choose", key: "zzz" }, ctx.ctx)).toBe(false);
+    expect(ctx.renders()).toBe(0);
+    expect(tspPickerAdapter.act(component, { type: "choose", key: "a" }, ctx.ctx)).toBe(true);
+    expect(ctx.renders()).toBe(1);
+  });
+
+  it("still reports success when the redraw request throws", () => {
+    const component = makeComponent({ k: "picker", p: pickerProps });
+    const ctx: AdapterContext = { host: "omp", sendKey: () => true, requestRender: () => { throw new Error("no renderer"); } };
+    expect(tspPickerAdapter.act(component, { type: "cancel" }, ctx)).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "close", mods: [] }]);
+  });
 });
 
 describe("tsp race hand-off (§4.12)", () => {
@@ -373,5 +397,14 @@ describe("tsp prefs act", () => {
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "关" }, ctxFor())).toBe(true);
     tree = { k: "text" };
     expect(tspPrefsAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(false);
+  });
+
+  it("asks the host to redraw after a page switch lands", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    const ctx = countingCtx();
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "page:nope" }, ctx.ctx)).toBe(false);
+    expect(ctx.renders()).toBe(0);
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "page:general" }, ctx.ctx)).toBe(true);
+    expect(ctx.renders()).toBe(1);
   });
 });
