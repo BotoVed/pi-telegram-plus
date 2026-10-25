@@ -14,7 +14,7 @@ import { approvalAdapter } from "./approval.ts";
 import { customGoalAdapter } from "./goal.ts";
 import { extensionEditorAdapter, extensionInputAdapter, extensionSelectAdapter } from "./extension.ts";
 import { infoPanelAdapter, unsupportedAdapter } from "./panel.ts";
-import { piListAdapter, piSessionAdapter } from "./pi-lists.ts";
+import { piListAdapter, piSessionAdapter, piTreeAdapter } from "./pi-lists.ts";
 import { piSettingsAdapter } from "./pi-settings.ts";
 import { tspPickerAdapter, tspPrefsAdapter } from "./tsp.ts";
 
@@ -31,6 +31,7 @@ export const DIALOG_ADAPTERS: DialogAdapter[] = [
   piListAdapter,
   piSessionAdapter,
   piSettingsAdapter,
+  piTreeAdapter,
   extensionSelectAdapter,
   infoPanelAdapter,
   unsupportedAdapter,
@@ -58,6 +59,7 @@ export {
   piListAdapter,
   piSessionAdapter,
   piSettingsAdapter,
+  piTreeAdapter,
   tspPickerAdapter,
   tspPrefsAdapter,
   unsupportedAdapter,

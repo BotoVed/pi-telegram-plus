@@ -8,6 +8,7 @@
  * markers are plain properties we can read (pi 1.4.0
  * `packages/coding-agent/src/modes/interactive/components/`).
  */
+import { stripAnsi } from "../../ansi.ts";
 import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
 import { constructorName, resolveRowKey, rowKey, selectRow } from "./utils.ts";
 
@@ -237,6 +238,88 @@ export const piSessionAdapter: DialogAdapter = {
     if (action.type === "key") return action.name === "tab" ? ctx.sendKey("tab") : false;
     if (action.type !== "choose") return false;
     const { labels, cursor } = sessionRows(list);
+    const target = resolveRowKey(labels, action.key);
+    if (target === undefined) return false;
+    return selectRow(ctx.sendKey, cursor, target);
+  },
+};
+
+/**
+ * `/tree` (P4): `TreeSelectorComponent` delegates keys to its inner `TreeList`
+ * (`filteredNodes` rows of `{ node, indent }`). Row text comes from the host's
+ * own `getEntryDisplayText(node, false)` minus colors - the call is per entry,
+ * not a screen read.
+ */
+const TREE_LABEL_MAX = 60;
+
+/** The inner `TreeList`, or undefined once the shape is gone. */
+function treeListOf(component: object): HostRecord | undefined {
+  const list = asRecord((component as HostRecord).treeList);
+  return Array.isArray(list.filteredNodes) ? list : undefined;
+}
+
+/** The host's own row text, one trimmed line; falls back to the entry type. */
+function treeRowText(list: HostRecord, node: HostRecord): string {
+  const display = list.getEntryDisplayText;
+  if (typeof display === "function") {
+    try {
+      const raw = (display as (n: HostRecord, selected: boolean) => unknown).call(list, node, false);
+      if (typeof raw === "string") {
+        const oneLine = stripAnsi(raw).trim();
+        return oneLine.length > TREE_LABEL_MAX ? `${oneLine.slice(0, TREE_LABEL_MAX)}…` : oneLine;
+      }
+    } catch {
+      // Host text unavailable; the entry type still identifies the row.
+    }
+  }
+  return text(asRecord(node.entry).type);
+}
+
+/** Live rows: the tree nodes, their indent-prefixed labels, plus the terminal cursor. */
+function treeRows(list: HostRecord): { nodes: HostRecord[]; labels: string[]; cursor: number } {
+  const rows = (list.filteredNodes as unknown[]).map(asRecord);
+  const nodes = rows.map((row) => asRecord(row.node));
+  const labels = rows.map((row, index) => {
+    const indent = Math.min(readNumber(row.indent), 6);
+    return "· ".repeat(indent) + treeRowText(list, nodes[index]);
+  });
+  return { nodes, labels, cursor: readNumber(list.selectedIndex) };
+}
+
+export const piTreeAdapter: DialogAdapter = {
+  id: "pi-tree",
+
+  detect(component, ctx) {
+    if (ctx.host !== "pi") return false;
+    if (constructorName(component) !== "TreeSelectorComponent") return false;
+    // Renaming swaps a text input in front of the list; it owns the keys then.
+    const labelInput = (component as HostRecord).labelInput;
+    if (labelInput !== null && labelInput !== undefined) return false;
+    return treeListOf(component) !== undefined;
+  },
+
+  read(component, ctx): DialogModel {
+    const list = treeListOf(component);
+    if (!list) {
+      return { kind: "unsupported", what: "pi-tree: component shape is gone" };
+    }
+    const { nodes, labels, cursor } = treeRows(list);
+    const leafId = typeof list.currentLeafId === "string" ? list.currentLeafId : "";
+    const items: DialogItem[] = nodes.map((node, index) => ({
+      key: rowKey(index, labels[index]),
+      label: labels[index],
+      current: leafId !== "" && text(asRecord(node.entry).id) === leafId,
+      focused: index === cursor,
+    }));
+    return { kind: "select", title: "会话树", items, total: items.length };
+  },
+
+  act(component, action, ctx) {
+    const list = treeListOf(component);
+    if (!list) return false;
+    if (action.type === "cancel") return ctx.sendKey("esc");
+    if (action.type !== "choose") return false;
+    const { labels, cursor } = treeRows(list);
     const target = resolveRowKey(labels, action.key);
     if (target === undefined) return false;
     return selectRow(ctx.sendKey, cursor, target);
