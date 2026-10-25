@@ -30,6 +30,7 @@ import { CommandGateway } from "./tui/gateway.ts";
 import { DialogBroker } from "./tui/broker.ts";
 import { SecretStore } from "./tui/secrets.ts";
 import { readEditorText as readHostEditorText, writeEditorText as writeHostEditorText } from "./tui/host.ts";
+import type { DialogSession } from "./tui/model.ts";
 
 const ctrlLog = log.child("controller");
 
@@ -44,6 +45,17 @@ export type TelegramController = {
   runCommand(name: string, args: string, chatId: number, messageThreadId?: number, sourceMessageId?: number): Promise<void>;
   dispose(): void;
 };
+
+/**
+ * The notice for a message that arrived while a terminal dialog owns the keyboard
+ * (§4.2, 决定 54): the `!` shell route and plain text must say the same thing, so the
+ * wording lives here once - with the dialog's title when the model has one.
+ */
+function dialogBusyNotice(session: DialogSession): string {
+  const model = session.model;
+  const title = "title" in model ? model.title : undefined;
+  return `终端上有一个对话框正在等待${title ? `（${title}）` : ""}，请点按钮作答，或发 /stop 取消。`;
+}
 
 function getIncomingDocumentName(document?: TelegramDocument): string {
   if (!document) return "file";
@@ -1541,10 +1553,11 @@ export function createTelegramController(deps: {
       if (trimmed.startsWith("!")) {
         const excludeFromContext = trimmed.startsWith("!!");
         const command = trimmed.slice(excludeFromContext ? 2 : 1).trim();
-        if (dialogBroker.sessionFor(chatId, messageThreadId) !== undefined) {
+        const busySession = dialogBroker.sessionFor(chatId, messageThreadId);
+        if (busySession !== undefined) {
           // §4.2: the dialog owns the keyboard, so the shell command has nowhere
           // to land; say so instead of queueing it behind the dialog.
-          await deps.transport.sendText(chatId, "⚠️ 终端里有对话框正在等待输入：先回答它，或发送 /stop 关闭。", messageThreadId, sourceMessageId)
+          await deps.transport.sendText(chatId, dialogBusyNotice(busySession), messageThreadId, sourceMessageId)
             .catch(ctrlLog.swallow("warn", "sendText dialog busy notice failed", { chatId }));
           return;
         }
@@ -1665,10 +1678,7 @@ export function createTelegramController(deps: {
         // reach the prompt either (决定 54), so queueing a prompt behind it would only
         // bury the next six messages under a dialog nobody answered.
         if (dialogBroker.sessionFor(chatId, messageThreadId) !== undefined) {
-          const model = dialogSession.model;
-          const title = "title" in model ? model.title : undefined;
-          const notice = `终端上有一个对话框正在等待${title ? `（${title}）` : ""}，请点按钮作答，或发 /stop 取消。`;
-          await deps.transport.sendText(chatId, notice, messageThreadId, sourceMessageId)
+          await deps.transport.sendText(chatId, dialogBusyNotice(dialogSession), messageThreadId, sourceMessageId)
             .catch(ctrlLog.swallow("warn", "sendText dialog busy notice failed", { chatId }));
           return;
         }

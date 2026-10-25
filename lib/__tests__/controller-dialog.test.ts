@@ -275,7 +275,7 @@ describe("chat text while a host dialog holds the focus", () => {
     }
   });
 
-  it.each(["/stop", "/status", "!ls"])("keeps %s off the dialog-text path", async (text) => {
+  it.each(["/stop", "/status"])("keeps %s off the dialog-text path", async (text) => {
     const session = noTextSession();
     const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor").mockReturnValue(session);
     const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockReturnValue({ handled: false });
@@ -285,6 +285,25 @@ describe("chat text while a host dialog holds the focus", () => {
 
       expect(handleText).not.toHaveBeenCalled();
       expect(sawNotice(harness.calls)).toBe(false);
+    } finally {
+      sessionFor.mockRestore();
+      handleText.mockRestore();
+    }
+  });
+
+  it("answers a ! shell command blocked by the dialog with the same notice", async () => {
+    // The `!` route used to carry its own older wording; one dialog, one notice.
+    const session = noTextSession();
+    const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor").mockReturnValue(session);
+    const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockReturnValue({ handled: false });
+    try {
+      const harness = createHarness();
+      await harness.controller.handleMessage(message(75, "!ls"));
+
+      expect(handleText).not.toHaveBeenCalled();
+      expect(sentTexts(harness.calls)).toContain(noticeOf("Settings"));
+      expect(harness.session.prompt).not.toHaveBeenCalled();
+      expect(harness.session.executeBash).not.toHaveBeenCalled();
     } finally {
       sessionFor.mockRestore();
       handleText.mockRestore();

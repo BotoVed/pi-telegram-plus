@@ -18,6 +18,12 @@ missing or mislabelled cannot be published.
 
 ### Changed
 
+- **An open dialog in Telegram now follows the host.** When the terminal fills a
+  dialog in slowly - pi's `/resume` "show all" draws an empty list first and loads
+  the sessions behind it - the Telegram copy refreshes within a second instead of
+  waiting for the next button tap or focus change. A message sent to a chat whose
+  dialog is still waiting now always gets the same notice (with the dialog's title),
+  whether it was a `!` shell command or plain text.
 - **Output-only commands now run in the host.** On pi, `/session`, `/compact`,
   `/name`, `/changelog`, `/debug`, `/export`, `/share` and `/new` are submitted
   through the host's own command path instead of being re-rendered in Telegram.

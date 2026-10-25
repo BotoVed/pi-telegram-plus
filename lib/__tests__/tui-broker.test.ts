@@ -7,8 +7,8 @@
  * dialog is mirrored to, which bytes reach `handleInput`, and what happens to
  * the message once somebody has answered.
  */
-import { describe, expect, it } from "vitest";
-import { DialogBroker } from "../tui/broker.ts";
+import { describe, expect, it, vi } from "vitest";
+import { DialogBroker, REFRESH_MS } from "../tui/broker.ts";
 import type { BrokerDeps } from "../tui/broker.ts";
 import type { FocusInfo } from "../tui/focus.ts";
 import type { EntryInfo } from "../tui/model.ts";
@@ -555,5 +555,115 @@ describe("dialog broker", () => {
     expect(keys).toEqual([]);
     expect(transport.removed).toEqual([]);
     expect(broker.hasActive()).toBe(true);
+  });
+});
+
+describe("background refresh of an open dialog", () => {
+  // The host can fill a dialog in *after* drawing it: pi's `/resume` "show all"
+  // renders an empty list and loads the sessions behind it, and no Telegram event
+  // or focus change fires for that. The broker's own poll has to notice, or the
+  // chat sits on a stale frame until the user taps something.
+
+  /** A selector whose option reads are counted, so "re-read?" is observable. */
+  function countingSelector() {
+    let options = ["alpha", "beta"];
+    let reads = 0;
+    const component: Record<string, unknown> = {
+      selectedIndex: 0,
+      handleInput: () => undefined,
+    };
+    Object.defineProperty(component, "options", {
+      get() {
+        reads += 1;
+        return options;
+      },
+      set(next: string[]) {
+        options = next;
+      },
+    });
+    return { component, reads: () => reads, setOptions: (next: string[]) => { options = next; } };
+  }
+
+  it("edits the mirrored dialog when the host loads new options in the background", async () => {
+    vi.useFakeTimers();
+    try {
+      const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+      const { component } = selector(focus);
+      focus.openDialog(component);
+      await settle();
+      expect(transport.sent).toHaveLength(1);
+
+      component.options = ["alpha", "beta", "gamma", "delta"];
+      vi.advanceTimersByTime(REFRESH_MS);
+      await settle();
+
+      expect(transport.edits).toHaveLength(1);
+      expect(JSON.stringify(transport.edits[0]?.rows)).toContain("delta");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the poll silent while the dialog has not changed", async () => {
+    vi.useFakeTimers();
+    try {
+      const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+      const { component } = selector(focus);
+      focus.openDialog(component);
+      await settle();
+      expect(transport.sent).toHaveLength(1);
+
+      vi.advanceTimersByTime(REFRESH_MS * 4);
+      await settle();
+
+      expect(transport.edits).toHaveLength(0);
+      expect(transport.sent).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never re-reads a dialog that was never mirrored", async () => {
+    vi.useFakeTimers();
+    try {
+      // No turn, no scope: a purely local dialog (§4.3 rule 3) - tracked, but the
+      // poll has no chat to keep in step.
+      const { broker, focus } = makeBroker();
+      const dialog = countingSelector();
+      focus.openDialog(dialog.component);
+      await settle();
+      expect(broker.hasActive()).toBe(true);
+
+      const reads = dialog.reads();
+      dialog.setOptions(["alpha", "beta", "gamma"]);
+      vi.advanceTimersByTime(REFRESH_MS * 3);
+      await settle();
+
+      expect(dialog.reads()).toBe(reads);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops re-reading once stop() has run", async () => {
+    vi.useFakeTimers();
+    try {
+      const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+      const dialog = countingSelector();
+      focus.openDialog(dialog.component);
+      await settle();
+      expect(transport.sent).toHaveLength(1);
+
+      broker.stop();
+      const reads = dialog.reads();
+      dialog.setOptions(["alpha", "beta", "gamma"]);
+      vi.advanceTimersByTime(REFRESH_MS * 3);
+      await settle();
+
+      expect(dialog.reads()).toBe(reads);
+      expect(transport.edits).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

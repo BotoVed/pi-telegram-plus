@@ -42,6 +42,13 @@ const brokerLog = log.child("tui-broker");
 
 /** §4.5 rule 2: at most one message edit per chat per second. */
 export const EDIT_THROTTLE_MS = 1_000;
+/**
+ * How often the broker re-reads the open dialog. The host can fill a dialog in the
+ * background (`/resume`'s "show all" loads sessions after drawing an empty list), and
+ * none of the redraw triggers (Telegram tap/text, focus change) fires for that, so the
+ * chat would freeze on a stale frame. `redraw` + `show` keep a no-change poll silent.
+ */
+export const REFRESH_MS = 1_000;
 /** §4.7.1: only the last few generations of button identity are kept. */
 const KEEP_GENERATIONS = 3;
 
@@ -169,6 +176,8 @@ export class DialogBroker {
   private readonly lastEditAt = new Map<string, number>();
   /** One trailing edit per chat: the newest model wins, a queued older one is dropped. */
   private readonly deferred = new Map<string, ReturnType<typeof setTimeout>>();
+  /** The background-refresh tick, alive between start() and stop(). */
+  private refreshTimer?: ReturnType<typeof setInterval>;
   private sequence = 0;
 
   constructor(private readonly deps: BrokerDeps) {}
@@ -176,11 +185,15 @@ export class DialogBroker {
   start(): void {
     if (this.unsubscribe) return;
     this.unsubscribe = this.deps.focus.onChange((info) => this.handleFocus(info));
+    this.refreshTimer = setInterval(() => this.refresh(), REFRESH_MS);
+    this.refreshTimer.unref?.();
   }
 
   stop(): void {
     this.unsubscribe?.();
     this.unsubscribe = undefined;
+    clearInterval(this.refreshTimer);
+    this.refreshTimer = undefined;
     for (const timer of this.deferred.values()) clearTimeout(timer);
     this.deferred.clear();
     this.lastEditAt.clear();
@@ -585,6 +598,24 @@ export class DialogBroker {
     const info = this.deps.focus.current();
     if (!info.component) return false;
     return info.component === session.focus || info.kind === "progress";
+  }
+
+  /**
+   * The background poll (REFRESH_MS): the host can fill a dialog in after drawing it -
+   * `/resume`'s "show all" paints an empty list and loads sessions behind it - and
+   * neither a Telegram event nor a focus change fires for that. Re-read the open
+   * Telegram dialog; `redraw` and `show` keep a poll that changed nothing silent.
+   */
+  private refresh(): void {
+    try {
+      const session = this.current();
+      if (!session || !session.telegram) return;
+      if (session.state === "resolving") return;
+      if (!this.canDrive(session)) return;
+      this.redraw(session);
+    } catch (err) {
+      brokerLog.debug("refresh failed", { err });
+    }
   }
 
   /** Re-read the live model and draw it, honouring the per-chat edit cap. */
