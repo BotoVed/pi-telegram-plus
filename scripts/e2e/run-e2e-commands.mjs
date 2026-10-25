@@ -429,6 +429,20 @@ async function runHost(host, label, phase = "main") {
       sessionsAfter - sessionsBefore === 1 && newAcks === 1,
       `sessions +${sessionsAfter - sessionsBefore}, /new acks=${newAcks}`);
 
+    // Z1: pi edits the "▶️ /new" ack in place once the new runtime is up, so
+    // the outcome reaches the chat instead of only the terminal.
+    if (host === "pi") {
+      try {
+        await waitFor("/new result delivered", (state) =>
+          state.calls.some((c) => c.method === "editMessageText"
+            && /New session started/.test(String(c.body?.text ?? ""))), 30_000);
+        record("/new result delivered", true);
+      } catch (error) {
+        record("/new result delivered", false, String(error.message).slice(0, 200));
+      }
+      await settle();
+    }
+
     const paneTail = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
     record("host pane free of crashes", !/Uncaught|TypeError:|ReferenceError:/.test(paneTail));
     if (!KEEP) { killSession(session); try { await controlPost("/_control/reset"); } catch { /* ignore */ } }
@@ -999,9 +1013,79 @@ async function runHost(host, label, phase = "main") {
   }
   await settle();
 
+  // ── Follow-ups: picker tabs, resume list, settings search (OMP) ──────
+  if (host === "omp") {
+    // Z2: the picker's tab strip reaches Telegram and a tab press re-renders
+    // with the pressed tab marked active (`● ` prefix, tsp adapter labels).
+    try {
+      const treeSince = await cursor();
+      await dispatch("/tree", { timeoutMs: 30_000 });
+      const tree = await waitFor("/tree tab keyboard", (state) =>
+        state.calls.slice(treeSince).findLast((c) => Array.isArray(rowsOf(c)) && findButton(c, /^(● )?All$/)) ?? false, 30_000);
+      const allTab = findButton(tree, /^(● )?All$/);
+      if (!allTab) throw new Error(`no All tab: ${buttonsOf(tree).map((b) => b.text).join(" / ").slice(0, 120)}`);
+      const clickSince = await cursor();
+      await click(allTab, tree.body?.message_id ?? tree.message_id, { timeoutMs: 30_000 });
+      const active = await waitFor("/tree All tab active", (state) =>
+        state.calls.slice(clickSince).findLast((c) => Array.isArray(rowsOf(c)) && findButton(c, /^● All$/)) ?? false, 30_000);
+      record("omp /tree tabs", Boolean(active),
+        `tabs: ${buttonsOf(tree).map((b) => b.text).join(" / ").slice(0, 90)}`);
+    } catch (error) {
+      record("omp /tree tabs", false, String(error.message).slice(0, 200));
+    }
+    await settle();
+
+    // The window/main /new steps created sessions, so /resume must present a
+    // real picker, not an empty-state notice.
+    try {
+      const resumeSince = await cursor();
+      await dispatch("/resume", { timeoutMs: 30_000 });
+      const list = await waitFor("/resume picker", (state) =>
+        state.calls.slice(resumeSince).findLast((c) => Array.isArray(rowsOf(c))) ?? false, 30_000);
+      const listText = String(list.body?.text ?? "");
+      const rows = buttonsOf(list).filter((b) =>
+        !/^tgplus:dlg:[^:]+:\d+:(x|p|k)$/.test(String(b.callback_data ?? ""))
+        && !/Cancel|Close|Back|Prev|Next|Submit|^\d+\/\d+$/.test(String(b.text ?? "")));
+      record("omp /resume lists sessions", !/No sessions/i.test(listText) && rows.length >= 1,
+        `${rows.length} rows · ${listText.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 80)}`);
+    } catch (error) {
+      record("omp /resume lists sessions", false, String(error.message).slice(0, 200));
+    }
+    await settle();
+
+    // Z3/Z3b: text typed while the settings page is open is its search term;
+    // the keyboard refreshes to the filtered rows.
+    try {
+      const settingsSince = await cursor();
+      await dispatch("/settings", { timeoutMs: 30_000 });
+      await waitFor("/settings dialog", (state) => lastKeyboardCall(state, settingsSince) ?? false, 20_000);
+      const searchSince = await cursor();
+      await injectMessage("thinking");
+      const hit = await waitFor("/settings search refresh", (state) =>
+        state.calls.slice(searchSince).findLast((c) => Array.isArray(rowsOf(c))
+          && buttonsOf(c).some((b) => /thinking/i.test(String(b.text ?? "")))) ?? false, 20_000);
+      const labels = hit ? buttonsOf(hit).filter((b) => /thinking/i.test(String(b.text ?? ""))).map((b) => b.text) : [];
+      record("omp /settings search", Boolean(hit), labels.join(" / ").slice(0, 120));
+    } catch (error) {
+      record("omp /settings search", false, String(error.message).slice(0, 200));
+    }
+    await settle();
+  }
+
   // ── Reload, then verify the plugin still serves ────────────────────────
   try {
+    const reloadSince = await cursor();
     await dispatch("/reload");
+    // Z1: the reloaded runtime answers the command in the chat itself.
+    await waitFor("/reload result delivered", (state) =>
+      state.calls.slice(reloadSince).some((c) => c.method === "sendMessage"
+        && /Reloaded/.test(String(c.body?.text ?? ""))), 30_000);
+    record("/reload result delivered", true);
+  } catch (error) {
+    record("/reload result delivered", false, String(error.message).slice(0, 200));
+  }
+  await settle();
+  try {
     await sleep(2500);
     const call = await dispatch("/status");
     record("survives /reload", /status|session/i.test(String(call.body?.text ?? "")), String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
