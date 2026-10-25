@@ -39,6 +39,8 @@
 | 3D pi 内置选择器 | 读字段的适配器（pi 1.4.0）；`/fork`、`/clone` 交给宿主，选择器用 `UserMessageSelectorComponent` 适配器，之后删除插件自带的消息列表（决定 52） | T3.3–T3.10，含 1.4 新增 `/thinking`、`/trust` | pi 同组命令（含 `/fork`、`/clone`）达到同样效果 |
 | 3E 收尾验收 | 只有输出的命令逐个验证；阶段 3 总验收 | T3.2（剩余）、T3.12、T3.13 | 两个宿主全量 E2E 通过；清单中属于阶段 3 的条目清空；README 中已过时的说明（`/tg-*`、`tuiBridge`、屏幕镜像）由主控改写 |
 
+**3E 分工**（用户 2026-10-25）：主控跑全量 E2E、逐条分析失败原因并写修复任务书；**代码修改仍由 Qwen 执行**。
+
 3A 检查点（用户 2026-10-25：3A 仍太大，再拆）：
 
 | 检查点 | 内容 | 任务 |
@@ -66,7 +68,7 @@
 | A1 | 开发依赖升级到 pi `1.4.0`；按 1.4.0 源码核对剩余代码依赖的宿主接口，输出"需要改"清单 | D1–D4 | ☑（核对部分由主控完成；升级依赖并入 A2） | 4 处需要改：捕获补丁点 `initHooksAndCustomTools` 已改名；入口改挂 `pushExtensionDialog`/`removeExtensionDialog`；命令目录只用 `autocompleteProvider`；内置命令新增 `/bug`、`/thinking`、`/trust` |
 | A2 | 按 A1 清单修正 pi 侧代码（入口改用 1.4.0 的对话框栈 `pushExtensionDialog`/`removeExtensionDialog` 等）；更新方案中的 0.81.1 引用；删除多版本测试矩阵 | A1 | ☑ | `cecf115`；矩阵工具与 E2E 多版本循环拆到 A3 |
 | A3 | 删除多版本兼容矩阵工具（`gen-compat-matrix.mjs`、`compat:*`、发布流程检查）；E2E 只测 `node_modules` 里的 pi 1.4.0 | A2 | ☑ | `c3b893f`；README 兼容性一节、`docs/compatibility.md` 已改写，`compat-results.json` 已删除 |
-| A4 | 启动时检查宿主版本（pi `1.4.0`、OMP `18.12.x`），不符或读不到即停止工作，并在状态栏与 Telegram 说明原因（§0.1 第 1 条） | A3 | ☐ | |
+| A4 | 启动时检查宿主版本（pi `1.4.0`、OMP `18.12.x`），不符或读不到即停止工作，并在状态栏与 Telegram 说明原因（§0.1 第 1 条） | A3 | ☑ | `2bd8469`；3A-4 检查点完成，**3A 全部完成**（2026-10-25，单测 548/548、0 skip） |
 
 每个任务的完成标准：`npm run typecheck`、`npm test` 全绿；E2E 只允许"待迁移"清单内的步骤失败；删除的代码相关测试同步删除或改写。每个任务由主控拆成单独的任务书派发。
 
