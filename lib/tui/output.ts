@@ -24,6 +24,14 @@ const MAX_COMPONENTS = 20;
 const BASH_SETTLE_MS = 300;
 const AGENT_CTORS = /^(AssistantMessageComponent|UserMessageComponent|ToolExecutionComponent|BashExecutionComponent|qs|_Te|Aw)$/;
 const AGENT_FIELDS = ["lastMessage", "hasToolCalls", "toolCallId"];
+/** Commands that reset the transcript (`chat.clear()`) and then mount their
+ * own result component in the same task: `/compact`'s summary, OMP's
+ * `/clear` result (command-controller.ts 1349), `/delete` and the new-session
+ * flow behind `/new` (command-controller.ts 1380). The `clear` hook marks the
+ * chat as rebuilding until the next tick, so children added during that tick
+ * are command output for these labels, not history; history components stay
+ * excluded by identity (`isAgentComponent`) below. */
+const REBUILD_OUTPUT_LABELS = new Set(["compact", "clear", "delete", "new"]);
 
 /** The host's shell-execution component (D3b), claimed only by a "!" scope.
  * Minified host builds rename constructors, so the name match is only the
@@ -249,12 +257,11 @@ export class OutputCapture {
       });
       hookMethod(chat, "addChild", "output-add-child", undefined, (args) => {
         if (this.statusDepth > 0) return;
-        // /compact clears and rebuilds the transcript, then appends the new
-        // summary in the same task. The summary is command output, not history,
-        // so keep claiming children for that label; history components are
-        // excluded by identity below.
-        const compactScope = this.binding?.scope.label === "compact";
-        if (this.rebuilding.has(chat) && !compactScope) return;
+        // REBUILD_OUTPUT_LABELS commands clear the transcript and append
+        // their result in the same task; keep claiming children for those
+        // labels. History components are excluded by identity below.
+        const rebuildScope = REBUILD_OUTPUT_LABELS.has(this.binding?.scope.label ?? "");
+        if (this.rebuilding.has(chat) && !rebuildScope) return;
         const child = args[0];
         if (!isHostObject(child)) return;
         // D3b: inside a "!" scope the host's bash executor is the command's
@@ -349,7 +356,9 @@ export class OutputCapture {
         ? (binding.outputHtml ? `${binding.outputHtml}\n\n${added}` : added)
         : binding.outputHtml;
       const header = binding.telegram.ackHtml;
-      const single = splitTelegramHtml(`${header}\n\n${combined}`, 3400);
+      // Empty output must not append the separator: the final ack would
+      // otherwise carry three blank lines before `✓ Done`.
+      const single = splitTelegramHtml(combined ? `${header}\n\n${combined}` : header, 3400);
       if (single.length === 1 && !binding.overflowed) {
         let text = single[0];
         if (final && !text.includes("✓ Done")) text += "\n\n<i>✓ Done</i>";

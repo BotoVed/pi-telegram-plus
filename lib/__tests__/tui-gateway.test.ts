@@ -472,3 +472,95 @@ describe("OutputCapture shell scope", () => {
     origin.end(scope, "idle");
   });
 });
+
+describe("OutputCapture transcript-reset scopes", () => {
+  // OMP's /clear and /delete reset the transcript, then present their result
+  // component in the same task (command-controller.ts 1349/1380). The `clear`
+  // hook marks the chat as rebuilding until the next tick, so
+  // REBUILD_OUTPUT_LABELS must keep claiming children added during it.
+  class ResetResultComponent {
+    constructor(public line: string) {}
+    render() { return [this.line]; }
+  }
+  // Name matches AGENT_CTORS: rebuilt history stays excluded even inside a
+  // reset scope.
+  class AssistantMessageComponent {
+    render() { return ["old assistant message"]; }
+  }
+
+  function attachedChat() {
+    const transport = fakeTransport();
+    const origin = new OriginTracker({ isEditorFocused: () => true, readDraft: () => "", writeDraft: () => true });
+    const output = new OutputCapture(transport, origin);
+    const chat = {
+      clear(): void {},
+      addChild: (_child: unknown) => undefined,
+    };
+    (output as unknown as { attach(state: unknown): void }).attach({ host: "pi", mode: {}, chat });
+    return { transport, origin, output, chat };
+  }
+
+  function resetScope(origin: OriginTracker, output: OutputCapture, label: string) {
+    const scope = origin.begin({ chatId: 1 }, label, `/${label}`, "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: `<b>▶️ /${label}</b>` });
+    return scope;
+  }
+
+  it("keeps the /clear result mounted right after the transcript reset", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = resetScope(origin, output, "clear");
+    chat.clear();
+    chat.addChild(new ResetResultComponent("\u2713 Context reset \u2014 0 messages dropped"));
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.at(-1)?.text).toContain("\u2713 Context reset \u2014 0 messages dropped");
+    origin.end(scope, "idle");
+  });
+
+  it("keeps the /delete result mounted right after the transcript reset", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = resetScope(origin, output, "delete");
+    chat.clear();
+    chat.addChild(new ResetResultComponent("Session deleted"));
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.at(-1)?.text).toContain("Session deleted");
+    origin.end(scope, "idle");
+  });
+
+  it("still skips children added during a reset outside the reset labels", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = resetScope(origin, output, "resume");
+    chat.clear();
+    chat.addChild(new ResetResultComponent("must not reach the ack"));
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.every((edit) => !edit.text.includes("must not reach the ack"))).toBe(true);
+    origin.end(scope, "idle");
+  });
+
+  it("excludes rebuilt agent history inside a clear scope", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = resetScope(origin, output, "clear");
+    chat.clear();
+    chat.addChild(new AssistantMessageComponent());
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.every((edit) => !edit.text.includes("old assistant message"))).toBe(true);
+    origin.end(scope, "idle");
+  });
+
+  it("sends the final ack without a blank separator when nothing was captured", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output } = attachedChat();
+    const scope = resetScope(origin, output, "x");
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(transport.edits.at(-1)?.text).toBe("<b>\u25b6\ufe0f /x</b>\n\n<i>\u2713 Done</i>");
+    origin.end(scope, "idle");
+  });
+});
