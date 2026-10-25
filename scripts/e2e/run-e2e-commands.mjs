@@ -157,6 +157,9 @@ function startHost(host, projectDir, agentDir, paneLog, session) {
 
 const rowsOf = (call) => call?.body?.reply_markup?.inline_keyboard;
 const buttonsOf = (call) => (rowsOf(call) ?? []).flat();
+// The mock records a rejected send with a non-empty `rejected` array: that
+// message never reached the chat, so its keyboard must never be picked.
+const wasRejected = (call) => Array.isArray(call?.rejected) && call.rejected.length > 0;
 // Brokered dialogs carry `tgplus:dlg:` keyboards whose `c/t/v/m` ops are list
 // rows, `k` a key name and `x` cancel. The old screen-mirror keyboard
 // (`tgplus:tui:`) was removed (D2): a stale copy only gets the expiry notice.
@@ -164,7 +167,7 @@ const DIALOG_CANCEL = /^tgplus:dlg:[^:]+:\d+:x$/;
 const hasDialog = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:"));
 const isControllable = (call) => hasDialog(call);
 const hasUi = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:ui:"));
-const lastKeyboardCall = (state, since = 0) => state.calls.slice(since).findLast((c) => Array.isArray(rowsOf(c)));
+const lastKeyboardCall = (state, since = 0) => state.calls.slice(since).findLast((c) => Array.isArray(rowsOf(c)) && !wasRejected(c));
 const signature = (call) => `${String(call?.body?.text ?? "").slice(0, 200)}|${buttonsOf(call).map((b) => `${b.text}:${b.callback_data}`).join(",")}`;
 
 async function runHost(host, label, phase = "main") {
@@ -271,7 +274,7 @@ async function runHost(host, label, phase = "main") {
       // Only this menu's message (or a fresh send) answers the click; stray
       // mirror edits from leftover TUI overlays must not be mistaken for it.
       const hit = state.calls.slice(since).findLast((entry) =>
-        RESPONSE_METHODS.has(entry.method) && entry.body
+        !wasRejected(entry) && RESPONSE_METHODS.has(entry.method) && entry.body
         && (entry.method === "sendMessage" || entry.body.message_id === targetMessageId)
         && (Array.isArray(entry.body.reply_markup?.inline_keyboard) || typeof entry.body.text === "string"));
       return hit ?? false;
@@ -349,7 +352,7 @@ async function runHost(host, label, phase = "main") {
         const since = await cursor();
         await dispatch("/tg");
         const mainMenu = await waitFor("/tg main menu", (state) =>
-          state.calls.slice(since).findLast((entry) => findButton(entry, /🤖 Bots/)) ?? false);
+          state.calls.slice(since).findLast((entry) => !wasRejected(entry) && findButton(entry, /🤖 Bots/)) ?? false);
         const projectButton = findButton(mainMenu, /📁 Project/);
         if (!projectButton) throw new Error(`no 📁 Project entry: ${buttonsOf(mainMenu).map((b) => b.text).join(" / ")}`);
         const project = await click(projectButton, mainMenu.body?.message_id ?? mainMenu.message_id);
@@ -486,6 +489,10 @@ async function runHost(host, label, phase = "main") {
     } catch (error) {
       record(label, false, String(error.message).slice(0, 200));
     }
+    // The list stays open after this step; without settling, the next
+    // injected chat line would be consumed as the list's search term
+    // (search-as-typing is the expected Z2 behaviour).
+    await settle();
   }
 
   // ── Scripted `ask` tool round trip ─────────────────────────────────────
@@ -496,7 +503,7 @@ async function runHost(host, label, phase = "main") {
     await injectMessage("please run the ask probe ASK_TOOL_PROBE");
     const mirror = await waitFor("ask prompt mirrored", (state) =>
       state.calls.slice(since).findLast((entry) =>
-        Array.isArray(rowsOf(entry)) && (isControllable(entry) || hasUi(entry))), 25_000)
+        !wasRejected(entry) && Array.isArray(rowsOf(entry)) && (isControllable(entry) || hasUi(entry))), 25_000)
       .catch(() => undefined);
     if (!mirror) {
       const providerLog = join(ROOT, "provider.jsonl");
@@ -631,7 +638,7 @@ async function runHost(host, label, phase = "main") {
     const state = await controlGet();
     // Scope to this dispatch: panel mirrors from earlier commands now carry
     // keyboards (⎋ Close) and must not be mistaken for the /tg menu.
-    const menu = state.calls.slice(since).findLast((entry) => findButton(entry, /🤖 Bots/));
+    const menu = state.calls.slice(since).findLast((entry) => !wasRejected(entry) && findButton(entry, /🤖 Bots/));
     return menu ?? lastKeyboardCall(state, since) ?? call;
   };
   const menuStep = async (label, parentCall, buttonPattern, checks) => {
@@ -789,7 +796,7 @@ async function runHost(host, label, phase = "main") {
     // D2/D3: the gateway only acks ("▶️ /model"); the host raises the picker,
     // so the dialog arrives afterwards as its own `tgplus:dlg:` message.
     const dialog = isControllable(ack) ? ack : await waitFor("model dialog after ack", (state) =>
-      state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry)) ?? false, 15_000)
+      state.calls.slice(since).findLast((entry) => !wasRejected(entry) && Array.isArray(rowsOf(entry)) && isControllable(entry)) ?? false, 15_000)
       .catch(() => undefined);
     if (!dialog) {
       record("menu /model selects", false, "no dialog after ack");
@@ -806,7 +813,7 @@ async function runHost(host, label, phase = "main") {
         // a second dialog ("Assign <model> to", first item `default`) and
         // nothing applies until that is answered too (3E).
         const purposeDialog = await waitFor("model purpose dialog", (state) =>
-          state.calls.slice(clickCursor).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry)
+          state.calls.slice(clickCursor).findLast((entry) => !wasRejected(entry) && Array.isArray(rowsOf(entry)) && isControllable(entry)
             && (/Assign .* to/i.test(String(entry.body?.text ?? ""))
               || buttonsOf(entry).some((b) => /^default\b/i.test(String(b.text ?? ""))))) ?? false,
           4_000).catch(() => undefined);
@@ -866,7 +873,7 @@ async function runHost(host, label, phase = "main") {
       const since = await cursor();
       const call = await dispatch("/scoped-models");
       const dialog = isControllable(call) ? call : await waitFor("scoped-models dialog after ack", (state) =>
-        state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry)) ?? false, 15_000)
+        state.calls.slice(since).findLast((entry) => !wasRejected(entry) && Array.isArray(rowsOf(entry)) && isControllable(entry)) ?? false, 15_000)
         .catch(() => undefined);
       record("menu /scoped-models opens", Boolean(dialog) && buttonsOf(dialog).length > 0,
         dialog ? `dialog · ${buttonsOf(dialog).slice(0, 3).map((b) => b.text).join(" / ").slice(0, 60)}` : "no dialog after ack");
@@ -904,7 +911,7 @@ async function runHost(host, label, phase = "main") {
     // as the brokered `tgplus:dlg:` keyboard (§0.1 #4: the host executes, the
     // Broker presents the dialog it raises).
     const mirror = isControllable(first) ? first : await waitFor("settings dialog", (state) => {
-      const hit = state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry));
+      const hit = state.calls.slice(since).findLast((entry) => !wasRejected(entry) && Array.isArray(rowsOf(entry)) && isControllable(entry));
       return hit ?? false;
     }, 15_000).catch(() => undefined);
     const native = buttonsOf(first).length > 0;
@@ -1021,13 +1028,13 @@ async function runHost(host, label, phase = "main") {
       const treeSince = await cursor();
       await dispatch("/tree", { timeoutMs: 30_000 });
       const tree = await waitFor("/tree tab keyboard", (state) =>
-        state.calls.slice(treeSince).findLast((c) => Array.isArray(rowsOf(c)) && findButton(c, /^(● )?All$/)) ?? false, 30_000);
+        state.calls.slice(treeSince).findLast((c) => !wasRejected(c) && Array.isArray(rowsOf(c)) && findButton(c, /^(● )?All$/)) ?? false, 30_000);
       const allTab = findButton(tree, /^(● )?All$/);
       if (!allTab) throw new Error(`no All tab: ${buttonsOf(tree).map((b) => b.text).join(" / ").slice(0, 120)}`);
       const clickSince = await cursor();
       await click(allTab, tree.body?.message_id ?? tree.message_id, { timeoutMs: 30_000 });
       const active = await waitFor("/tree All tab active", (state) =>
-        state.calls.slice(clickSince).findLast((c) => Array.isArray(rowsOf(c)) && findButton(c, /^● All$/)) ?? false, 30_000);
+        state.calls.slice(clickSince).findLast((c) => !wasRejected(c) && Array.isArray(rowsOf(c)) && findButton(c, /^● All$/)) ?? false, 30_000);
       record("omp /tree tabs", Boolean(active),
         `tabs: ${buttonsOf(tree).map((b) => b.text).join(" / ").slice(0, 90)}`);
     } catch (error) {
@@ -1041,7 +1048,7 @@ async function runHost(host, label, phase = "main") {
       const resumeSince = await cursor();
       await dispatch("/resume", { timeoutMs: 30_000 });
       const list = await waitFor("/resume picker", (state) =>
-        state.calls.slice(resumeSince).findLast((c) => Array.isArray(rowsOf(c))) ?? false, 30_000);
+        state.calls.slice(resumeSince).findLast((c) => !wasRejected(c) && Array.isArray(rowsOf(c))) ?? false, 30_000);
       const listText = String(list.body?.text ?? "");
       const rows = buttonsOf(list).filter((b) =>
         !/^tgplus:dlg:[^:]+:\d+:(x|p|k)$/.test(String(b.callback_data ?? ""))
@@ -1062,7 +1069,7 @@ async function runHost(host, label, phase = "main") {
       const searchSince = await cursor();
       await injectMessage("thinking");
       const hit = await waitFor("/settings search refresh", (state) =>
-        state.calls.slice(searchSince).findLast((c) => Array.isArray(rowsOf(c))
+        state.calls.slice(searchSince).findLast((c) => !wasRejected(c) && Array.isArray(rowsOf(c))
           && buttonsOf(c).some((b) => /thinking/i.test(String(b.text ?? "")))) ?? false, 20_000);
       const labels = hit ? buttonsOf(hit).filter((b) => /thinking/i.test(String(b.text ?? ""))).map((b) => b.text) : [];
       record("omp /settings search", Boolean(hit), labels.join(" / ").slice(0, 120));

@@ -62,6 +62,14 @@ function chunk(buttons: TelegramButton[]): TelegramButton[][] {
   return rows;
 }
 
+/** Telegram Bot API hard limit: at most 8 buttons per inline keyboard row. */
+export const MAX_ROW_BUTTONS = 8;
+
+/** Safety net at the render exit: an oversized row is re-chunked. */
+export function fitRows(rows: TelegramButton[][]): TelegramButton[][] {
+  return rows.flatMap((row) => (row.length > MAX_ROW_BUTTONS ? chunk(row) : [row]));
+}
+
 function button(label: string, ctx: RenderContext, op: string, arg?: string): TelegramButton | undefined {
   try {
     return { text: label, value: encodeDialogCallback(ctx.sessionId, ctx.generation, op, arg) };
@@ -138,13 +146,16 @@ function renderSelect(model: Extract<DialogModel, { kind: "select" }>, ctx: Rend
     const search = button(`🔍 ${shorten(model.search.query || "Search", 20)}`, ctx, "s");
     if (search) actions.push(search);
   }
-  for (const extra of model.extraActions ?? []) {
-    const built = button(shorten(extra.label, MAX_LABEL), ctx, "k", extra.key);
-    if (built) actions.push(built);
-  }
+  // Footer extras get their own rows: a single footer row carrying nine
+  // buttons (OMP /agents: 2 scope + 5 action + Search + Cancel) is rejected
+  // by the Bot API (max 8 per row), so the whole list never reaches the chat.
+  const extras = keep((model.extraActions ?? []).map(
+    (extra) => button(shorten(extra.label, MAX_LABEL), ctx, "k", extra.key),
+  ));
   actions.push(...cancelRow(ctx));
   const nav = pageButtons(total, page, ctx);
   if (nav.length > 0) rows.push(nav);
+  rows.push(...chunk(extras));
   rows.push(actions);
   const subtitle = `Page ${page + 1}/${pages} · ${total} items`;
   return {
@@ -244,7 +255,7 @@ function renderQuestionnaire(model: Extract<DialogModel, { kind: "questionnaire"
     if (submit) actions.push(submit);
   }
   actions.push(...cancelRow(ctx));
-  rows.push(actions);
+  rows.push(...chunk(actions));
   return { text: header(model.title, status, [body]), rows, keyMap, page: 0, pages: 1 };
 }
 
@@ -364,7 +375,10 @@ function redactModel<T>(value: T, redact: (text: string) => string): T {
  */
 export function renderDialog(model: DialogModel, ctx: RenderContext): RenderedDialog {
   const renderContext: RenderContext = { ...ctx, page: ctx.page ?? 0 };
-  if (!ctx.redact) return renderModel(model, renderContext);
+  if (!ctx.redact) {
+    const shown = renderModel(model, renderContext);
+    return { ...shown, rows: fitRows(shown.rows) };
+  }
   const shown = renderModel(redactModel(model, ctx.redact), renderContext);
-  return { ...shown, keyMap: renderModel(model, renderContext).keyMap };
+  return { ...shown, rows: fitRows(shown.rows), keyMap: renderModel(model, renderContext).keyMap };
 }

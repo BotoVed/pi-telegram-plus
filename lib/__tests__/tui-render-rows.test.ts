@@ -1,0 +1,72 @@
+import { describe, expect, it } from "vitest";
+import { fitRows, renderDialog } from "../tui/render-telegram.ts";
+import type { DialogModel } from "../tui/model.ts";
+import type { TelegramButton } from "../types.ts";
+
+const CTX = { sessionId: "s1", generation: 1 };
+
+/** OMP /agents shape: 2 scope + 5 action extras on top of Search/Cancel. */
+const extraActions = [
+  { label: "● Running", key: "scope:0" },
+  { label: "All", key: "scope:2" },
+  { label: "Inspect", key: "act:0" },
+  { label: "Summarize", key: "act:1" },
+  { label: "Stop", key: "act:2" },
+  { label: "Restart", key: "act:3" },
+  { label: "Mute", key: "act:4" },
+  { label: "Export", key: "act:5" },
+  { label: "Refresh", key: "act:6" },
+];
+
+function selectModel(overrides: Partial<Extract<DialogModel, { kind: "select" }>> = {}): DialogModel {
+  return {
+    kind: "select",
+    title: "Agents",
+    items: [
+      { key: "a", label: "agent-a" },
+      { key: "b", label: "agent-b" },
+    ],
+    total: 2,
+    search: { query: "" },
+    extraActions,
+    ...overrides,
+  };
+}
+
+const texts = (rows: TelegramButton[][]) => rows.map((row) => row.map((b) => b.text));
+
+describe("select footer wraps within Telegram's per-row button limit", () => {
+  it("splits nine extras into rows of three and keeps Search/Cancel last", () => {
+    const rendered = renderDialog(selectModel(), CTX);
+    const grid = texts(rendered.rows);
+
+    expect(rendered.rows.every((row) => row.length <= 3)).toBe(true);
+    expect(grid.at(-1)).toEqual(["🔍 Search", "Cancel"]);
+
+    // Nothing dropped, nothing shuffled: items first, then every extra in
+    // model order, then the fixed footer row.
+    const flat = rendered.rows.flat().map((b) => b.text);
+    expect(flat).toEqual([
+      "agent-a",
+      "agent-b",
+      ...extraActions.map((extra) => extra.label),
+      "🔍 Search",
+      "Cancel",
+    ]);
+  });
+
+  it("keeps Submit in the final row alongside Search and Cancel", () => {
+    const rendered = renderDialog(selectModel({ multi: true }), CTX);
+    expect(texts(rendered.rows).at(-1)).toEqual(["⏎ Submit", "🔍 Search", "Cancel"]);
+  });
+
+  it("re-chunks any row past the eight-button hard limit", () => {
+    const long: TelegramButton[] = Array.from({ length: 9 }, (_, i) => ({ text: `b${i + 1}`, value: `v${i + 1}` }));
+    const ok: TelegramButton[] = Array.from({ length: 8 }, (_, i) => ({ text: `c${i + 1}`, value: `w${i + 1}` }));
+    const fitted = fitRows([long, ok]);
+
+    expect(fitted.every((row) => row.length <= 8)).toBe(true);
+    expect(fitted.map((row) => row.length)).toEqual([3, 3, 3, 8]);
+    expect(fitted.flat().map((b) => b.text)).toEqual([...long, ...ok].map((b) => b.text));
+  });
+});
