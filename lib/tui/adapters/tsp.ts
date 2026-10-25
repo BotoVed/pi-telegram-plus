@@ -760,8 +760,12 @@ export const tspPrefsAdapter: DialogAdapter = {
     if (!found) return { kind: "unsupported", what: "OMP settings page closed or no longer a settings page" };
     const { owner, props } = found;
     const currentPage = typeof props.page === "string" ? props.page : "";
+    const query = typeof props.query === "string" ? props.query : "";
     const items: (DialogItem & { values?: string[]; hasSubmenu?: boolean })[] = [];
-    const pages = Array.isArray(props.pages) ? (props.pages as readonly PrefsPageLike[]) : [];
+    // While a search is active the host filters rows across every page, so the
+    // page shortcuts would only push the results off the first page: show the
+    // matches alone, the same view the terminal gives.
+    const pages = query ? [] : (Array.isArray(props.pages) ? (props.pages as readonly PrefsPageLike[]) : []);
     for (const page of pages) {
       if (!isObject(page) || typeof page.id !== "string" || page.disabled) continue;
       if (page.id === currentPage) continue;
@@ -776,7 +780,7 @@ export const tspPrefsAdapter: DialogAdapter = {
     // keyboard (its footer says "Type to search"), so advertise the box even
     // before the terminal has typed anything - otherwise Telegram has no way to
     // start a search, only to continue one.
-    const search = { query: typeof props.query === "string" ? props.query : "" };
+    const search = { query };
     return {
       kind: "settings",
       title: typeof props.title === "string" ? props.title : "Settings",

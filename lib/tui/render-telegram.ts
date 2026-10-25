@@ -219,8 +219,14 @@ function renderSettings(model: Extract<DialogModel, { kind: "settings" }>, ctx: 
   const nav = pageButtons(model.items.length, page, ctx);
   if (nav.length > 0) rows.push(nav);
   rows.push(cancelRow(ctx));
+  const subtitle = `Page ${page + 1}/${pages} · ${model.items.length} items`;
   return {
-    text: listText(model.title, `Page ${page + 1}/${pages} · ${model.items.length} items`, model.items, page),
+    text: listText(
+      model.title,
+      model.search ? `${subtitle} · 🔍 ${shorten(model.search.query || "Type to search", 20)}` : subtitle,
+      model.items,
+      page,
+    ),
     rows,
     keyMap,
     page,

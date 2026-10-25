@@ -548,6 +548,22 @@ describe("tsp prefs read", () => {
       { key: "width", label: "Width", value: "80", hasSubmenu: true },
     ]);
   });
+
+  it("shows only the matches while a search is active", () => {
+    const component = makeComponent({ k: "prefs", p: { ...pageProps(), query: "thinking" } });
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.search).toEqual({ query: "thinking" });
+    expect(model.items.some((item) => item.key.startsWith("page:"))).toBe(false);
+    expect(model.items.map((item) => item.key)).toEqual(["think", "theme", "width"]);
+  });
+
+  it("keeps the page entries while the query is empty or absent", () => {
+    const empty = asSettings(tspPrefsAdapter.read(makeComponent({ k: "prefs", p: { ...pageProps(), query: "" } }), ctxFor()));
+    expect(empty.items.map((item) => item.key)).toContain("page:general");
+    const absent = asSettings(tspPrefsAdapter.read(makeComponent({ k: "prefs", p: pageProps() }), ctxFor()));
+    expect(absent.items.map((item) => item.key)).toContain("page:general");
+    expect(absent.search).toEqual({ query: "" });
+  });
 });
 
 describe("tsp prefs act", () => {

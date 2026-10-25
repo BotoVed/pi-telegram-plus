@@ -461,7 +461,8 @@ async function runHost(host, label, phase = "main") {
       await dispatch("/mcp");
       const body = await waitFor(label, (state) =>
         state.calls.slice(since).find((entry) =>
-          (entry.method === "sendMessage" || entry.method === "editMessageText")
+          !wasRejected(entry)
+          && (entry.method === "sendMessage" || entry.method === "editMessageText")
           && /MCP Server Management[\s\S]*\/mcp add/.test(bodyText(entry))) ?? false, 15_000).catch(() => undefined);
       record(label, Boolean(body),
         bodyText(body).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
@@ -479,7 +480,8 @@ async function runHost(host, label, phase = "main") {
       await dispatch("/agents");
       const body = await waitFor(label, (state) =>
         state.calls.slice(since).find((entry) =>
-          (entry.method === "sendMessage" || entry.method === "editMessageText")
+          !wasRejected(entry)
+          && (entry.method === "sendMessage" || entry.method === "editMessageText")
           // The TSP adapter presents /agents as an actionable `tgplus:dlg:`
           // list; the old read-only <pre> dashboard also still counts.
           && (/Agents/i.test(bodyText(entry)) && hasDialog(entry)
