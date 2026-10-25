@@ -95,7 +95,8 @@
 | T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | ☐ | |
 | T3.2e-1 | TSP：OMP 设置页（prefs：换页、switch、choice）；带竞答句柄的对话框 TSP 不接管 | T3.2d | ☑ | `3b40a58` |
 | T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | ☐ | |
-| T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二；含原 B4） | B3b、T3.2e、T3.2f | ☐ | |
+| T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二；含原 B4） | B3b、T3.2e、T3.2f | ☑ | `d3a3e56`；提前完成（不依赖 T3.2e/f 的剩余部分）。没有可读字段又没有竞答句柄的 OMP 对话框不再靠画面发键 |
+| C1 | `/fork`、`/clone` 交给宿主（决定 52）；gateway 提交前保存消息进度，防止替换会话后重复执行 | T3.2g | ☐ | |
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
 | T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
 | T3.5 | pi `/settings` 子菜单 | T3.4 | ☐ | |
