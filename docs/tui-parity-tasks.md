@@ -89,12 +89,12 @@
 | B1 | 竞答核心 + `select`（两个宿主）：按调用参数建 broker 会话，先答者生效，另一方关闭；竞答占用的组件不再由焦点路径建会话 | B0 | ☑ | `eb08ade`；会话仍由焦点打开，按钮经入口上的竞答句柄作答（方案 §4.12 第 2–6 步） |
 | B2 | 竞答：`confirm`、`input`（两个宿主） | B1 | ☑ | `d9923f8` |
 | B3a | 竞答：OMP 的 `editor`、`approve`（pi 的 `editor` 不接受 signal，不竞答） | B2 | ☑ | `71597ba` |
-| B3b | 竞答：OMP 的 `askDialog`（ask 工具：插件按 Telegram 的选择拼出 `{ kind: "submit", results }`，含自定义答案） | B3a | ☐ | |
-| B4 | 删除被竞答取代的焦点路径适配器分支（扩展 select/confirm/input；OMP 读画面部分仍留给 T3.2g） | B3b | ☐ | |
+| B3b | 竞答：OMP 的 `askDialog`（ask 工具：插件按 Telegram 的选择拼出 `{ kind: "submit", results }`，含自定义答案） | B3a | ☑ | `5e7e5a6`；**3B 编码完成**（2026-10-25，单测 594/594、0 skip），E2E 在 3E |
+| ~~B4~~ | ~~删除被竞答取代的按键路径~~：并入 T3.2g。没有竞答句柄的对话框（宿主内部的确认框、pi 的 `editor`、内置工具审批）仍需按键路径；要删的只有 OMP 上读画面的部分 | — | 并入 T3.2g | |
 | T3.2d | OMP TSP 适配器：读取 + 操作（内置选择器与 `custom` 的基础） | 3B | ☐ | |
 | T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | ☐ | |
 | T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | ☐ | |
-| T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二） | B4、T3.2e、T3.2f | ☐ | |
+| T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二；含原 B4） | B3b、T3.2e、T3.2f | ☐ | |
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
 | T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
 | T3.5 | pi `/settings` 子菜单 | T3.4 | ☐ | |
