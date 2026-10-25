@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildStatusSnapshot, registerInfoCommands } from "../commands/info.ts";
+import { buildStatusSnapshot, formatDebugReport, registerInfoCommands } from "../commands/info.ts";
 import type { CapturedAgentSession, TelegramSentMessage, TelegramTransport } from "../types.ts";
 
 function makeSession(overrides: Partial<{
@@ -328,5 +328,46 @@ describe("registerInfoCommands /hotkeys handler", () => {
     expect(text).toContain("Terminal shortcuts only work in the terminal");
     expect(text).toContain("/tg");
     expect(text).not.toContain("Keyboard Shortcuts");
+  });
+});
+
+describe("formatDebugReport", () => {
+  it("renders the plugin debug report from the session and cwd", () => {
+    const session = {
+      sessionManager: { getEntries: () => [{}, {}, {}] },
+      model: { provider: "anthropic", id: "claude-x" },
+      thinkingLevel: "low",
+      isStreaming: true,
+      isCompacting: false,
+    } as unknown as CapturedAgentSession;
+    const report = formatDebugReport(session, "/work/proj");
+    expect(report.split("\n")[0]).toBe("Plugin debug info");
+    expect(report).toContain("model: anthropic/claude-x");
+    expect(report).toContain("thinking: low");
+    expect(report).toContain("streaming: true");
+    expect(report).toContain("compacting: false");
+    expect(report).toContain("entries: 3");
+    expect(report).toContain("cwd: /work/proj");
+  });
+
+  it("falls back to (none)/off and escapes the cwd", () => {
+    const session = {
+      sessionManager: { getEntries: () => [] },
+      model: undefined,
+      thinkingLevel: undefined,
+      isStreaming: false,
+      isCompacting: false,
+    } as unknown as CapturedAgentSession;
+    const report = formatDebugReport(session, "/a&b");
+    expect(report).toContain("model: (none)");
+    expect(report).toContain("thinking: off");
+    expect(report).toContain("entries: 0");
+    expect(report).toContain("cwd: /a&amp;b");
+  });
+
+  it("the plugin no longer registers a /debug handler", () => {
+    const { registry, handlers } = makeRegistry();
+    registerInfoCommands(registry, { getSession: () => undefined });
+    expect(handlers.has("debug")).toBe(false);
   });
 });

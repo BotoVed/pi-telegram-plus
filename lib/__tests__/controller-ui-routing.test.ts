@@ -488,7 +488,7 @@ class Pi085RunnerDouble {
     let commandError: Error | undefined;
 
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
-      ["debug", async (_args, ctx) => {
+      ["pair", async (_args, ctx) => {
         try {
           const spreadUi = { ...ctx.ui };
           expect(typeof spreadUi.notify).toBe("function");
@@ -537,7 +537,7 @@ class Pi085RunnerDouble {
       endTelegramTurn: () => undefined,
     });
 
-    await controller.handleMessage({ message_id: 1, chat: { id: 777 }, from: { id: 1 }, text: "/debug" });
+    await controller.handleMessage({ message_id: 1, chat: { id: 777 }, from: { id: 1 }, text: "/pair" });
     await new Promise((r) => setTimeout(r, 80));
 
     expect(commandError).toBeUndefined();
@@ -575,7 +575,7 @@ class Pi085RunnerDouble {
     expect(sent.find((item) => item.text.includes("Local Prompt"))).toBeUndefined();
 
     // Running a subsequent Telegram command must also restore the exact original UI context
-    await controller.handleMessage({ message_id: 2, chat: { id: 777 }, from: { id: 1 }, text: "/debug" });
+    await controller.handleMessage({ message_id: 2, chat: { id: 777 }, from: { id: 1 }, text: "/pair" });
     await new Promise((r) => setTimeout(r, 80));
     await new Promise((r) => setTimeout(r, 180));
     expect(runner.getUIContext()).toBe(originalUiContext);

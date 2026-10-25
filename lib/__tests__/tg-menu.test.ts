@@ -23,6 +23,7 @@ import { registerTgMenuCommand, type SwitchInstanceDeps } from "../commands/tg-m
 import type { TelegramCommandDeps, TelegramConnectionState } from "../commands/telegram-commands.ts";
 import type { TgConfigDeps } from "../commands/register.ts";
 import { readBotRegistry, readProjectBinding, addBot, writeProjectBinding, clearDefaultBot } from "../config.ts";
+import type { CapturedAgentSession } from "../types.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
 import type * as pairingModule from "../pairing.ts";
 
@@ -86,6 +87,7 @@ describe("/tg multi-level menu", () => {
   let pollingActive: boolean;
   let connectionStateValue: TelegramConnectionState;
   let awaitReconcileCalls: number;
+  let menuSession: CapturedAgentSession | undefined;
 
   beforeEach(async () => {
     originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -103,6 +105,7 @@ describe("/tg multi-level menu", () => {
 
     connectionStateValue = "disconnected";
     awaitReconcileCalls = 0;
+    menuSession = undefined;
 
     const deps: TelegramCommandDeps = {
       getConfig: () => config,
@@ -154,6 +157,8 @@ describe("/tg multi-level menu", () => {
       deps,
       configDeps,
       switchDeps,
+      undefined,
+      { getSession: () => menuSession },
     );
   });
 
@@ -636,5 +641,40 @@ describe("/tg multi-level menu", () => {
     expect(ui.select.mock.calls[2][1]).toEqual([
       botChoiceFull(bot1, true), botChoiceFull(bot2, false), "Clear default", "⬅️ Back",
     ]);
+  });
+
+  it("main menu lists 🛠 Debug info just before ❌ Close", async () => {
+    const { ui } = makeScriptedUi({ select: ["❌ Close"] });
+    await commands.get("tg")!("", makeCtx(ui));
+    const options = ui.select.mock.calls[0][1] as string[];
+    expect(options).toContain("🛠 Debug info");
+    expect(options.indexOf("🛠 Debug info")).toBeLessThan(options.indexOf("❌ Close"));
+  });
+
+  it("Debug info reports the live session and returns to the main menu", async () => {
+    menuSession = {
+      sessionManager: { getEntries: () => [{}, {}, {}] },
+      model: { provider: "anthropic", id: "claude-x" },
+      thinkingLevel: "low",
+      isStreaming: false,
+      isCompacting: false,
+    } as unknown as CapturedAgentSession;
+    const { ui, notifyCalls } = makeScriptedUi({ select: ["🛠 Debug info", "❌ Close"] });
+    await commands.get("tg")!("", makeCtx(ui, "/work/proj"));
+    const report = notifyCalls.find((c) => c.message.startsWith("Plugin debug info"));
+    expect(report).toBeDefined();
+    expect(report?.message).toContain("model: anthropic/claude-x");
+    expect(report?.message).toContain("entries: 3");
+    // After the report the menu returns to the main list, then Close exits.
+    expect(ui.select).toHaveBeenCalledTimes(2);
+  });
+
+  it("Debug info with no active session notifies an error and stays in the menu", async () => {
+    menuSession = undefined;
+    const { ui, notifyCalls } = makeScriptedUi({ select: ["🛠 Debug info", "❌ Close"] });
+    await commands.get("tg")!("", makeCtx(ui));
+    expect(notifyCalls.some((c) => c.message === "No active session" && c.level === "error")).toBe(true);
+    expect(notifyCalls.some((c) => c.message.startsWith("Plugin debug info"))).toBe(false);
+    expect(ui.select).toHaveBeenCalledTimes(2);
   });
 });

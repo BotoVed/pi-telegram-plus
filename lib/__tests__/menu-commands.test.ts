@@ -180,6 +180,9 @@ describe("dynamic TUI catalog in BotMenu", () => {
     expect(names.has("tg")).toBe(true);
     expect(names.has("cwd")).toBe(true);
     expect(names.has("status")).toBe(true);
+    // /debug was given back to the host: it is no longer a plugin-served
+    // command, so it drops out unless the captured host catalog serves it.
+    expect(names.has("debug")).toBe(false);
   });
 
   it("keeps the curated static list when no host catalog was captured", () => {

@@ -1031,7 +1031,7 @@ describe("createTelegramController media message behavior", () => {
     } as any;
 
     const command = new Map<string, (args: string, _ctx: any) => Promise<void>>();
-    command.set("debug", async () => {
+    command.set("pair", async () => {
       throw new Error("command boom");
     });
 
@@ -1072,7 +1072,7 @@ describe("createTelegramController media message behavior", () => {
     await expect(controller.handleMessage({
       message_id: 1,
       chat: { id: 999 },
-      text: "/debug",
+      text: "/pair",
     })).resolves.toBeUndefined();
 
     await new Promise((resolve) => setTimeout(resolve, 0));

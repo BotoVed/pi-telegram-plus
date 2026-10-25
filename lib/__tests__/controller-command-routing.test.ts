@@ -127,6 +127,23 @@ describe("Command routing after the mirror removal (D2)", () => {
     run.mockRestore();
   });
 
+  it("routes /debug to the host gateway, not a plugin handler", async () => {
+    // The plugin's /debug was given back to the host: even if a stale plugin
+    // handler is still in the map, a host-served /debug must reach the gateway.
+    const run = vi.spyOn(CommandGateway.prototype, "run").mockResolvedValue(true);
+    const debugHandler = vi.fn(async () => undefined);
+    const harness = createHarness({
+      bridge: createBridge({ getCommands: async () => [{ name: "debug", description: "Debug", source: "builtin" as const }] }),
+      telegramCommands: new Map([["debug", debugHandler]]),
+    });
+
+    await send(harness.controller, "/debug");
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "debug" }));
+    expect(debugHandler).not.toHaveBeenCalled();
+    run.mockRestore();
+  });
+
   it("routes /fork and /clone to the gateway, not the plugin handler", async () => {
     const run = vi.spyOn(CommandGateway.prototype, "run").mockResolvedValue(true);
     const fork = vi.fn(async () => undefined);

@@ -9,6 +9,7 @@ import type { TgConfigDeps, SessionDeps } from "./register.ts";
 import type { BotRecord, BotRegistry, TelegramConfig } from "../types.ts";
 import { configToolFlow, configThinkingFlow, configRetryFlow, configBashFlow } from "./tg-config.ts";
 import { formatPairingInstructions } from "../pairing.ts";
+import { formatDebugReport } from "./info.ts";
 import {
   addBotFlow,
   clearBotDefaultFlow,
@@ -40,6 +41,7 @@ const MAIN_MENU_OPTIONS = [
   "⌨️ Commands",
   "⚙️ Config",
   "🔄 Switch instance",
+  "🛠 Debug info",
   "❌ Close",
 ] as const;
 
@@ -172,6 +174,14 @@ async function mainMenu(
     } else if (choice === "🔄 Switch instance") {
       if (await switchInstanceMenu(ui, switchDeps)) continue;
       return;
+    } else if (choice === "🛠 Debug info") {
+      const session = sessionDeps?.getSession();
+      if (session) {
+        ui.notify(formatDebugReport(session, cwd), "info");
+      } else {
+        ui.notify("No active session", "error");
+      }
+      continue;
     }
     // Unknown choice — return to main menu
   }

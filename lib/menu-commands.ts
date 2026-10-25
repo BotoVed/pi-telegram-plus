@@ -35,7 +35,6 @@ const TELEGRAM_MENU_COMMANDS: Array<{ command: string; description: string }> = 
   { command: "cd", description: "Switch pi working directory" },
   { command: "import", description: "Import a session" },
   { command: "stop", description: "Stop the current agent turn" },
-  { command: "debug", description: "Show debug information" },
   { command: "status", description: "Show runtime snapshot (workspace, model, context, messages)" },
   // Consolidated Telegram management menu — replaces all flat /tg-* commands.
   { command: "tg", description: "Open the Telegram management menu" },
@@ -56,7 +55,7 @@ const CORE_COMMAND_PRIORITY = [
 // telegramCommands, or the /tg hub), valid on every host regardless of the
 // captured catalog.
 const TELEGRAM_SERVED_COMMANDS = new Set([
-  "tg", "cwd", "cd", "status", "stop", "debug",
+  "tg", "cwd", "cd", "status", "stop",
 ]);
 
 const toTelegramCommandName = (name: string): string | undefined => {

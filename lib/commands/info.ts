@@ -18,6 +18,24 @@ function truncateStatusText(value: string | undefined): string | undefined {
   if (value.length <= STATUS_TEXT_LIMIT) return value;
   return `${value.slice(0, STATUS_TEXT_LIMIT - 1)}…`;
 }
+/**
+ * Build the plugin's debug report text. Exposed for the `/tg` menu's
+ * "🛠 Debug info" entry (the flat `/debug` command was given back to the host,
+ * which ships its own top-level `/debug` in pi and OMP).
+ */
+export function formatDebugReport(session: CapturedAgentSession, cwd: string): string {
+  const entries = session.sessionManager.getEntries();
+  const model = session.model;
+  return [
+    `Plugin debug info`,
+    `model: ${model ? `${model.provider}/${model.id}` : "(none)"}`,
+    `thinking: ${session.thinkingLevel ?? "off"}`,
+    `streaming: ${session.isStreaming}`,
+    `compacting: ${session.isCompacting}`,
+    `entries: ${entries.length}`,
+    `cwd: ${escapeHtml(cwd)}`,
+  ].join("\n");
+}
 
 /**
  * @internal Exported for tests; not part of the public module API.
@@ -180,31 +198,6 @@ export function registerInfoCommands(
         ].join("\n"),
         "info",
       );
-    },
-  });
-
-  // ── /debug ────────────────────────────────────────────────────────────
-  registry.registerCommand("debug", {
-    description: "Show debug information",
-    handler: async (_args, ctx) => {
-      const ui = ctx.ui;
-      const session = deps.getSession();
-      if (!session) {
-        ui.notify("No active session", "error");
-        return;
-      }
-      const entries = session.sessionManager.getEntries();
-      const model = session.model;
-      const lines = [
-        `Debug`,
-        `model: ${model ? `${model.provider}/${model.id}` : "(none)"}`,
-        `thinking: ${session.thinkingLevel ?? "off"}`,
-        `streaming: ${session.isStreaming}`,
-        `compacting: ${session.isCompacting}`,
-        `entries: ${entries.length}`,
-        `cwd: ${escapeHtml(ctx.cwd)}`,
-      ];
-      ui.notify(lines.join("\n"), "info");
     },
   });
 }

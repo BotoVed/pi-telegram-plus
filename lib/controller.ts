@@ -659,7 +659,7 @@ const NATIVE_HANDLER_COMMANDS: Record<string, true> = {
 
 /** Plugin-owned bot-management commands: reachable even when the host bridge is down (v6 decision 48). */
 const PLUGIN_LOCAL_COMMANDS: Record<string, true> = {
-  tg: true, stop: true, cwd: true, cd: true, status: true, debug: true, pair: true, more: true,
+  tg: true, stop: true, cwd: true, cd: true, status: true, pair: true, more: true,
 };
 
 // /more overflow keyboard: 30 command buttons per page, three per row.
