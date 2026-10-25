@@ -1150,8 +1150,12 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 - [x] ~~清理 `off` 模式~~：v6 改为立即删除，见 §0.1 第 4 条与任务 D1–D4。
 
-- [ ] **E2E：`settings mirror matches the host screen`（OMP）偶发失败。** 2026-10-24 在 5 轮干净运行中失败 1 次（失败时 pane 里只有 "Select provider to login"），其余步骤稳定。需要查清是时序问题还是镜像取屏的时机问题。
+- [x] ~~E2E：`settings mirror matches the host screen`（OMP）偶发失败~~：屏幕镜像已在 D2 删除，该步骤不再存在。
 - [ ] **运行时被替换时，队列里未发出的 Telegram 调用被静默丢弃。** `lib/active-transport.ts` 在 `isActive()` / lease 不匹配时直接返回兜底结果（`sendButtons` 返回 `message_id: 0`），调用方拿不到错误，看起来像"菜单没发出去"。2026-10-24 S5 测量时每个阶段结束的最后一秒都有几条。应改为显式失败或在新运行时补发。
+
+- [ ] **OMP 内置选择器剩余核对**（T3.2e/T3.2f）：`/model`、`/settings`、`/login`、`/agents`、`/hub` 已在 E2E 证实；OMP 的 `/resume`、`/tree` 以及内置对话框里的文字输入框（TSP `edit` 事件）尚未专门验证。
+- [ ] **OMP 设置页的其他控件**：数字、文字、多选、快捷键类设置在 Telegram 上只显示"请在终端修改"。
+- [ ] **插件命令与宿主同名**：`/status`、`/debug` 由插件处理，会遮住宿主的同名命令；`/tg → Config` 的 Thinking level 与宿主自己的 `/thinking` 重复。
 
 ---
 

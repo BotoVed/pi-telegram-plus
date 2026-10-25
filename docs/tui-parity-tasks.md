@@ -99,8 +99,8 @@
 | # | 任务 | 依赖 | 状态 | 提交 |
 |---|---|---|---|---|
 | T3.0 | OMP 对话框分类与读取（条件任务） | — | ☑ | `558d574`（版本限制）及之前各提交，见下方完成记录 |
-| T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☐ | |
-| T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
+| T3.1 | OMP 只读面板截获 | T3.0（如需要） | ☑ | 已由 `4f0e87e`、`7e6a84f`、`4767c02`、`ceb40a5` 完成（面板入口、`showCommandReport` 截获） |
+| T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☑ | D2 `07b5df6` 起所有宿主命令都经 gateway |
 | ~~T3.2a–c~~ | ~~OMP collab 桥接~~：由 3B 扩展 UI 竞答取代（决定 53） | — | 作废 | |
 | S25 | 可行性验证：扩展 UI 竞答（两个宿主） | 3A | ☑ | 无提交（S25、S25b 2026-10-25：两个宿主证实；pi confirm 失败查明为测试脚本双击 Escape 打开 Session Tree） |
 | B0 | 测试脚本：E2E 用的 pi agent 设置写 `doubleEscapeAction: "none"`，避免 `clearDialog()` 打开 Session Tree | S25 | ☑ | `81a9dea` |
@@ -110,9 +110,9 @@
 | B3b | 竞答：OMP 的 `askDialog`（ask 工具：插件按 Telegram 的选择拼出 `{ kind: "submit", results }`，含自定义答案） | B3a | ☑ | `5e7e5a6`；**3B 编码完成**（2026-10-25，单测 594/594、0 skip），E2E 在 3E |
 | ~~B4~~ | ~~删除被竞答取代的按键路径~~：并入 T3.2g。没有竞答句柄的对话框（宿主内部的确认框、pi 的 `editor`、内置工具审批）仍需按键路径；要删的只有 OMP 上读画面的部分 | — | 并入 T3.2g | |
 | T3.2d | OMP TSP 适配器：读取 + 操作（内置选择器与 `custom` 的基础） | 3B | ☑ | `7d8369f`；先做 picker（`activate`/`close` 事件） |
-| T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | 3E 核对 | picker 与 prefs 已覆盖（T3.2d、T3.2e-1）；其余选择器的实际描述结构在 3E 用 E2E 看，有缺口再开修复任务 |
+| T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | 部分（后续） | picker 与 prefs 已覆盖（T3.2d、T3.2e-1）；其余选择器的实际描述结构在 3E 用 E2E 看，有缺口再开修复任务 |
 | T3.2e-1 | TSP：OMP 设置页（prefs：换页、switch、choice）；带竞答句柄的对话框 TSP 不接管 | T3.2d | ☑ | `3b40a58` |
-| T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | 3E 核对 | 需要在真实 OMP 上看到内置输入框的描述结构才能设计，3E 一并核对 |
+| T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | 后续 | 需要在真实 OMP 上看到内置输入框的描述结构才能设计，3E 一并核对 |
 | T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二；含原 B4） | B3b、T3.2e、T3.2f | ☑ | `d3a3e56`；提前完成（不依赖 T3.2e/f 的剩余部分）。没有可读字段又没有竞答句柄的 OMP 对话框不再靠画面发键 |
 | C1 | `/fork`、`/clone` 交给宿主（决定 52）；gateway 提交前保存消息进度，防止替换会话后重复执行 | T3.2g | ☑ | `194fbc4` |
 **3D 重新拆分**（主控 2026-10-25，依据 pi 1.4.0 源码与 parity 审计 `.tmp/parity-pi.json`；下面的 T3.3–T3.10 旧描述写于 v6 之前，含"退回快照""保留原生 /fork"等已作废的做法，以本表为准）：
@@ -125,14 +125,14 @@
 | P4 | pi `/tree`（`TreeSelectorComponent`） | P1 | ☑ | `9a964e3` |
 | P5 | pi 登录对话框（`LoginDialog`：API key 输入按 secret 处理） | P1 | ☑ | `0106164`；**3D 编码完成**（2026-10-25，单测 664/664、0 skip） |
 
-| T3.3 | pi `SelectListAdapter` | — | ☐ | |
-| T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
-| T3.5 | pi `/settings` 子菜单 | T3.4 | ☐ | |
-| T3.6 | 通用 `FilteredListAdapter`：搜索与翻页 | T3.3 | ☐ | |
-| T3.7 | pi `/model`、`/scoped-models` | T3.6 | ☐ | |
-| T3.8 | pi `/resume` | T3.6 | ☐ | |
-| T3.9 | pi `/tree`、`/fork` | T3.6 | ☐ | |
-| T3.10 | pi `/login`、`/logout` | T3.3 | ☐ | |
+| T3.3 | pi `SelectListAdapter` | — | 由 P1–P5 取代 | |
+| T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | 由 P2 取代 | |
+| T3.5 | pi `/settings` 子菜单 | T3.4 | 由 P2 取代 | |
+| T3.6 | 通用 `FilteredListAdapter`：搜索与翻页 | T3.3 | 由 P1–P4、F4 取代 | |
+| T3.7 | pi `/model`、`/scoped-models` | T3.6 | 由 P1 取代 | |
+| T3.8 | pi `/resume` | T3.6 | 由 P3 取代 | |
+| T3.9 | pi `/tree`、`/fork` | T3.6 | 由 P1、P4、C1 取代 | |
+| T3.10 | pi `/login`、`/logout` | T3.3 | 由 P1、P5 取代 | |
 | T3.11 | ~~OMP 选择器走快照~~ | — | 作废 | 方案 §9 决定 34:读不到字段的屏幕交回屏幕镜像,broker 不建会话、不发假键盘 |
 | T3.12 | 所有命令切到 Gateway，删除三个命令集合 | T3.2–T3.11 | ☑ | 由 D2（`07b5df6`）完成 |
 | T3.13 | 阶段 3 验收 | T3.12 | ☑ | 见下方"3E 验收记录" |
