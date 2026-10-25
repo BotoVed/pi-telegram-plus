@@ -1,3 +1,4 @@
+import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CommandRegistry } from "./register.ts";
 import { checkpointCurrentUpdateCursor } from "../polling.ts";
 
@@ -34,17 +35,24 @@ export function registerLifecycleCommands(registry: CommandRegistry): void {
     },
   });
 
-  // ── /quit ──────────────────────────────────────────────────────────────
+  // ── /quit, /exit ───────────────────────────────────────────────────────
+  // Both confirm before shutting down: on Telegram the TUI may be unreachable,
+  // so an accidental tap should not kill the host silently.
+  const shutdownAfterConfirm = async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+    const ui = ctx.ui;
+    const confirmed = await ui.confirm("退出 pi？", "确认后 pi 将退出，Telegram 也会停止响应。");
+    if (confirmed) {
+      ctx.shutdown();
+      ui.notify("Shutdown requested. If pi keeps running, stop it from the TUI/terminal.", "info");
+    }
+  };
   registry.registerCommand("quit", {
     description: "Shut down pi",
-    handler: async (_args, ctx) => {
-      const ui = ctx.ui;
-      const confirmed = await ui.confirm("Quit", "Shut down pi?");
-      if (confirmed) {
-        ctx.shutdown();
-        ui.notify("Shutdown requested. If pi keeps running, stop it from the TUI/terminal.", "info");
-      }
-    },
+    handler: shutdownAfterConfirm,
+  });
+  registry.registerCommand("exit", {
+    description: "Shut down pi",
+    handler: shutdownAfterConfirm,
   });
 
 }

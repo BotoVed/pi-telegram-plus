@@ -34,7 +34,7 @@ import {
   updateBotFlow,
   type TelegramCommandDeps,
 } from "../commands/telegram-commands.ts";
-import { readBotRegistry, readProjectBinding, addBot, readResolvedTelegramConfig, enableConfiguredTelegramOnStartup } from "../config.ts";
+import { readBotRegistry, readProjectBinding, addBot, clearDefaultBot, readResolvedTelegramConfig, enableConfiguredTelegramOnStartup } from "../config.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
 import type * as pairingModule from "../pairing.ts";
 
@@ -171,6 +171,22 @@ describe("Telegram management flows (bot registry + project binding)", () => {
       expect.stringContaining("No bots registered. Use /tg → Bots → Add bot"),
       "info",
     );
+  });
+
+  it("listBotsFlow marks only the default bot with ⭐ 默认", async () => {
+    const alpha = makeBot({ name: "alpha", token: "t1" });
+    await addBot(alpha);
+    await addBot(makeBot({ name: "beta", token: "t2" }));
+    const ctx = makeCtx();
+
+    await listBotsFlow(ctx.ui);
+
+    expect(ctx.ui.notify).toHaveBeenCalledTimes(1);
+    const [body] = vi.mocked(ctx.ui.notify).mock.calls[0];
+    const lines = String(body).split("\n");
+    expect(lines.find((line) => line.includes("alpha"))).toContain("⭐ 默认");
+    expect(lines.find((line) => line.includes("beta"))).not.toContain("⭐ 默认");
+    expect(body).not.toContain("★ default");
   });
 
   it("setBotDefaultFlow sets the default bot", async () => {
@@ -338,6 +354,20 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.botId).toBe(bot.id);
     expect(binding?.binding.enabled).toBe(true);
+  });
+
+  it("enableProjectFlow without a default bot points at the ⭐ 全局默认 Bot menu row", async () => {
+    await addBot(makeBot({ name: "orphan", token: "tok-o" }));
+    await clearDefaultBot();
+
+    const ctx = makeCtx();
+    await enableProjectFlow(ctx.ui, deps, projectDir);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "没有全局默认 Bot。请先在 /tg → Bots → ⭐ 全局默认 Bot 中设置。",
+      "error",
+    );
+    expect(await readProjectBinding(projectDir)).toBeUndefined();
   });
 
   it("disableProjectFlow disables the bot in the project binding", async () => {

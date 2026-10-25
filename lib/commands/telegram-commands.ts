@@ -56,7 +56,7 @@ export async function listBotsFlow(ui: MenuUi): Promise<void> {
     return;
   }
   const lines = registry.bots.map((bot) => {
-    const defaultMarker = registry.defaultBotId === bot.id ? " ★ default" : "";
+    const defaultMarker = registry.defaultBotId === bot.id ? " ⭐ 默认" : "";
     const username = bot.botUsername ? `@${bot.botUsername}` : "no username";
     const paired = bot.allowedUserId !== undefined ? `paired (user ${bot.allowedUserId})` : bot.pairingCode ? `pairing: ${bot.pairingCode}` : "not paired";
     return `- ${escapeHtml(bot.name)} (${bot.id.slice(0, 8)}) · ${username} · ${paired}${defaultMarker}`;
@@ -390,7 +390,7 @@ export async function enableProjectFlow(
     }
   } else {
     if (!registry.defaultBotId) {
-      ui.notify("No default bot set. Use /tg → Bots → Bot list → Set as default.", "error");
+      ui.notify("没有全局默认 Bot。请先在 /tg → Bots → ⭐ 全局默认 Bot 中设置。", "error");
       return;
     }
     await updateProjectBindingLocked(workspacePath, () => ({ botId: registry.defaultBotId, enabled: true }));

@@ -17,6 +17,7 @@ function makeSession(overrides: Partial<{
   isStreaming: boolean;
   pendingMessageCount: number;
   contextUsage: { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
+  lastAssistantText: string | undefined;
 }> = {}): CapturedAgentSession {
   const tokens = overrides.tokens ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 };
   const stats = {
@@ -44,6 +45,7 @@ function makeSession(overrides: Partial<{
     thinkingLevel: (overrides.thinkingLevel as CapturedAgentSession["thinkingLevel"]) ?? "off",
     isStreaming: overrides.isStreaming ?? false,
     pendingMessageCount: overrides.pendingMessageCount ?? 0,
+    getLastAssistantText: () => overrides.lastAssistantText,
   } as unknown as CapturedAgentSession;
 }
 
@@ -277,5 +279,54 @@ describe("registerInfoCommands /status handler", () => {
     expect(fallback).not.toContain("<b>");
     expect(fallback).toContain("TUI Status");
     expect(fallback).toContain("📂 Workspace");
+  });
+});
+
+describe("registerInfoCommands /copy handler", () => {
+  it("sends the last assistant text verbatim when a reply exists", async () => {
+    const session = makeSession({ lastAssistantText: "这是上一条回复。\n第二行" });
+    const { registry, handlers } = makeRegistry();
+    const { ui, notify } = makeUi();
+    registerInfoCommands(registry, { getSession: () => session });
+
+    const copy = handlers.get("copy");
+    expect(copy).toBeDefined();
+    await copy!.handler("", { ui });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledWith("这是上一条回复。\n第二行", "info");
+  });
+
+  it("shows the Chinese empty notice when there is no reply", async () => {
+    const session = makeSession({ lastAssistantText: undefined });
+    const { registry, handlers } = makeRegistry();
+    const { ui, notify } = makeUi();
+    registerInfoCommands(registry, { getSession: () => session });
+
+    await handlers.get("copy")!.handler("", { ui });
+
+    expect(notify).toHaveBeenCalledWith("没有可复制的内容。", "info");
+  });
+});
+
+describe("registerInfoCommands /hotkeys handler", () => {
+  it("explains the Telegram equivalents instead of listing TUI keys", async () => {
+    const { registry, handlers } = makeRegistry();
+    const { ui, notify } = makeUi();
+    registerInfoCommands(registry, { getSession: () => undefined });
+
+    const hotkeys = handlers.get("hotkeys");
+    expect(hotkeys).toBeDefined();
+    await hotkeys!.handler("", { ui });
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    const [text, level] = notify.mock.calls[0];
+    expect(level).toBe("info");
+    expect(text).toContain("按钮");
+    expect(text).toContain("/stop");
+    expect(text).toContain("!命令");
+    expect(text).toContain("终端快捷键只在终端里有效");
+    expect(text).toContain("/tg");
+    expect(text).not.toContain("Keyboard Shortcuts");
   });
 });
