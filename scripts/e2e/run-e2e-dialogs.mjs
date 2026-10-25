@@ -9,6 +9,8 @@
  * resolved to, so assertions read that value instead of a rendered screen: how
  * the keyboard was drawn (mirror `tgplus:tui:`, broker `tgplus:dlg:`, or the
  * legacy Telegram-native `tgplus:ui:` menu) is recorded as audit detail only.
+ * The tool-approval step runs OMP in `write` approval mode, so the mock's
+ * `bash` call raises OMP's approval prompt and Telegram answers it (deny).
  *
  * Stack: real pi / OMP in tmux + mock Bot API + mock provider, all state under
  * /tmp, same isolation as the other acceptance scripts.
@@ -239,7 +241,7 @@ function seed(host, runDir, probePath) {
 function hostArgs(host, pluginArgs) {
   return host === "omp"
     ? [OMP_CLI, ...pluginArgs, "--model", "mock/mock-model", "--no-skills", "--no-rules",
-       "--no-lsp", "--approval-mode", "yolo", "--no-title"]
+       "--no-lsp", "--approval-mode", "write", "--no-title"]
     : [PI_CLI, "--no-skills", ...pluginArgs, "--provider", "mock", "--model", "mock-model"];
 }
 
@@ -673,6 +675,42 @@ async function runHost(host, servers) {
       }
       await clearDialog();
     }
+  }
+
+  // ── tool approval: OMP's exec prompt answered by "拒绝" from Telegram ─
+  // Runs only on OMP: pi has no tool-approval dialog. `write` mode auto-approves
+  // read/write tools but asks before exec, so the mock's `touch` only reaches the
+  // shell if the denial is ignored.
+  if (host !== "omp") {
+    record("tool approval answered from Telegram", true, "skipped: pi has no tool approval");
+  } else {
+    try {
+      const markerPath = join(projectDir, "approval-marker");
+      rmSync(markerPath, { force: true });
+      const since = await cursor();
+      await injectText(`please run PROBE_APPROVAL_BASH:${markerPath}`);
+      const kb = await waitFor("approval keyboard", (state) =>
+        state.calls.slice(since).findLast((entry) =>
+          dialectOf(entry) === "broker"
+          && buttonsOf(entry).some((b) => String(b.text ?? "").includes("允许一次"))
+          && buttonsOf(entry).some((b) => String(b.text ?? "").includes("拒绝"))) ?? false);
+      const labels = buttonsOf(kb).map((b) => String(b.text ?? ""));
+      const deny = buttonsOf(kb).find((b) => String(b.text ?? "").includes("拒绝"));
+      const messageId = kb.body?.message_id ?? kb.message_id;
+      if (!await clickButton(deny, messageId)) {
+        throw new Error(`pressing "拒绝" was never acknowledged; labels: ${labels.join(" / ")}`);
+      }
+      await sleep(3_000);
+      const executed = existsSync(markerPath);
+      const cleared = await keyboardGone(messageId, 10_000);
+      record("tool approval answered from Telegram", !executed && Boolean(cleared),
+        `${dialectOf(kb)} · ${labels.join(" / ")}`
+        + (executed ? " · marker file created despite the denial" : " · tool never ran")
+        + (cleared ? " · keyboard withdrawn" : " · keyboard left on screen"));
+    } catch (error) {
+      record("tool approval answered from Telegram", false, String(error.message).slice(0, 200));
+    }
+    await clearDialog();
   }
 
   // ── pi-goal dialogs (extension `custom`, the /goals parity case) ───────

@@ -157,11 +157,14 @@ const server = createServer(async (req, res) => {
   // Stage 0 host probe: scripted calls for arbitrary advertised tools. The
   // prompt names the tool (PROBE_TOOL:<name>) or a pi-goal shape
   // (PROBE_GOAL_CONFIRM / _QUESTION / _QUESTIONNAIRE); approval probing picks
-  // the first mutating tool the host advertises. Arguments are derived from the
+  // the first mutating tool the host advertises, and PROBE_APPROVAL_BASH:<path>
+  // pins `bash` to `touch <path>` so a driver can deny the call and then assert
+  // the file was never created. Arguments are derived from the
   // tool schema, with semantic overrides for the shapes we drive.
   const probeMatch = /PROBE_TOOL:([A-Za-z0-9_]+)/.exec(userText);
   const goalMatch = /PROBE_GOAL_(QUESTIONNAIRE|CONFIRM|QUESTION)/.exec(userText);
-  const approvalProbe = userText.includes("PROBE_APPROVAL");
+  const approvalBashMatch = /PROBE_APPROVAL_BASH:(\S+)/.exec(userText);
+  const approvalProbe = !approvalBashMatch && userText.includes("PROBE_APPROVAL");
   const goalToolName = goalMatch
     ? (goalMatch[1] === "CONFIRM"
       ? "propose_goal_draft"
@@ -170,7 +173,8 @@ const server = createServer(async (req, res) => {
   const approvalToolName = approvalProbe
     ? ["write", "edit", "bash"].find((name) => toolNames.includes(name))
     : undefined;
-  const requestedProbeTool = probeMatch?.[1] ?? goalToolName ?? approvalToolName;
+  const requestedProbeTool = probeMatch?.[1] ?? goalToolName ?? approvalToolName
+    ?? (approvalBashMatch && toolNames.includes("bash") ? "bash" : undefined);
   const probeToolDef = requestedProbeTool
     ? (parsed.tools ?? []).find((tool) => (tool?.function?.name ?? tool?.name) === requestedProbeTool)
     : undefined;
@@ -178,7 +182,7 @@ const server = createServer(async (req, res) => {
     ? (probeToolDef.function?.name ?? probeToolDef.name)
     : undefined;
   const triggerProbe = Boolean(probeTool) && !hasToolResult
-    && Boolean(probeMatch || goalMatch || approvalProbe);
+    && Boolean(probeMatch || goalMatch || approvalProbe || approvalBashMatch);
 
   const fill = (schema) => {
     if (!schema || typeof schema !== "object") return "probe";
@@ -219,7 +223,11 @@ const server = createServer(async (req, res) => {
     if (probeTool === "edit") {
       return JSON.stringify({ path: "/tmp/pitg-probe-approval.txt", old_string: "probe", new_string: "probe" });
     }
-    if (probeTool === "bash") return JSON.stringify({ command: "true" });
+    if (probeTool === "bash") {
+      return JSON.stringify(approvalBashMatch
+        ? { command: `touch ${approvalBashMatch[1]}` }
+        : { command: "true" });
+    }
     const parameters = probeToolDef?.function?.parameters ?? probeToolDef?.parameters ?? {};
     const required = parameters.required ?? Object.keys(parameters.properties ?? {});
     const args = {};
