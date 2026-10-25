@@ -59,8 +59,8 @@
 |---|---|---|---|---|
 | D0 | E2E"待迁移"清单机制 | — | ☑ | `21f6592` |
 | D1 | 删除 `off` 模式与 `tuiBridge` 配置项；桥接不可用时启动报错 | D0 | ☑ | `6096014`（跨聊天串台用例 skip，待 3A-1 修复） |
-| D2 | 删除旧屏幕镜像（`runTuiCommand`、`tui-selector.ts`、`tgplus:tui:` 回调） | D1 | ☐ | |
-| D3 | 删除插件重做宿主功能的原生实现（`lib/commands/` 对应部分、`telegram-ui.ts` 对应原生流程、`custom-dialogs.ts`） | D2 | ☐ | |
+| D2 | 删除旧屏幕镜像（`runTuiCommand`、`tui-selector.ts`、`tgplus:tui:` 回调） | D1 | ☑ | `07b5df6`；pi 的 `/debug` 改由插件处理（同名冲突，待定） |
+| D3 | 删除插件重做宿主功能的原生实现（`lib/commands/` 对应部分、`telegram-ui.ts` 对应原生流程、`custom-dialogs.ts`） | D2 | ☑ | `857cd4a`；`pi-compat.ts` 的模型/认证兼容层已无调用方，并入 A2 清理 |
 | D3b | `!`/`!!` 命令改由宿主执行，保留 `bashConfirm` 确认（决定 51） | D3 | ☐ | |
 | D4 | `SnapshotAdapter` 改为 `UnsupportedAdapter`（明确告知 + 取消） | D2 | ☐ | |
 | A1 | 开发依赖升级到 pi `1.4.0`；按 1.4.0 源码核对剩余代码依赖的宿主接口，输出"需要改"清单 | D1–D4 | ☑（核对部分由主控完成；升级依赖并入 A2） | 4 处需要改：捕获补丁点 `initHooksAndCustomTools` 已改名；入口改挂 `pushExtensionDialog`/`removeExtensionDialog`；命令目录只用 `autocompleteProvider`；内置命令新增 `/bug`、`/thinking`、`/trust` |
