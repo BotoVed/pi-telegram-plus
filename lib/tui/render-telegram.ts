@@ -32,6 +32,7 @@ export type RenderContext = {
   sessionId: string;
   generation: number;
   page?: number;
+  /** §4.7.4: applied to every string of the model *before* anything is escaped. */
   redact?: (text: string) => string;
 };
 
@@ -311,33 +312,59 @@ function renderUnsupported(model: Extract<DialogModel, { kind: "unsupported" }>,
   };
 }
 
-/** Turns a model into message text plus inline keyboard. */
+/** Escape-free view of one model: message text plus inline keyboard. */
+function renderModel(model: DialogModel, ctx: RenderContext): RenderedDialog {
+  switch (model.kind) {
+    case "select":
+      return renderSelect(model, ctx);
+    case "settings":
+      return renderSettings(model, ctx);
+    case "questionnaire":
+      return renderQuestionnaire(model, ctx);
+    case "approval":
+      return renderApproval(model, ctx);
+    case "confirm":
+      return renderConfirm(model, ctx);
+    case "input":
+      return renderInput(model, ctx);
+    case "editor":
+      return renderInput({ kind: "input", title: model.title, secret: false, prefill: model.prefill }, ctx);
+    case "progress":
+      return renderProgress(model, ctx);
+    case "info":
+      return renderInfo(model, ctx);
+    case "unsupported":
+      return renderUnsupported(model, ctx);
+  }
+}
+
+/**
+ * §4.7.4: every string a model can show — titles, bodies, option labels,
+ * placeholders, current values — is redacted *before* anything is HTML-escaped
+ * or copied into a button label. Non-strings are kept as they are.
+ */
+function redactModel<T>(value: T, redact: (text: string) => string): T {
+  if (typeof value === "string") return redact(value) as T;
+  if (Array.isArray(value)) return value.map((entry) => redactModel(entry, redact)) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = redactModel(entry, redact);
+    }
+    return out as T;
+  }
+  return value;
+}
+
+/**
+ * Turns a model into message text plus inline keyboard. Secrets are redacted on
+ * the way in (§4.7.4), so neither the HTML body nor the button labels ever see
+ * the raw value. The key map comes from the un-redacted model: the Broker
+ * resolves it against the live model, where `***` would match nothing.
+ */
 export function renderDialog(model: DialogModel, ctx: RenderContext): RenderedDialog {
   const renderContext: RenderContext = { ...ctx, page: ctx.page ?? 0 };
-  const rendered = (() => {
-    switch (model.kind) {
-      case "select":
-        return renderSelect(model, renderContext);
-      case "settings":
-        return renderSettings(model, renderContext);
-      case "questionnaire":
-        return renderQuestionnaire(model, renderContext);
-      case "approval":
-        return renderApproval(model, renderContext);
-      case "confirm":
-        return renderConfirm(model, renderContext);
-      case "input":
-        return renderInput(model, renderContext);
-      case "editor":
-        return renderInput({ kind: "input", title: model.title, secret: false, prefill: model.prefill }, renderContext);
-      case "progress":
-        return renderProgress(model, renderContext);
-      case "info":
-        return renderInfo(model, renderContext);
-      case "unsupported":
-        return renderUnsupported(model, renderContext);
-    }
-  })();
-  if (!ctx.redact) return rendered;
-  return { ...rendered, text: ctx.redact(rendered.text) };
+  if (!ctx.redact) return renderModel(model, renderContext);
+  const shown = renderModel(redactModel(model, ctx.redact), renderContext);
+  return { ...shown, keyMap: renderModel(model, renderContext).keyMap };
 }

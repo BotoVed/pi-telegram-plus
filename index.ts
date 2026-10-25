@@ -27,6 +27,7 @@ import { registerTgMenuCommand } from "./lib/commands/tg-menu.ts";
 import type { TelegramConnectionState } from "./lib/commands/telegram-commands.ts";
 import { syncTelegramCommands, scheduleTelegramCommandRefresh, cancelTelegramCommandRefreshes } from "./lib/menu-commands.ts";
 import { installTuiBridge, tuiBridge, getTuiCommands } from "./lib/tui-bridge.ts";
+import { SecretStore } from "./lib/tui/secrets.ts";
 import type { ResolvedTelegramConfig, TelegramConfig, TelegramTurn } from "./lib/types.ts";
 
 const indexLog = log.child("index");
@@ -292,6 +293,9 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     transport,
   });
 
+  // One store for the whole instance: the Broker remembers what this chat
+  // typed, the renderer needs the same view to redact assistant replies.
+  const secretStore = new SecretStore();
   registerTelegramRenderer(pi, {
     getConfig: () => config,
     transport,
@@ -301,11 +305,13 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     },
     hasActiveTurns: () => activeTurns.size > 0,
     getSession: getActiveSession,
+    secrets: secretStore,
   });
 
   const controller = createTelegramController({
     getSession: getActiveSession,
     transport,
+    secrets: secretStore,
     ui,
     authorizeUser: async (userId, text) => {
       const decision = authorizeTelegramUser(config, userId, text, config.botUsername);

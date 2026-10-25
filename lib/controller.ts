@@ -776,6 +776,8 @@ export function createTelegramController(deps: {
   isTelegramActive?: () => boolean;
   /** Host control API for /new; overridable for tests. */
   newSession?: (origin: { chatId: number; messageThreadId?: number; sourceMessageId?: number }) => Promise<{ cancelled?: boolean } | void>;
+  /** Shared secret store (§4.7.4); a private one is created when absent (tests). */
+  secrets?: SecretStore;
 }): TelegramController {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
@@ -808,7 +810,7 @@ export function createTelegramController(deps: {
     // `outputCapture` is built below; the closure resolves it by call time.
     holdOpen: (): boolean => outputCapture.hasRunningBash(),
   });
-  const secretStore = new SecretStore();
+  const secretStore = deps.secrets ?? new SecretStore();
   const outputCapture = new OutputCapture(deps.transport, originTracker, secretStore);
   const commandGateway = new CommandGateway({
     bridge,

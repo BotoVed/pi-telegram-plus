@@ -59,6 +59,11 @@ missing or mislabelled cannot be published.
 
 ### Fixed
 
+- **Secrets are now hidden everywhere they can come back.** A key you typed into a Telegram prompt was
+  masked only in some places: dialog buttons could print it, and so could the assistant's own reply, which
+  often quotes the value back at you. Masking now runs before the text is turned into Telegram formatting,
+  so a key containing `&`, `<` or `>` is caught as well, and it covers dialog text and button labels,
+  assistant answers (HTML and Rich Message), tool-call hints, and tool output.
 - **A redraw no longer closes a dialog.** OMP hands focus back to the editor for a frame while it
   redraws an open overlay. That single frame was read as "answered in the terminal": the Telegram
   dialog was written off mid-question, its keyboard withdrawn, and the screen mirror took the

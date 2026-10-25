@@ -6,6 +6,7 @@ import { escapeHtml } from "./html.ts";
 import { markdownToTelegramHtml } from "./markdown.ts";
 import { richMarkdownForTables } from "./rich-message.ts";
 import type { TelegramConfig, TelegramRenderLevel, TelegramTransport, TelegramTurn } from "./types.ts";
+import type { SecretStore } from "./tui/secrets.ts";
 import { RENDER_LEVELS } from "./types.ts";
 import { log } from "./logger.ts";
 
@@ -251,11 +252,19 @@ export function registerTelegramRenderer(
     getActiveTurn: (chatId?: number, messageThreadId?: number) => TelegramTurn | undefined;
     hasActiveTurns?: () => boolean;
     getSession?: () => { isStreaming: boolean; extensionRunner: { createCommandContext(): unknown } } | undefined;
+    /** Shared secret store, so assistant replies are redacted too (§4.7.4). */
+    secrets?: SecretStore;
   },
 ): void {
   const sentInlineEvents = new Set<string>();
   const toolUpdateAt = new Map<string, number>();
   const toolArgs = new Map<string, unknown>();
+
+  /** §4.7.4: replace this chat's tracked secrets before any escaping happens. */
+  const redactFor = (turn: TelegramTurn | undefined, text: string): string => {
+    if (!turn || !deps.secrets) return text;
+    return deps.secrets.redact(`${turn.chatId}:${turn.messageThreadId ?? "main"}`, text);
+  };
 
   // ── Workflow / subagent rendering filter ────────────────────────────────
   // The TUI never shows subagent turns as part of the main conversation —
@@ -362,10 +371,13 @@ export function registerTelegramRenderer(
   const sendInlineEvent = async (event: string) => {
     const keyPrefix = eventTargetKey();
     if (!event || !keyPrefix) return;
-    const key = `${keyPrefix}:${event}`;
+    // Inline events quote tool arguments and thinking text — exactly where a
+    // pasted key reappears, so redact before `escapeHtml` (§4.7.4).
+    const text = redactFor(deps.getActiveTurn(), event);
+    const key = `${keyPrefix}:${text}`;
     if (sentInlineEvents.has(key)) return;
     sentInlineEvents.add(key);
-    await sendToTurn(`<blockquote>${escapeHtml(event)}</blockquote>`);
+    await sendToTurn(`<blockquote>${escapeHtml(text)}</blockquote>`);
   };
 
   const sendInlineEvents = async (events: string[]) => {
@@ -466,7 +478,7 @@ ${partial}`);
     const parts = extractToolResultParts(event.result);
     const header = `${event.isError ? "❌" : "✅"} <b>${escapeHtml(event.toolName)}</b>`;
     if (parts.body.trim()) {
-      const rendered = markdownToTelegramHtml(parts.body);
+      const rendered = markdownToTelegramHtml(redactFor(deps.getActiveTurn(), parts.body));
       const expandable = rendered.length > 600 || rendered.split("\n").length > 8;
       const tag = expandable ? "<blockquote expandable>" : "<blockquote>";
       await sendNewToEventTarget(`${tag}${header}\n${rendered}</blockquote>`);
@@ -499,7 +511,9 @@ ${partial}`);
     const toolLevel = renderLevel(config, "tool");
     const rendered = contentToRenderParts(message.content, thinkingLevel, toolLevel);
     await sendInlineEvents(rendered.inlineEvents);
-    const rawBody = rendered.body || message.errorMessage || "";
+    // Redact the whole reply (prose *and* the oversized code blocks pulled out
+    // of it below) before it is converted to HTML or sent as Markdown (§4.7.4).
+    const rawBody = redactFor(deps.getActiveTurn(), rendered.body || message.errorMessage || "");
     // Pull oversized code blocks out of the body before rendering: they'd
     // otherwise be split across many <pre> messages (painful on mobile). They
     // are sent as downloadable files after the body.
