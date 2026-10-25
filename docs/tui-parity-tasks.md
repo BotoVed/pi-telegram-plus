@@ -83,8 +83,8 @@
 | T3.2 | OMP 只有输出的命令接入 Gateway | T3.1 | ☐ | |
 | ~~T3.2a–c~~ | ~~OMP collab 桥接~~：由 3B 扩展 UI 竞答取代（决定 53） | — | 作废 | |
 | S25 | 可行性验证：扩展 UI 竞答（两个宿主） | 3A | ☑ | 无提交（S25、S25b 2026-10-25：两个宿主证实；pi confirm 失败查明为测试脚本双击 Escape 打开 Session Tree） |
-| B0 | 测试脚本：E2E 用的 pi agent 设置写 `doubleEscapeAction: "none"`，避免 `clearDialog()` 打开 Session Tree | S25 | ☐ | |
-| B1 | 竞答核心 + `select`（两个宿主）：按调用参数建 broker 会话，先答者生效，另一方关闭；竞答占用的组件不再由焦点路径建会话 | B0 | ☐ | |
+| B0 | 测试脚本：E2E 用的 pi agent 设置写 `doubleEscapeAction: "none"`，避免 `clearDialog()` 打开 Session Tree | S25 | ☑ | `81a9dea` |
+| B1 | 竞答核心 + `select`（两个宿主）：按调用参数建 broker 会话，先答者生效，另一方关闭；竞答占用的组件不再由焦点路径建会话 | B0 | ☑ | `eb08ade`；会话仍由焦点打开，按钮经入口上的竞答句柄作答（方案 §4.12 第 2–6 步） |
 | B2 | 竞答：`confirm`、`input`（两个宿主） | B1 | ☐ | |
 | B3 | 竞答：OMP 的 `editor`、`askDialog`（ask 工具，逐题与自定义答案）、`approve` | B2 | ☐ | |
 | B4 | 删除被竞答取代的焦点路径适配器分支（扩展 select/confirm/input；OMP 读画面部分仍留给 T3.2g） | B3 | ☐ | |
