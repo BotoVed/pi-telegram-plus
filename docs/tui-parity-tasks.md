@@ -92,11 +92,21 @@
 | B3b | 竞答：OMP 的 `askDialog`（ask 工具：插件按 Telegram 的选择拼出 `{ kind: "submit", results }`，含自定义答案） | B3a | ☑ | `5e7e5a6`；**3B 编码完成**（2026-10-25，单测 594/594、0 skip），E2E 在 3E |
 | ~~B4~~ | ~~删除被竞答取代的按键路径~~：并入 T3.2g。没有竞答句柄的对话框（宿主内部的确认框、pi 的 `editor`、内置工具审批）仍需按键路径；要删的只有 OMP 上读画面的部分 | — | 并入 T3.2g | |
 | T3.2d | OMP TSP 适配器：读取 + 操作（内置选择器与 `custom` 的基础） | 3B | ☑ | `7d8369f`；先做 picker（`activate`/`close` 事件） |
-| T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | ☐ | |
+| T3.2e | OMP TSP 适配器：内置选择器与仪表盘（`/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`） | T3.2d | 3E 核对 | picker 与 prefs 已覆盖（T3.2d、T3.2e-1）；其余选择器的实际描述结构在 3E 用 E2E 看，有缺口再开修复任务 |
 | T3.2e-1 | TSP：OMP 设置页（prefs：换页、switch、choice）；带竞答句柄的对话框 TSP 不接管 | T3.2d | ☑ | `3b40a58` |
-| T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | ☐ | |
+| T3.2f | OMP TSP 文本输入：验证 `edit` 事件（仅内置对话框里的输入框；扩展 `input` 已走竞答） | T3.2d | 3E 核对 | 需要在真实 OMP 上看到内置输入框的描述结构才能设计，3E 一并核对 |
 | T3.2g | 删除 OMP 上的画面读取与按键注入代码（例外二；含原 B4） | B3b、T3.2e、T3.2f | ☑ | `d3a3e56`；提前完成（不依赖 T3.2e/f 的剩余部分）。没有可读字段又没有竞答句柄的 OMP 对话框不再靠画面发键 |
-| C1 | `/fork`、`/clone` 交给宿主（决定 52）；gateway 提交前保存消息进度，防止替换会话后重复执行 | T3.2g | ☐ | |
+| C1 | `/fork`、`/clone` 交给宿主（决定 52）；gateway 提交前保存消息进度，防止替换会话后重复执行 | T3.2g | ☑ | `194fbc4` |
+**3D 重新拆分**（主控 2026-10-25，依据 pi 1.4.0 源码与 parity 审计 `.tmp/parity-pi.json`；下面的 T3.3–T3.10 旧描述写于 v6 之前，含"退回快照""保留原生 /fork"等已作废的做法，以本表为准）：
+
+| # | 任务 | 依赖 | 状态 | 提交 |
+|---|---|---|---|---|
+| P1 | pi 内置列表选择器：`/model`、`/scoped-models`、`/login`/`/logout` 提供方、`/trust`、`/fork`/`/clone` 消息列表（按构造器名读字段） | 3C | ☐ | |
+| P2 | pi `/settings`（`SettingsList`：当前值、切换、子菜单） | P1 | ☐ | |
+| P3 | pi `/resume`（`SessionSelectorComponent`） | P1 | ☐ | |
+| P4 | pi `/tree`（`TreeSelectorComponent`） | P1 | ☐ | |
+| P5 | pi 登录对话框（`LoginDialog`：API key 输入按 secret 处理） | P1 | ☐ | |
+
 | T3.3 | pi `SelectListAdapter` | — | ☐ | |
 | T3.4 | pi `SettingsListAdapter` 主列表 | T3.3 | ☐ | |
 | T3.5 | pi `/settings` 子菜单 | T3.4 | ☐ | |
