@@ -326,7 +326,9 @@ export class FocusTracker {
     if (toolUi && toolUi !== ui) hookEntryMethods(toolUi, UI_CONTEXT_SPECS, sink, state.host === "omp" ? "omp" : "pi", this.tagged);
     // The race wrapper goes on outside the entry wrapper: it registers its
     // handle before that wrapper pushes, so the entry above can take it (§4.12).
-    if (toolUi) installRace(toolUi, "select", this.tagged);
+    // `confirm` and `input` are wrapped too: pi's `confirm` draws through the
+    // selector, so only the outer call's handle can answer it.
+    if (toolUi) for (const method of ["select", "confirm", "input"] as const) installRace(toolUi, method, this.tagged);
     if (state.host === "omp") hookEntryMethods(state.mode, OMP_ENTRY_SPECS, sink, "omp", this.tagged);
     if (state.host === "pi" && state.mode) {
       hookEntryMethods(state.mode, PI_ENTRY_SPECS, sink, "pi", this.tagged);

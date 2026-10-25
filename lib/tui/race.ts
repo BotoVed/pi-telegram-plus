@@ -1,7 +1,8 @@
 /**
- * The UI race (§4.12, decision 53): when an extension calls `ui.select`, the
- * host still draws its dialog, but a Telegram answer goes straight into the
- * extension's own call instead of steering the host component with keystrokes.
+ * The UI race (§4.12, decision 53): when an extension calls `ui.select`,
+ * `ui.confirm` or `ui.input`, the host still draws its dialog, but a Telegram
+ * answer goes straight into the extension's own call instead of steering the
+ * host component with keystrokes.
  * The wrapper races the plugin-side `RaceHandle` against the host's promise:
  * whoever answers first wins, and a Telegram win aborts the host dialog
  * through the `signal` handed to the original call (measured ~2 ms to close
@@ -45,7 +46,7 @@ export function takePendingRace(): RaceHandle | undefined {
  */
 export function installRace(
   target: Record<string, unknown>,
-  method: "select",
+  method: "select" | "confirm" | "input",
   tagged: WeakSet<object>,
 ): boolean {
   const current = target[method];
@@ -87,7 +88,7 @@ export function installRace(
     // propagating to the extension exactly as they would without the race.
     return Promise.race([plugin.promise, host]);
   };
-  Object.defineProperty(wrapped, "name", { value: "ptp-race:select" });
+  Object.defineProperty(wrapped, "name", { value: `ptp-race:${method}` });
   raced.add(wrapped);
   tagged.add(current as object);
   tagged.add(wrapped);

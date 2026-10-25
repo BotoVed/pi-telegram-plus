@@ -155,6 +155,13 @@ export const extensionSelectAdapter: DialogAdapter = {
         return index === undefined ? false : race.answer(labels[index]);
       }
     }
+    // pi's `confirm` answers through its own outer call, which is the entry the
+    // handle hangs on: yes/no go straight to the promise, cancel is a "no" -
+    // pi's own cancel returns false anyway, and aborting closes the dialog.
+    if (race && !race.settled && ctx.entry?.kind === "confirm") {
+      if (action.type === "cancel") return race.answer(false);
+      if (action.type === "confirm") return race.answer(action.yes);
+    }
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "choose" && action.type !== "toggle" && action.type !== "confirm") return false;
 
@@ -236,6 +243,13 @@ export const extensionInputAdapter: DialogAdapter = {
   },
 
   act(component, action, ctx) {
+    // The extension's own `input` call may be racing the host dialog (§4.12):
+    // the reply answers that call directly; typing + Enter below is the fallback.
+    const race = ctx.entry?.race;
+    if (race && !race.settled && ctx.entry?.kind === "input") {
+      if (action.type === "cancel") return race.answer(undefined);
+      if (action.type === "submit") return race.answer(action.text ?? "");
+    }
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "submit") return false;
     const text = action.text ?? "";
