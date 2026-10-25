@@ -899,14 +899,14 @@ OMP 的 `showAskDialog` 和 `approve` 不是命令，分别来自 `ask` 工具�
 
 - **支持竞答的方法**：pi 1.4.0 为 `select`、`confirm`、`input`（`editor` 不接受 `opts`）；OMP 18.12.x 为 `select`、`confirm`、`input`、`editor`、`askDialog`、`approve`。不接受 signal 的方法（pi 的 `editor`、两个宿主的 `custom`）不竞答，按现有适配器处理（`custom` 按 §4.6.5 明确告知，pi-goal 走例外一）。
 - **拦截位置**：扩展实际拿到的 UI 上下文对象（`extensionRunner.getUIContext()`，FocusTracker 的 `attachEntryHooks` 已经在这里挂钩入口）。
-- **归属**：调用发生时，只有存在 Telegram 发起的命令作用域或 Telegram turn（§4.3）才竞答；否则原样调用宿主方法，只在终端显示（谁发起谁显示，决定 42 保留）。
+- **归属**：沿用 broker 的归属规则（§4.3）：只有 Telegram 发起的命令作用域或 Telegram turn 里的对话框才发到 Telegram（谁发起谁显示，决定 42 保留）。
 - **流程**：
   1. 用调用方的 signal 加上插件自己的 `AbortController`（`AbortSignal.any`）调用宿主方法，终端照常画出对话框；
-  2. 同时 broker 按**调用参数**建会话并发到 Telegram（标题、选项、提示文字、默认值），不读画面、不按焦点识别；
-  3. Telegram 先回答 → 插件以该值 resolve 调用，再 abort 宿主（宿主返回的 `undefined` 丢弃）；
-  4. 终端先回答 → 以宿主的值 resolve，broker 撤掉 Telegram 键盘并写摘要；
-  5. 调用方的 signal 先中止 → 两边一起关闭，调用以 `undefined` 结束；
-  6. 同一个对话框不能再由焦点路径建第二个会话：竞答期间宿主入栈的组件（pi 的 `pushExtensionDialog`、OMP 的焦点组件）标记为已由竞答占用，broker 的焦点路径跳过它。
+  2. 宿主照常画出对话框，broker 照常经焦点变化建会话（一个对话框只有一个会话）；模型取自入口参数（标题、选项、提示文字）；
+  3. Telegram 先回答 → 适配器不再模拟按键，而是经竞答句柄把值直接交给调用方，再 abort 宿主（宿主返回的 `undefined` 丢弃）；
+  4. 终端先回答 → 以宿主的值 resolve，broker 照常撤掉 Telegram 键盘并写摘要；
+  5. 调用方的 signal 先中止 → 宿主关闭对话框，调用以宿主的结果结束；
+  6. 竞答句柄挂在入口记录上（`EntryInfo.race`），由最外层的竞答包装在调用宿主方法之前登记；本地发起的对话框也有句柄，但只有 Telegram 的按钮会用它，所以不改变终端行为。
 - **实测结论**：两个宿主上，插件的答案都送达了扩展，宿主对话框在 abort 后约 2ms 关闭，后续 input、secret、custom、ask 步骤照常通过。S25 里 pi 的 confirm 步骤失败，S25b 查明是测试脚本的问题：`clearDialog()` 在约 400ms 内连发两次 Escape，pi 编辑器为空时这会触发双击 Escape 动作（`doubleEscapeAction`，默认 `tree`，pi 1.4.0 `interactive-mode.ts` 第 3036–3050 行），打开 Session Tree；之后发来的命令被插件按设计拒绝（"终端上有一个未完成的对话框"）。不加竞答的基线运行也打开了 6 次 Session Tree，只是时机没有挡住后续步骤。3B 第一项任务修测试脚本：在测试用的 agent 设置里写 `doubleEscapeAction: "none"`。
 
 ## 5. 文件改动清单
