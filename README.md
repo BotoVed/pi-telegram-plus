@@ -33,6 +33,7 @@
 | Command acceptance (both hosts) | `npm run test:e2e:commands` |
 | Dialog round trip (both hosts) | `npm run test:e2e:dialogs` |
 | Interaction parity | `npm run test:e2e:parity` |
+| State equivalence (terminal vs Telegram) | `npm run test:e2e:state` |
 | Real Bot API smoke | `npm run test:e2e:real` |
 
 The E2E suites run the pi in `node_modules` (`1.4.0`); `--pi-bin` points them at another
@@ -88,7 +89,7 @@ When a command or turn you started from Telegram makes the host ask something, t
 |--------|-------------------------|
 | Extension `select` / `confirm` / `input` (both hosts), and OMP's `editor`, `ask` tool and tool approvals | The Telegram answer is handed straight to the waiting call and the host's copy is closed through the call's own cancel signal — no keystrokes are simulated |
 | pi built-in pickers: models, scoped models, sessions (`/resume`), session tree (`/tree`), fork/clone messages, settings (with search and submenus), project trust, login providers | Read from the component's own fields; your choice is applied through the host's input path |
-| pi login prompts (API key, pasted codes) | Always treated as secrets: your reply is deleted from the chat right after it is used and never echoed back |
+| pi login prompts (API key, pasted codes) | Always treated as secrets: your reply is deleted from the chat right after it is used and never echoed back. Remembered secrets are masked as `***` in everything the plugin sends afterwards; see [docs/compatibility.md](docs/compatibility.md#secrets) for the limits |
 | OMP built-in pickers and settings (`/model` including the role assignment step, `/settings`, `/login`, `/agents`, …) | Read from the components' semantic description and answered with structured events |
 | [`@capyup/pi-goal`](https://www.npmjs.com/package/@capyup/pi-goal) `custom()` dialogs (draft confirmation, `goal_question`, `goal_questionnaire`) | A dedicated adapter turns them into option buttons, a typed-answer path and Submit/Cancel |
 | Anything the plugin cannot model | A plain notice — "the terminal shows a dialog Telegram cannot handle, please answer it there" — with a single Cancel button. The plugin never guesses keystrokes or mirrors screen text |

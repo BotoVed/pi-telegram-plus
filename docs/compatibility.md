@@ -62,6 +62,30 @@ OMP's advertised command catalog over-reports: entries such as `/theme`, `/undo`
 prompt text. Telegram forwards them to the host editor the same way, so both surfaces behave
 identically.
 
+## Dialog support
+
+How a dialog raised by a Telegram-started command or turn reaches the chat. "Structured" means the plugin reads the dialog's data from the host (call arguments, component fields, or the semantic description) and answers through the host's own input or event path; it never parses screen text to decide what to show.
+
+| Dialog | pi 1.4.0 | OMP 18.12.x |
+|---|---|---|
+| Extension `select` / `confirm` / `input` | Structured (race: the answer goes to the waiting call, the host's copy is closed by its cancel signal) | Structured (race) |
+| Extension `editor` | Structured (component fields, answered through the host input) | Structured (race) |
+| `ask` tool, single and multi-question | — (pi has no ask tool) | Structured (race; the answer object is built from the Telegram choices) |
+| Tool approval | — | Structured (race: Allow once / session / Deny) |
+| Model picker (`/model`) | Structured (component fields) | Structured (semantic description, including the role-assignment step) |
+| Scoped models (`/scoped-models`) | Structured | — |
+| Settings (`/settings`) | Structured (values, submenus, search) | Structured (pages, on/off and choice rows; other row types say "change it in the terminal") |
+| Sessions (`/resume`), session tree (`/tree`), fork/clone message lists | Structured | Structured where the picker describes itself; otherwise announced |
+| Login providers and login prompts | Structured; typed keys are secrets (deleted from the chat, never echoed) | Structured (semantic description) |
+| `@capyup/pi-goal` dialogs | Dedicated adapter (§4.6.6 exception 1) | Dedicated adapter |
+| Anything else (unknown `custom()` components, dialogs with no readable data) | Announced: "The terminal shows a dialog Telegram can't handle", with a single Cancel button | Same |
+
+Known gaps: OMP settings rows other than on/off and choice can only be changed in the terminal. In the mock environment OMP does not persist settings toggled from either side, so the state-equivalence suite skips that case.
+
+## Secrets
+
+Values typed into secret prompts (the plugin's own and the host's login prompts) are remembered per chat for 24 hours, or until a new session starts, and replaced with `***` in everything the plugin sends: dialog text and buttons, command output, assistant replies (including code blocks sent as files), and plugin notices. Values shorter than 8 characters are not tracked, so short secrets are not masked. Secrets you paste as an ordinary chat message are not tracked either.
+
 ## Verification
 
 | Suite | What it checks | Command |
@@ -74,9 +98,10 @@ identically.
 | Command acceptance | Every advertised command and the `/tg` menu levels on both hosts | `npm run test:e2e:commands` |
 | Dialog round trip | Extension `select` / `confirm` / `input` / secret input / `custom` and the `ask` tool, answered from Telegram and from the terminal, asserting the value the host actually resolved | `npm run test:e2e:dialogs` |
 | Interaction parity | Host screen and Telegram surface recorded side by side for every advertised command | `npm run test:e2e:parity` |
+| State equivalence | The same operation done once in the terminal and once from Telegram on fresh hosts; the resulting host state (session name, model, settings, scoped models, OMP model roles) must match | `npm run test:e2e:state` |
 | Real Bot API smoke | One message through api.telegram.org (send → edit → delete), plus a rejected-tag check | `npm run test:e2e:real` |
 
-The E2E suites use `node_modules/.bin/pi` (`--pi-bin` or `--pi` overrides it). Steps that are
+The E2E suites use `node_modules/.bin/pi` (`--pi-bin` or `--pi` overrides it). Commands that reach external services (`/share`, `/collab`, `/join`, `/leave`, `/update`, `/upgrade`) are not run by the suites. Steps that are
 known to fail until a later migration task lands are listed in
 `scripts/e2e/pending-migration.json`; only regressions outside that list count as failures.
 

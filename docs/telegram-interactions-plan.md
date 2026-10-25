@@ -1,3 +1,5 @@
+> **已被取代（2026-10-25）**：本文档的原则 1（Telegram 触发的 turn 里模态框只走 Telegram、不在终端弹出）已被 `docs/tui-parity-refactor-plan.md` 取代。现在的做法是：宿主照常在终端画出对话框，同一个问题同时出现在 Telegram 上，哪边先回答用哪边（方案 §4.12、决定 53）。本文档仅作历史记录保留。
+
 # Plan: Telegram 远程交互不破坏 TUI（以 `/goals` 确认为例）
 
 ## 0. 设计原则（最高约束）
