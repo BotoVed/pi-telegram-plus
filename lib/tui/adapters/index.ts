@@ -14,8 +14,11 @@ import { approvalAdapter } from "./approval.ts";
 import { customGoalAdapter } from "./goal.ts";
 import { extensionEditorAdapter, extensionInputAdapter, extensionSelectAdapter } from "./extension.ts";
 import { infoPanelAdapter, unsupportedAdapter } from "./panel.ts";
+import { tspPickerAdapter } from "./tsp.ts";
 
 export const DIALOG_ADAPTERS: DialogAdapter[] = [
+  // OMP's own semantic descriptions beat any frame reading, on OMP only.
+  tspPickerAdapter,
   askDialogAdapter,
   approvalAdapter,
   customGoalAdapter,
@@ -45,5 +48,6 @@ export {
   extensionInputAdapter,
   extensionSelectAdapter,
   infoPanelAdapter,
+  tspPickerAdapter,
   unsupportedAdapter,
 };
