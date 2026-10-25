@@ -52,6 +52,8 @@ reimplementation and several settings, so read **Breaking changes** before upgra
     with search and submenus, project trust, login providers) are read from the components' own fields.
   - OMP's built-in pickers and settings pages (including `/model`'s role assignment step) are read from
     the components' semantic description and answered with structured events.
+  - OMP's settings page takes a typed word as its search term, so the chat can start a search the way
+    the terminal does ("Type to search").
   - A dialog the plugin cannot model gets a plain "answer it in the terminal" notice with one Cancel
     button; the plugin never mirrors screen text or guesses keys.
   - An open dialog follows late changes in the terminal (for example a list that loads after it opens).
@@ -89,6 +91,11 @@ reimplementation and several settings, so read **Breaking changes** before upgra
   message the old one still had queued; the result now travels to the new runtime and is sent from there.
 - **OMP `/clear` and `/delete` report their result** instead of an empty reply.
 - **Telegram returns to the first page** when a dialog swaps in a different list (OMP model roles).
+- **A settings page's sub-input behaves like a dialog of its own.** A value typed into OMP's secret
+  settings row is deleted from the chat and masked like any other secret; a value the host refuses is
+  reported instead of typed into the terminal behind the dialog, and the field stays open for a retry;
+  a row whose change the host dropped no longer reports a successful press. Reopening the settings page
+  starts on the rows instead of the input the previous visit left open.
 - Several dialog, focus and output-capture fixes found by the end-to-end suites on both hosts.
 
 ## [0.0.12] — 2026-10-19

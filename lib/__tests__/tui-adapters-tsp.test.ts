@@ -48,6 +48,52 @@ function makeComponent(tree: unknown, opts: { throws?: boolean } = {}) {
   };
 }
 
+/** `prefsProps` as a fresh object: the adopting host below writes values into
+ * the controls it is given, so no two tests may share one. */
+const pageProps = () => structuredClone(prefsProps);
+
+/** Write a `change` event onto the row's own control, the way a host that
+ * accepts the value does. */
+function applyPrefsChange(props: Record<string, unknown>, item: string, value: unknown): void {
+  const sections = Array.isArray(props.sections) ? (props.sections as Record<string, unknown>[]) : [];
+  for (const section of sections) {
+    for (const row of (Array.isArray(section.rows) ? section.rows : []) as Record<string, unknown>[]) {
+      if (row.id !== item || typeof row.control !== "object" || row.control === null) continue;
+      const control = row.control as Record<string, unknown>;
+      if (control.k === "switch" && typeof value === "boolean") control.on = value;
+      else if (control.k === "multi" && Array.isArray(value)) control.values = [...value];
+      // A secret control is left untouched: a real host may keep it out of the
+      // description, and the adapter must trust it rather than compare it.
+      else if ((control.k === "choice" || control.k === "number" || control.k === "text") && control.secret !== true) {
+        control.value = value;
+      }
+    }
+  }
+}
+
+/**
+ * A settings page that answers like OMP: it records the events it is sent and
+ * applies the ones it accepts, so the next `describe` shows the new value.
+ * `adopt: false` is the host that silently drops a change (a number outside
+ * the values its own editor offers) - the adapter has to report that as a dead
+ * button instead of a successful press.
+ */
+function makePrefsHost(props: Record<string, unknown>, opts: { adopt?: boolean } = {}) {
+  const adopt = opts.adopt !== false;
+  const events: unknown[] = [];
+  return {
+    props,
+    events,
+    describe: (): { k: string; p?: unknown } => ({ k: "prefs", p: props }),
+    handleNativeEvent: (event: unknown) => {
+      events.push(event);
+      const change = event as { type?: string; item?: unknown; value?: unknown };
+      if (!adopt || change.type !== "change" || typeof change.item !== "string") return;
+      applyPrefsChange(props, change.item, change.value);
+    },
+  };
+}
+
 const pickerProps = {
   title: "Models",
   items: [
@@ -519,7 +565,7 @@ describe("tsp prefs act", () => {
   });
 
   it("answers a switch cycle with the requested boolean change", () => {
-    const component = makeComponent({ k: "prefs", p: prefsProps });
+    const component = makePrefsHost(pageProps());
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "On" }, ctxFor())).toBe(true);
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "Off" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([
@@ -529,19 +575,19 @@ describe("tsp prefs act", () => {
   });
 
   it("flips a switch when no value is given", () => {
-    const component = makeComponent({ k: "prefs", p: prefsProps });
+    const component = makePrefsHost(pageProps());
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([{ type: "change", key: "", item: "think", value: false }]);
   });
 
   it("maps a choice label back onto its option value", () => {
-    const component = makeComponent({ k: "prefs", p: prefsProps });
+    const component = makePrefsHost(pageProps());
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "Light" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([{ type: "change", key: "", item: "theme", value: "light" }]);
   });
 
   it("cycles to the next option when no value is given", () => {
-    const component = makeComponent({ k: "prefs", p: prefsProps });
+    const component = makePrefsHost(pageProps());
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([{ type: "change", key: "", item: "theme", value: "light" }]);
   });
@@ -563,9 +609,10 @@ describe("tsp prefs act", () => {
   });
 
   it("re-reads the tree on every action instead of trusting a stale one", () => {
-    let tree: unknown = { k: "prefs", p: prefsProps };
-    const component = makeComponent(null);
+    const component = makePrefsHost(pageProps());
+    let tree: { k: string; p?: unknown } = { k: "prefs", p: component.props };
     component.describe = () => tree;
+    // The host applied the change, so the read-back confirms it.
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "Off" }, ctxFor())).toBe(true);
     tree = { k: "text" };
     expect(tspPrefsAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(false);
@@ -641,7 +688,7 @@ describe("tsp prefs number controls", () => {
   });
 
   it("cycles a small range to the wanted step or to the next one", () => {
-    const component = makeComponent({ k: "prefs", p: controlProps() });
+    const component = makePrefsHost(controlProps());
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "temp", value: "0.75" }, ctxFor())).toBe(true);
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "level" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([
@@ -658,7 +705,7 @@ describe("tsp prefs number controls", () => {
   });
 
   it("submits a typed number as a change and keeps the input open on garbage", () => {
-    const component = makeComponent({ k: "prefs", p: controlProps() });
+    const component = makePrefsHost(controlProps());
     expect(tspPrefsAdapter.act(component, { type: "submenu", key: "width" }, ctxFor())).toBe(true);
     expect(asSubmenuInput(tspPrefsAdapter.read(component, ctxFor())).placeholder).toBe("80");
     expect(tspPrefsAdapter.act(component, { type: "submit", text: "abc" }, ctxFor())).toBe(false);
@@ -689,7 +736,7 @@ describe("tsp prefs text controls", () => {
   });
 
   it("submits the typed string and closes the input", () => {
-    const component = makeComponent({ k: "prefs", p: controlProps() });
+    const component = makePrefsHost(controlProps());
     tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor());
     expect(tspPrefsAdapter.act(component, { type: "submit", text: "sonnet" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([{ type: "change", key: "", item: "name", value: "sonnet" }]);
@@ -832,5 +879,57 @@ describe("tsp prefs action controls and search", () => {
     props.sections = [];
     expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
     expect(tspPrefsAdapter.act(component, { type: "submit", text: "x" }, ctxFor())).toBe(false);
+  });
+});
+
+describe("tsp prefs read-back, search and stale submenu", () => {
+  it("keeps the number input up when the host ignores the value", () => {
+    const component = makePrefsHost(controlProps(), { adopt: false });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "width" }, ctxFor())).toBe(true);
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "42" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "width", value: 42 }]);
+    // The row still shows 80: the editor stays up so the user can retry.
+    const input = asSubmenuInput(tspPrefsAdapter.read(component, ctxFor()));
+    expect(input.title).toBe("Width");
+    expect(input.placeholder).toBe("80");
+  });
+
+  it("reports a cycle the host dropped as a dead button", () => {
+    const component = makePrefsHost(pageProps(), { adopt: false });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "think", value: false }]);
+  });
+
+  it("trusts a secret row the host keeps out of its description", () => {
+    const component = makePrefsHost(controlProps());
+    tspPrefsAdapter.act(component, { type: "submenu", key: "token" }, ctxFor());
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "new-token" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "token", value: "new-token" }]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+  });
+
+  it("refuses a multi toggle the host did not apply, and stays in the submenu", () => {
+    const component = makePrefsHost(controlProps(), { adopt: false });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "langs" }, ctxFor())).toBe(true);
+    expect(tspPrefsAdapter.act(component, { type: "toggle", key: "py" }, ctxFor())).toBe(false);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu?.itemKey).toBe("langs");
+  });
+
+  it("advertises the search box before the terminal has typed anything", () => {
+    const component = makePrefsHost(controlProps());
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).search).toEqual({ query: "" });
+  });
+
+  it("reopens the rows, not the submenu the previous session left open", () => {
+    const component = makePrefsHost(controlProps());
+    expect(tspPrefsAdapter.detect(component, ctxFor())).toBe(true);
+    tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor());
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu?.itemKey).toBe("name");
+    // The terminal closed the page behind the plugin's back; the next session on
+    // the same component must not resume inside the abandoned input.
+    expect(tspPrefsAdapter.detect(component, ctxFor())).toBe(true);
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.submenu).toBeUndefined();
+    expect(model.search).toEqual({ query: "" });
   });
 });

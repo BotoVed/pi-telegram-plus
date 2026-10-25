@@ -166,6 +166,30 @@ export function textPurpose(model: DialogModel): TextPurpose | undefined {
   }
 }
 
+/** The text field a model asks the user to type into: a top-level field, or the
+ * one a settings submenu opened. `secret` is only ever true for an input the
+ * host (or OMP's prefs row) marked secret. */
+type EffectiveInput = { kind: "input" | "editor"; secret?: boolean };
+
+/**
+ * Which field typed text actually belongs to. A settings submenu is nested
+ * state of the same dialog (§4.6.4 #5), so a secret token field reached through
+ * `Settings ▸ <row>` is the input of this session exactly like a top-level
+ * password prompt is - the top-level kind alone says nothing about it.
+ */
+function effectiveInput(model: DialogModel): EffectiveInput | undefined {
+  switch (model.kind) {
+    case "input":
+      return { kind: "input", secret: model.secret };
+    case "editor":
+      return { kind: "editor" };
+    case "settings":
+      return model.submenu ? effectiveInput(model.submenu.model) : undefined;
+    default:
+      return undefined;
+  }
+}
+
 function findLast<T>(list: T[], predicate: (item: T) => boolean): T | undefined {
   for (let index = list.length - 1; index >= 0; index -= 1) {
     if (predicate(list[index])) return list[index];
@@ -378,7 +402,7 @@ export class DialogBroker {
     if (purpose) {
       session.pendingInput = {
         flowId: session.id,
-        secret: session.model.kind === "input" && session.model.secret,
+        secret: effectiveInput(session.model)?.secret === true,
         purpose,
       };
     }
@@ -445,7 +469,10 @@ export class DialogBroker {
 
     const subject = (session.subject ?? session.focus) as Record<string, unknown>;
     const ctx = this.context(subject, this.deps.focus.current());
-    const model = this.read(subject, ctx);
+    // The adapter that read the dialog owns it (§4.6.1), so re-reading must not
+    // ask the registry again: `detect` means "a session is opening for this
+    // component", and an adapter may reset per-dialog state there.
+    const model = this.read(subject, ctx, session.adapter);
     if (!model) {
       this.retire(session, this.deps.focus.current());
       return refuse("no-model", "Answered in the terminal");
@@ -460,7 +487,7 @@ export class DialogBroker {
     if (resolved.kind === "text") {
       session.pendingInput = {
         flowId: session.id,
-        secret: model.kind === "input" && model.secret,
+        secret: effectiveInput(model)?.secret === true,
         purpose: resolved.purpose,
       };
       session.model = model;
@@ -516,8 +543,12 @@ export class DialogBroker {
 
     // The adapter types into the component's own field, which keeps cursor and
     // undo state coherent and works without a terminal to type into. A raw
-    // write is the fallback for dialogs no adapter can drive (a search filter
-    // that re-filters as it types).
+    // write is only for text the plugin never modelled as a field of its own:
+    // a search filter that re-filters as it types, or a questionnaire's custom
+    // answer. For a modelled field - a top-level input/editor, or the input a
+    // settings submenu opened - a submit the host refused must stay out of the
+    // terminal: with the settings page focused those keystrokes land in its own
+    // search box (or the editor), which the user never asked for.
     const subject = (session.subject ?? session.focus) as Record<string, unknown>;
     const ctx = this.context(subject, this.deps.focus.current());
     const driven = purpose === "input" || purpose === "editor"
@@ -525,10 +556,12 @@ export class DialogBroker {
       : purpose === "search"
         ? this.act(subject, { type: "search", query: text }, ctx)
         : false;
-    const submitted = purpose === "search" ? text : `${text}\r`;
-    const written = driven || this.deps.writeText(submitted);
+    const modeledField = effectiveInput(session.model) !== undefined;
+    const written = driven || (!modeledField && this.deps.writeText(purpose === "search" ? text : `${text}\r`));
     const telegram = session.telegram;
-    if (written && secret && telegram && messageId !== undefined) {
+    // The secret travelled in a Telegram message either way: it is deleted even
+    // when the host refused it, because the chat is the one place it is readable.
+    if (secret && telegram && messageId !== undefined) {
       this.deps.secrets?.remember(targetKey(telegram), flowId, text);
       void this.deps.transport.deleteMessage(telegram.chatId, messageId).catch(() => undefined);
     }
@@ -647,10 +680,25 @@ export class DialogBroker {
     if (!this.canDrive(session)) return;
     const subject = (session.subject ?? session.focus) as Record<string, unknown>;
     const ctx = this.context(subject, this.deps.focus.current());
-    const model = this.read(subject, ctx);
+    const model = this.read(subject, ctx, session.adapter);
     if (!model) {
       this.retire(session, this.deps.focus.current());
       return;
+    }
+    // What typed text is *for* belongs to the model, not to the moment the
+    // dialog opened: tapping into a settings submenu turns "type to search"
+    // into "type the value of this row" (and a multi-select takes no text at
+    // all). A marker left over from the previous draw would send the next
+    // message to the wrong field, and the secret flag with it.
+    if (session.pendingInput) {
+      const purpose = textPurpose(model);
+      if (purpose !== session.pendingInput.purpose) {
+        session.pendingInput = purpose === undefined ? undefined : {
+          flowId: session.id,
+          secret: effectiveInput(model)?.secret === true,
+          purpose,
+        };
+      }
     }
     // The page number belongs to the list it was made for: when the dialog
     // swaps in a different one (`/model`'s model list becoming "Assign ...

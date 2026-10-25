@@ -494,6 +494,46 @@ function multiSelected(control: HostRecord): string[] {
     : [];
 }
 
+/** One row's control as the host describes it *now*: re-describe `owner` and
+ * look the row up again. undefined when the row (or the page) is gone. */
+function prefsRowControl(owner: object, rowId: string): HostRecord | undefined {
+  const found = findNode(owner, "prefs");
+  if (!found) return undefined;
+  const row = prefsRows(found.props).find((candidate) => candidate.id === rowId);
+  return row && isObject(row.control) ? row.control : undefined;
+}
+
+/** Whether a multi control holds exactly `wanted`, in any order. */
+function sameSelection(control: HostRecord, wanted: readonly string[]): boolean {
+  const selected = new Set(multiSelected(control));
+  const wantedSet = new Set(wanted);
+  return selected.size === wantedSet.size && [...selected].every((value) => wantedSet.has(value));
+}
+
+/**
+ * Whether the host actually took a change. Sending the event proves nothing:
+ * OMP silently ignores values its own editor would not offer (a number outside
+ * the range/step list), so the row would keep its old value while Telegram was
+ * told the press worked. A secret text control is the one value a host may keep
+ * out of its description, so that one is trusted rather than compared.
+ */
+function prefsChangeAdopted(owner: object, rowId: string, value: unknown): boolean {
+  const control = prefsRowControl(owner, rowId);
+  if (!control) return false;
+  if (control.k === "switch") return typeof value === "boolean" && (control.on === true) === value;
+  if (control.k === "choice") return typeof value === "string" && control.value === value;
+  if (control.k === "number") return typeof value === "number" && control.value === value;
+  if (control.k === "text") {
+    return control.secret === true || (typeof value === "string" && control.value === value);
+  }
+  if (control.k === "multi") {
+    return Array.isArray(value)
+      && value.every((entry): entry is string => typeof entry === "string")
+      && sameSelection(control, value);
+  }
+  return false;
+}
+
 /** The row kinds whose editor this adapter keeps on the Telegram side. */
 type PrefsSubmenuKind = "text" | "number" | "multi";
 
@@ -644,9 +684,10 @@ function prefsSubmenuAct(
     try {
       ctx.requestRender();
     } catch {
-      // A host without a live renderer has nothing to redraw; the change landed.
+      // A host without a live renderer has nothing to redraw.
     }
-    return true;
+    // The event landing is not the end of it: the host may have dropped it.
+    return prefsChangeAdopted(owner, state.rowId, value);
   };
   if (action.type === "cancel" || (action.type === "submit" && action.text === undefined)) {
     // "↩ Back" and the multi-select's "⏎ Submit" leave the editor and nothing else.
@@ -683,7 +724,16 @@ export const tspPrefsAdapter: DialogAdapter = {
 
   detect(component, ctx) {
     if (ctx.entry?.race) return false; // §4.12: the race owns a raced extension dialog.
-    return ctx.host === "omp" && findNode(component, "prefs") !== undefined;
+    if (ctx.host !== "omp") return false;
+    const found = findNode(component, "prefs");
+    if (!found) return false;
+    // `detect` runs when the broker opens a session for this component (§4.5
+    // rule 1), so anything left in the submenu map belongs to a page this
+    // session never showed: the terminal may have closed the settings page
+    // (or switched page) without this adapter ever seeing a cancel.
+    prefsSubmenus.delete(component);
+    prefsSubmenus.delete(found.owner);
+    return true;
   },
 
   read(component, ctx): DialogModel {
@@ -703,13 +753,16 @@ export const tspPrefsAdapter: DialogAdapter = {
       items.push(prefsRowItem(row));
     }
     const submenu = prefsSubmenuModel(owner, props);
-    const search = typeof props.query === "string" ? { query: props.query } : undefined;
+    // The page takes typed text as a search term whenever no submenu holds the
+    // keyboard (its footer says "Type to search"), so advertise the box even
+    // before the terminal has typed anything - otherwise Telegram has no way to
+    // start a search, only to continue one.
+    const search = { query: typeof props.query === "string" ? props.query : "" };
     return {
       kind: "settings",
       title: typeof props.title === "string" ? props.title : "Settings",
       items,
-      ...(submenu ? { submenu } : {}),
-      ...(search && !submenu ? { search } : {}),
+      ...(submenu ? { submenu } : { search }),
     };
   },
 
@@ -775,6 +828,10 @@ export const tspPrefsAdapter: DialogAdapter = {
     } catch {
       // ignore
     }
-    return true;
+    // A change the host dropped is a dead button, not a successful press; page
+    // switches and action controls have no value to read back and stand as-is.
+    const change = target as { type?: unknown; item?: unknown; value?: unknown };
+    if (change.type !== "change") return true;
+    return typeof change.item === "string" && prefsChangeAdopted(owner, change.item, change.value);
   },
 };
