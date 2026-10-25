@@ -15,6 +15,7 @@ import { customGoalAdapter } from "./goal.ts";
 import { extensionEditorAdapter, extensionInputAdapter, extensionSelectAdapter } from "./extension.ts";
 import { infoPanelAdapter, unsupportedAdapter } from "./panel.ts";
 import { piListAdapter, piSessionAdapter, piTreeAdapter } from "./pi-lists.ts";
+import { piLoginAdapter } from "./pi-login.ts";
 import { piSettingsAdapter } from "./pi-settings.ts";
 import { tspPickerAdapter, tspPrefsAdapter } from "./tsp.ts";
 
@@ -25,6 +26,7 @@ export const DIALOG_ADAPTERS: DialogAdapter[] = [
   askDialogAdapter,
   approvalAdapter,
   customGoalAdapter,
+  piLoginAdapter,
   extensionInputAdapter,
   extensionEditorAdapter,
   // pi's own selector fields beat the generic `filteredRows` guess.
@@ -57,6 +59,7 @@ export {
   extensionSelectAdapter,
   infoPanelAdapter,
   piListAdapter,
+  piLoginAdapter,
   piSessionAdapter,
   piSettingsAdapter,
   piTreeAdapter,
