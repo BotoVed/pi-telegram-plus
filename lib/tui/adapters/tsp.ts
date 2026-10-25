@@ -15,6 +15,9 @@
  *
  * Scope: single-select pickers and settings pages. While an extension dialog
  * is racing the host (§4.12), both adapters decline - the race owns the entry.
+ * While a picker's action strip is open (the model hub's role chips after
+ * activating a model), the picker adapter shows and answers the strip, not
+ * the list; a strip without chips (name entry) stays with the terminal.
  * Search, action-bar buttons and multi-select are T3.2f.
  */
 import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
@@ -45,9 +48,16 @@ type PickerProps = {
   selected?: unknown;
   current?: readonly unknown[];
   total?: unknown;
+  /** The chip strip docked above the action bar; null when absent. */
+  strip?: unknown;
 };
 
 type PickerItemLike = { id?: unknown; label?: unknown; detail?: unknown; disabled?: unknown };
+
+/** The picker's action strip: chips the user picks after activating an item. */
+type StripChipLike = { id?: unknown; label?: unknown; on?: unknown };
+
+type StripLike = { label?: unknown; items: readonly StripChipLike[]; selected?: unknown };
 
 /** The settings-page props (`TspPrefsProps` in pi-wire). */
 type PrefsProps = {
@@ -195,6 +205,21 @@ function visibleItems(props: PickerProps): PickerItemLike[] {
   return ordered.filter((item) => !item.disabled);
 }
 
+/** Prefix of the synthetic keys that address a strip chip by index. */
+const STRIP_KEY_PREFIX = "strip:";
+
+/**
+ * The picker's open action strip, or undefined when there is nothing to pick:
+ * a null/absent strip, or one without chips (the name-entry strip wants
+ * typing, not choosing, so we leave it to the terminal).
+ */
+function pickerStrip(props: PickerProps): StripLike | undefined {
+  if (!isObject(props.strip)) return undefined;
+  const strip = props.strip as Partial<StripLike>;
+  if (!Array.isArray(strip.items) || strip.items.length === 0) return undefined;
+  return strip as StripLike;
+}
+
 export const tspPickerAdapter: DialogAdapter = {
   id: "tsp-picker",
 
@@ -207,6 +232,23 @@ export const tspPickerAdapter: DialogAdapter = {
     const found = findPicker(component);
     if (!found) return { kind: "unsupported", what: "OMP 选择器已关闭或不再是选择器" };
     const { props } = found;
+    const strip = pickerStrip(props);
+    if (strip) {
+      // The strip is open (e.g. the model hub's role chips after activating a
+      // model): the terminal shows the chips, so Telegram shows the chips.
+      const items: DialogItem[] = strip.items.map((chip, index) => ({
+        key: `${STRIP_KEY_PREFIX}${index}`,
+        label: tspText(chip.label),
+        current: chip.on === true,
+        focused: typeof strip.selected === "string" && strip.selected === chip.id,
+      }));
+      return {
+        kind: "select",
+        title: tspText(strip.label) || "选择用途",
+        items,
+        total: items.length,
+      };
+    }
     const currentIds = Array.isArray(props.current) ? props.current : [];
     const items: DialogItem[] = visibleItems(props).map((item) => {
       const description = item.detail === undefined ? undefined : tspText(item.detail);
@@ -231,17 +273,21 @@ export const tspPickerAdapter: DialogAdapter = {
     const found = findPicker(component);
     if (!found) return false;
     const { owner, keypath, props } = found;
-    const target =
-      action.type === "choose"
-        ? { type: "activate" as const, key: keypath, item: action.key }
-        : action.type === "cancel"
-          ? { type: "action" as const, key: keypath, act: "close", mods: [] }
-          : undefined;
-    if (!target) return false;
-    if (target.type === "activate") {
+    let target: unknown;
+    if (action.type === "choose" && action.key.startsWith(STRIP_KEY_PREFIX)) {
+      const raw = action.key.slice(STRIP_KEY_PREFIX.length);
+      const index = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+      const strip = pickerStrip(props);
+      if (!strip || !Number.isInteger(index) || index >= strip.items.length) return false;
+      target = { type: "action", key: keypath, act: "strip", value: String(index), mods: [] };
+    } else if (action.type === "choose") {
       const catalogue = Array.isArray(props.items) ? props.items : [];
-      if (!catalogue.some((item) => isObject(item) && item.id === target.item)) return false;
+      if (!catalogue.some((item) => isObject(item) && item.id === action.key)) return false;
+      target = { type: "activate", key: keypath, item: action.key };
+    } else if (action.type === "cancel") {
+      target = { type: "action", key: keypath, act: "close", mods: [] };
     }
+    if (!target) return false;
     const handle = (owner as Partial<Describable>).handleNativeEvent;
     if (typeof handle !== "function") return false;
     try {

@@ -164,6 +164,44 @@ describe("tsp picker read", () => {
     expect(model.items.map((item) => item.key)).toEqual(["c"]);
     expect(model.total).toBe(1);
   });
+
+  it("follows an open action strip instead of the list", () => {
+    const props = {
+      title: "Models",
+      items: [{ id: "m", label: "mock/mock-model" }],
+      strip: {
+        label: "用途 mock/mock-model",
+        items: [
+          { id: "default", label: "default" },
+          { id: "small", label: [{ t: "small " }, { t: "model" }], on: true },
+          { id: "plan", label: "plan", on: false },
+        ],
+        selected: "small",
+      },
+    };
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: props }), ctxFor()));
+    expect(model.title).toBe("用途 mock/mock-model");
+    expect(model.total).toBe(3);
+    expect(model.items).toEqual([
+      { key: "strip:0", label: "default", current: false, focused: false },
+      { key: "strip:1", label: "small model", current: true, focused: true },
+      { key: "strip:2", label: "plan", current: false, focused: false },
+    ]);
+  });
+
+  it("defaults the strip title and treats a chip-less or null strip as none", () => {
+    const noLabel = { items: [{ id: "a", label: "alpha" }], strip: { items: [{ id: "x", label: "x" }] } };
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: noLabel }), ctxFor()));
+    expect(model.title).toBe("选择用途");
+    expect(model.items[0]?.focused).toBe(false);
+    // The name-entry strip has no chips: the list stays visible.
+    const nameStrip = { ...pickerProps, strip: { label: "名字", items: [] } };
+    const list = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: nameStrip }), ctxFor()));
+    expect(list.title).toBe("Models");
+    expect(list.items.map((item) => item.key)).toEqual(["a", "b"]);
+    const nulled = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: { ...pickerProps, strip: null } }), ctxFor()));
+    expect(nulled.title).toBe("Models");
+  });
 });
 
 describe("tsp picker act", () => {
@@ -206,6 +244,31 @@ describe("tsp picker act", () => {
       throw new Error("not interactive");
     };
     expect(tspPickerAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(false);
+  });
+
+  it("answers a strip choice with a strip action carrying the chip index", () => {
+    const props = {
+      ...pickerProps,
+      strip: { items: [{ id: "default", label: "default" }, { id: "small", label: "small" }] },
+    };
+    const component = makeComponent({ k: "frame", c: [{ key: "picker", k: "picker", p: props }] });
+    expect(tspPickerAdapter.act(component, { type: "choose", key: "strip:1" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "picker", act: "strip", value: "1", mods: [] }]);
+  });
+
+  it("refuses a strip index the host no longer offers", () => {
+    const props = { ...pickerProps, strip: { items: [{ id: "default", label: "default" }] } };
+    const component = makeComponent({ k: "picker", p: props });
+    expect(tspPickerAdapter.act(component, { type: "choose", key: "strip:1" }, ctxFor())).toBe(false);
+    expect(tspPickerAdapter.act(component, { type: "choose", key: "strip:" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([]);
+  });
+
+  it("still activates plain ids while a strip is open", () => {
+    const props = { ...pickerProps, strip: { items: [{ id: "default", label: "default" }] } };
+    const component = makeComponent({ k: "picker", p: props });
+    expect(tspPickerAdapter.act(component, { type: "choose", key: "b" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "activate", key: "", item: "b" }]);
   });
 });
 
