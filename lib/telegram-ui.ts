@@ -1,6 +1,7 @@
 import type { ExtensionUIContext } from "@earendil-works/pi-coding-agent";
 import { encodeUiCallback } from "./callback-protocol.ts";
 import { escapeHtml } from "./html.ts";
+import type { SecretStore } from "./tui/secrets.ts";
 import type { CapturedAgentSession, PendingInputResolver, TelegramTransport } from "./types.ts";
 
 const MAX_BUTTON_TEXT = 60;
@@ -34,6 +35,7 @@ export function createTelegramUiRuntime(deps: {
   getSession: () => CapturedAgentSession | undefined;
   transport: TelegramTransport;
   onPendingInputChange?: (chatId: number) => void;
+  secrets?: SecretStore;
 }): TelegramUiRuntime {
   const pendingByTarget = new Map<string, Map<string, Pending>>();
   // Per-flow replace targets prevent rapid callbacks from overwriting each other.
@@ -117,10 +119,12 @@ export function createTelegramUiRuntime(deps: {
       // from Telegram. Interactive modals stay Telegram-only; editor ops are no-ops.
       const base = deps.getSession()?.extensionRunner.getUIContext?.() as ExtensionUIContext | undefined;
       const target = targetKey(chatId, messageThreadId);
-
+      // Caller-provided text is redacted BEFORE HTML escaping: a secret this
+      // chat typed must never leak through plugin notices or prompts (§4.7.4).
+      const redact = (text: string) => deps.secrets?.redact(target, text) ?? text;
       const notifyFn = (message: string, level: "info" | "warning" | "error" = "info") => {
         const fid = activeFlowByTarget.get(target);
-        void sendOrReplaceText(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(String(level))}</b>\n${escapeHtml(message)}`, fid);
+        void sendOrReplaceText(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(String(level))}</b>\n${escapeHtml(redact(message))}`, fid);
       };
 
       // Live menu message (keyboard still attached). Successive menu() calls edit it
@@ -150,7 +154,7 @@ export function createTelegramUiRuntime(deps: {
           releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
-          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>\n${escapeHtml(message)}`, [[
+          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(redact(title))}</b>\n${escapeHtml(redact(message))}`, [[
             { text: "Yes", value: cb(flowId, "yes") }, { text: "No", value: cb(flowId, "no") }, { text: "Cancel", value: cb(flowId, "cancel") },
           ]], flowId);
           const value = await waitInput(chatId, messageThreadId, flowId, false, false, sent.message_id);
@@ -162,7 +166,7 @@ export function createTelegramUiRuntime(deps: {
           releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
-          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>${placeholder ? `\n${escapeHtml(placeholder)}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
+          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(redact(title))}</b>${placeholder ? `\n${escapeHtml(redact(placeholder))}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
           const value = await waitInput(chatId, messageThreadId, flowId, false, true, sent.message_id);
           activeFlowByTarget.delete(target);
           void deps.transport.removeInlineKeyboard(chatId, sent.message_id);
@@ -172,17 +176,18 @@ export function createTelegramUiRuntime(deps: {
           releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
-          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>${placeholder ? `\n${escapeHtml(placeholder)}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
+          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(redact(title))}</b>${placeholder ? `\n${escapeHtml(redact(placeholder))}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
           const value = await waitInput(chatId, messageThreadId, flowId, true, true, sent.message_id);
           activeFlowByTarget.delete(target);
           void deps.transport.removeInlineKeyboard(chatId, sent.message_id);
+          if (typeof value === "string") deps.secrets?.remember(target, flowId, value);
           return typeof value === "string" ? value : undefined;
         },
         editor: async (title, prefill) => {
           releaseMenu();
           const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
-          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(title)}</b>${prefill ? `\n${escapeHtml(prefill)}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
+          const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, `<b>${escapeHtml(redact(title))}</b>${prefill ? `\n${escapeHtml(redact(prefill))}` : ""}`, [[{ text: "Cancel", value: cb(flowId, "cancel") }]], flowId);
           const value = await waitInput(chatId, messageThreadId, flowId, false, true, sent.message_id);
           activeFlowByTarget.delete(target);
           void deps.transport.removeInlineKeyboard(chatId, sent.message_id);
@@ -194,7 +199,7 @@ export function createTelegramUiRuntime(deps: {
           let page = 0; const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           while (true) {
-            const { text, rows, pageCount } = buildSelectPage(flowId, title, options, page);
+            const { text, rows, pageCount } = buildSelectPage(flowId, redact(title), options.map(redact), page);
             const sent = await sendOrReplaceButtons(chatId, messageThreadId, sourceMessageId, text, rows, flowId);
             const value = await waitInput(chatId, messageThreadId, flowId, false, false, sent.message_id);
             if (typeof value !== "string") { activeFlowByTarget.delete(target); void deps.transport.removeInlineKeyboard(chatId, sent.message_id); return undefined; }
@@ -212,7 +217,7 @@ export function createTelegramUiRuntime(deps: {
           let page = 0; const flowId = beginFlow();
           activeFlowByTarget.set(target, flowId);
           while (true) {
-            const { text, rows, pageCount } = buildSelectPage(flowId, title, options, page);
+            const { text, rows, pageCount } = buildSelectPage(flowId, redact(title), options.map(redact), page);
             if (menuMessageId !== undefined) {
               await deps.transport.editButtons(chatId, menuMessageId, text, rows);
             } else {

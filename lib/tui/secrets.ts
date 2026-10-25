@@ -51,6 +51,11 @@ export class SecretStore {
     this.byChat.delete(chatKey);
   }
 
+  /** A new session (/new, session switch) forgets every chat's secrets. */
+  clearAll(): void {
+    this.byChat.clear();
+  }
+
   /** Replace every tracked secret with `***` (longest first, so prefixes lose). */
   redact(chatKey: string, text: string): string {
     if (!text) return text;

@@ -178,9 +178,14 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     getLease: getActiveSendLease,
     waitUntilReady: () => replayReady,
   });
+  // One store for the whole instance: the Broker and the plugin UI runtime
+  // remember what this chat typed, the renderer needs the same view to redact
+  // assistant replies.
+  const secretStore = new SecretStore();
   const ui = createTelegramUiRuntime({
     getSession: getActiveSession,
     transport,
+    secrets: secretStore,
   });
 
   const getCurrentActiveTurn = (): TelegramTurn | undefined => getCurrentTelegramTurn();
@@ -293,9 +298,6 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     transport,
   });
 
-  // One store for the whole instance: the Broker remembers what this chat
-  // typed, the renderer needs the same view to redact assistant replies.
-  const secretStore = new SecretStore();
   registerTelegramRenderer(pi, {
     getConfig: () => config,
     transport,
@@ -792,6 +794,9 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
   runtimeState.dispose = disposeRuntime;
 
   pi.on("session_start", async () => {
+    // A new session (/new, session switch) must not carry the previous
+    // session's remembered secrets into this one.
+    secretStore.clearAll();
     try {
       switchResolvedConfig(await readResolvedTelegramConfig(currentSessionCwd()));
     } catch (error) {
