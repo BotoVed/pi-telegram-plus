@@ -60,6 +60,10 @@ function fakeHost(options?: { confirmViaSelector?: boolean }): FakeHost {
     approve(_prompt: unknown, opts?: { signal?: AbortSignal }) {
       return open(opts ?? {});
     },
+    /** OMP's ask tool: `askDialog(questions, dialogOptions?)`, options second. */
+    askDialog(_questions: unknown, opts?: { signal?: AbortSignal }) {
+      return open(opts ?? {});
+    },
   };
   return { target, seen, settle, reject };
 }
@@ -587,12 +591,15 @@ describe("FocusTracker host gating of the raced methods", () => {
     expect((fake.target.editor as () => unknown).name).not.toBe("ptp-race:editor");
     // pi has no `approve` to race: a target without the method installs nothing.
     expect(installRace({ notify: () => undefined }, "approve", new WeakSet<object>())).toBe(false);
+    // pi has no `askDialog` on its tool context either.
+    expect((fake.target.askDialog as () => unknown).name).not.toBe("ptp-race:askDialog");
   });
 
   it("omp races editor and approve as well", () => {
     const { fake, tracker } = attachTracker("omp");
     expect((fake.target.editor as () => unknown).name).toBe("ptp-race:editor");
     expect((fake.target.approve as () => unknown).name).toBe("ptp-race:approve");
+    expect((fake.target.askDialog as () => unknown).name).toBe("ptp-race:askDialog");
     callEditor(fake.target)("Compose", "draft", {});
     // The entry above took the handle, exactly like select/confirm/input.
     const info = tracker.entryFor({});

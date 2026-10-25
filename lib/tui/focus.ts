@@ -328,12 +328,15 @@ export class FocusTracker {
     // handle before that wrapper pushes, so the entry above can take it (§4.12).
     // `confirm` and `input` are wrapped too: pi's `confirm` draws through the
     // selector, so only the outer call's handle can answer it.
-    // `editor`/`approve` are OMP-only: pi 1.4.0's `editor(title, prefill)`
-    // takes no options object, so an abort signal could not close its dialog
-    // and the terminal would be left holding an unmanaged editor. pi has no
-    // `approve` anyway; `installRace` would skip a missing method regardless.
+    // `editor`/`approve`/`askDialog` are OMP-only: pi 1.4.0's `editor(title,
+    // prefill)` takes no options object, so an abort signal could not close its
+    // dialog and the terminal would be left holding an unmanaged editor; pi has
+    // no `approve` or `askDialog` anyway. OMP's `askDialog(questions,
+    // dialogOptions?)` takes its options second, and it lives on the tool UI
+    // context only, which is where the loop below installs. `installRace` would
+    // skip a missing method regardless.
     const racedMethods = state.host === "omp"
-      ? ["select", "confirm", "input", "editor", "approve"] as const
+      ? ["select", "confirm", "input", "editor", "approve", "askDialog"] as const
       : ["select", "confirm", "input"] as const;
     if (toolUi) for (const method of racedMethods) installRace(toolUi, method, this.tagged);
     if (state.host === "omp") hookEntryMethods(state.mode, OMP_ENTRY_SPECS, sink, "omp", this.tagged);

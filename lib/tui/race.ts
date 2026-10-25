@@ -1,7 +1,7 @@
 /**
  * The UI race (§4.12, decision 53): when an extension calls one of the host's
- * dialog methods (`select`, `confirm`, `input`, and on OMP `editor` and
- * `approve`), the host still draws its dialog, but a Telegram answer goes
+ * dialog methods (`select`, `confirm`, `input`, and on OMP `editor`, `approve`
+ * and `askDialog`), the host still draws its dialog, but a Telegram answer goes
  * straight into the extension's own call instead of steering the host
  * component with keystrokes.
  * The wrapper races the plugin-side `RaceHandle` against the host's promise:
@@ -21,14 +21,14 @@ export type RaceHandle = {
 };
 
 /** The dialog methods `installRace` can wrap. */
-export type RaceMethod = "select" | "confirm" | "input" | "editor" | "approve";
+export type RaceMethod = "select" | "confirm" | "input" | "editor" | "approve" | "askDialog";
 
 /** Where each dialog method's option object (the one carrying `signal`) sits
  * in the host signature: OMP's `editor(title, prefill, dialogOptions,
- * editorOptions)` keeps a fourth argument, `approve(prompt, dialogOptions)`
- * takes its options second. */
+ * editorOptions)` keeps a fourth argument, `approve(prompt, dialogOptions)` and
+ * `askDialog(questions, dialogOptions?)` take their options second. */
 
-export const OPTS_INDEX: Record<RaceMethod, number> = { select: 2, confirm: 2, input: 2, editor: 2, approve: 1 };
+export const OPTS_INDEX: Record<RaceMethod, number> = { select: 2, confirm: 2, input: 2, editor: 2, approve: 1, askDialog: 1 };
 
 /** The handle of the race call currently running synchronously. */
 let pendingRace: RaceHandle | undefined;
