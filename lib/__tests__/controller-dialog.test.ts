@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTelegramController } from "../controller.ts";
 import { CommandGateway } from "../tui/gateway.ts";
+import { DialogBroker } from "../tui/broker.ts";
+import type { DialogSession } from "../tui/model.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
@@ -177,6 +179,141 @@ describe("dialog callback dispatch", () => {
       expect(harness.session.executeBash).not.toHaveBeenCalled();
     } finally {
       runText.mockRestore();
+    }
+  });
+});
+
+describe("chat text while a host dialog holds the focus", () => {
+  // 决定 54: a dialog that is still on screen but takes no text owns the terminal's
+  // input, and a message typed in the terminal cannot reach the prompt either. The
+  // broker reports that case as `handled: false` with the session still live (see
+  // tui-broker.test.ts); the chat then gets a notice instead of a prompt that would
+  // sit behind a dialog nobody answered.
+  const noticeOf = (title?: string) =>
+    `终端上有一个对话框正在等待${title ? `（${title}）` : ""}，请点按钮作答，或发 /stop 取消。`;
+
+  const sentTexts = (calls: Call[]): string[] =>
+    calls.filter((call) => call.method === "text").map((call) => String(call.text));
+  const sawNotice = (calls: Call[]): boolean =>
+    sentTexts(calls).some((value) => value.includes("终端上有一个对话框正在等待"));
+
+  /** `select` without `search`: no text purpose, so the broker leaves it alone. */
+  function noTextSession(title = "Settings"): DialogSession {
+    return {
+      id: "s1",
+      generation: 1,
+      openedAt: 0,
+      focus: {},
+      kind: "dialog",
+      ownerFromScope: false,
+      model: { kind: "select", title, items: [], total: 0 },
+      telegram: { chatId: 42, messageThreadId: undefined, messageId: 101 },
+      state: "open",
+    } as unknown as DialogSession;
+  }
+
+  const message = (messageId: number, text: string) => ({
+    message_id: messageId,
+    chat: { id: 42, type: "private" },
+    from: { id: 7 },
+    text,
+  });
+
+  it("notices chat text a text-less dialog blocks, and submits no prompt", async () => {
+    const session = noTextSession();
+    const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor").mockReturnValue(session);
+    const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockReturnValue({ handled: false });
+    try {
+      const harness = createHarness();
+      await harness.controller.handleMessage(message(70, "theme"));
+
+      expect(handleText).toHaveBeenCalledWith(session, "theme", 70);
+      expect(sentTexts(harness.calls)).toContain(noticeOf("Settings"));
+      expect(harness.session.prompt).not.toHaveBeenCalled();
+    } finally {
+      sessionFor.mockRestore();
+      handleText.mockRestore();
+    }
+  });
+
+  it("drops the title from the notice when the model has none", async () => {
+    const session = {
+      ...noTextSession(),
+      model: { kind: "progress", text: "Working", cancellable: false },
+    } as unknown as DialogSession;
+    const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor").mockReturnValue(session);
+    const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockReturnValue({ handled: false });
+    try {
+      const harness = createHarness();
+      await harness.controller.handleMessage(message(71, "hello"));
+
+      expect(sentTexts(harness.calls)).toContain(noticeOf());
+      expect(harness.session.prompt).not.toHaveBeenCalled();
+    } finally {
+      sessionFor.mockRestore();
+      handleText.mockRestore();
+    }
+  });
+
+  it("still hands chat text to a dialog that takes it", async () => {
+    const session = {
+      ...noTextSession("Provider"),
+      model: { kind: "input", title: "Provider", secret: false },
+    } as unknown as DialogSession;
+    const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor").mockReturnValue(session);
+    const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockReturnValue({ handled: true });
+    try {
+      const harness = createHarness();
+      await harness.controller.handleMessage(message(72, "anthropic"));
+
+      expect(handleText).toHaveBeenCalledWith(session, "anthropic", 72);
+      expect(sawNotice(harness.calls)).toBe(false);
+      expect(harness.session.prompt).not.toHaveBeenCalled();
+    } finally {
+      sessionFor.mockRestore();
+      handleText.mockRestore();
+    }
+  });
+
+  it.each(["/stop", "/status", "!ls"])("keeps %s off the dialog-text path", async (text) => {
+    const session = noTextSession();
+    const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor").mockReturnValue(session);
+    const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockReturnValue({ handled: false });
+    try {
+      const harness = createHarness();
+      await harness.controller.handleMessage(message(73, text));
+
+      expect(handleText).not.toHaveBeenCalled();
+      expect(sawNotice(harness.calls)).toBe(false);
+    } finally {
+      sessionFor.mockRestore();
+      handleText.mockRestore();
+    }
+  });
+
+  it("submits chat text as a prompt once the dialog has left the screen", async () => {
+    // `handleText` retiring the session is the other reading of `handled: false`:
+    // the dialog is gone, so this text is an ordinary prompt again.
+    const session = noTextSession();
+    let open = true;
+    const sessionFor = vi.spyOn(DialogBroker.prototype, "sessionFor")
+      .mockImplementation(() => (open ? session : undefined));
+    const handleText = vi.spyOn(DialogBroker.prototype, "handleText").mockImplementation(() => {
+      open = false;
+      return { handled: false };
+    });
+    try {
+      const harness = createHarness();
+      await harness.controller.handleMessage(message(74, "summarize the flaky test"));
+
+      await vi.waitFor(() => expect(harness.session.prompt).toHaveBeenCalledWith(
+        "summarize the flaky test",
+        { source: "interactive" },
+      ));
+      expect(sawNotice(harness.calls)).toBe(false);
+    } finally {
+      sessionFor.mockRestore();
+      handleText.mockRestore();
     }
   });
 });

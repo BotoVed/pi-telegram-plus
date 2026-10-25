@@ -1639,6 +1639,21 @@ export function createTelegramController(deps: {
           }
           return;
         }
+        // `handled: false` has two readings: this dialog simply does not take text
+        // (a plain list without search, a confirm, a read-only panel), or the broker
+        // retired the session because the dialog already left the screen - and then
+        // the text is an ordinary prompt again. Ask which one it was. While a dialog
+        // still holds the focus, the same message typed in the terminal could not
+        // reach the prompt either (决定 54), so queueing a prompt behind it would only
+        // bury the next six messages under a dialog nobody answered.
+        if (dialogBroker.sessionFor(chatId, messageThreadId) !== undefined) {
+          const model = dialogSession.model;
+          const title = "title" in model ? model.title : undefined;
+          const notice = `终端上有一个对话框正在等待${title ? `（${title}）` : ""}，请点按钮作答，或发 /stop 取消。`;
+          await deps.transport.sendText(chatId, notice, messageThreadId, sourceMessageId)
+            .catch(ctrlLog.swallow("warn", "sendText dialog busy notice failed", { chatId }));
+          return;
+        }
       }
       if (hasPromptInput) {
         const mediaBlock = (() => {
