@@ -18,9 +18,10 @@
  * While a picker's action strip is open (the model hub's role chips after
  * activating a model), the picker adapter shows and answers the strip, not
  * the list; a strip without chips (name entry) stays with the terminal.
- * Search, action-bar buttons and multi-select are T3.2f.
+ * Multi-select is T3.2f.
  */
 import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
+import { setInputValue } from "../keys.ts";
 
 /** What a component may consult while describing itself (§4.11.3); never a clock. */
 const DESCRIBE_CONTEXT = {
@@ -54,7 +55,20 @@ type PickerProps = {
   empty?: unknown;
   /** Status line above the list (`TspText`); fallback for `empty`. */
   message?: unknown;
+  /** Tab row above the list (`TspPickerProps.tabs`); `tab` is the active id. */
+  tabs?: readonly PickerEntryLike[];
+  tab?: unknown;
+  /** Scope filter row; `scope` is the active id, entries may be disabled. */
+  scopes?: readonly PickerEntryLike[];
+  scope?: unknown;
+  /** Action bar below the list (e.g. `/tree`'s Switch / Label / Filter). */
+  actions?: readonly PickerEntryLike[];
+  /** Search box contents; null/absent means the picker has no search box. */
+  query?: unknown;
 };
+
+/** Tab, scope or action-bar entry: an id, a `TspText` label, optional disable. */
+type PickerEntryLike = { id?: unknown; label?: unknown; disabled?: unknown };
 
 type PickerItemLike = { id?: unknown; label?: unknown; detail?: unknown; disabled?: unknown };
 
@@ -224,6 +238,79 @@ function pickerStrip(props: PickerProps): StripLike | undefined {
   return strip as StripLike;
 }
 
+/**
+ * Prefixes of the synthetic extraAction keys addressing picker entries by
+ * index (tab row, scope row, action bar). The key travels verbatim inside
+ * callback_data (64-byte Bot API cap) while host ids are unbounded, so the
+ * key carries the array index and `act` re-resolves it against live props.
+ */
+const TAB_KEY_PREFIX = "tab:";
+const SCOPE_KEY_PREFIX = "scope:";
+const BAR_KEY_PREFIX = "act:";
+
+/** Action-bar ids the renderer's own cancel row already covers. */
+const BAR_HIDDEN_IDS: Record<string, true> = { close: true, cancel: true };
+
+/** The tab / scope / action-bar buttons Telegram shows beside the list. */
+function pickerExtraActions(props: PickerProps): { label: string; key: string }[] {
+  const extras: { label: string; key: string }[] = [];
+  if (Array.isArray(props.tabs)) {
+    props.tabs.forEach((tab, index) => {
+      if (!isObject(tab) || typeof tab.id !== "string") return;
+      const marker = props.tab === tab.id ? "● " : "";
+      extras.push({ label: `${marker}${tspText(tab.label)}`, key: `${TAB_KEY_PREFIX}${index}` });
+    });
+  }
+  if (Array.isArray(props.scopes)) {
+    props.scopes.forEach((scope, index) => {
+      if (!isObject(scope) || typeof scope.id !== "string" || scope.disabled) return;
+      const marker = props.scope === scope.id ? "● " : "";
+      extras.push({ label: `${marker}${tspText(scope.label)}`, key: `${SCOPE_KEY_PREFIX}${index}` });
+    });
+  }
+  if (Array.isArray(props.actions)) {
+    props.actions.forEach((entry, index) => {
+      // close/cancel are covered by the renderer's own cancel row.
+      if (!isObject(entry) || typeof entry.id !== "string" || entry.disabled) return;
+      if (BAR_HIDDEN_IDS[entry.id]) return;
+      extras.push({ label: tspText(entry.label), key: `${BAR_KEY_PREFIX}${index}` });
+    });
+  }
+  return extras;
+}
+
+/** The entry a synthetic key's index points at, with a usable string id. */
+function entryAt(list: readonly unknown[] | undefined, raw: string): { id: string; disabled?: unknown } | undefined {
+  if (!Array.isArray(list) || !/^\d+$/.test(raw)) return undefined;
+  const entry = list[Number(raw)];
+  return isObject(entry) && typeof entry.id === "string" ? (entry as { id: string; disabled?: unknown }) : undefined;
+}
+
+/**
+ * The native event for a `tab:` / `scope:` / `act:` key, re-resolved against
+ * the live props on every press: an out-of-range index, or an entry that is
+ * now disabled (scopes, bar actions), is refused. A bar entry fires its own
+ * id as the action name; tabs and scopes fire `tab` / `scope` carrying the
+ * id as value (the OMP picker events).
+ */
+function pickerBarEvent(keypath: string, props: PickerProps, name: string): unknown {
+  if (name.startsWith(TAB_KEY_PREFIX)) {
+    const tab = entryAt(props.tabs, name.slice(TAB_KEY_PREFIX.length));
+    return tab ? { type: "action", key: keypath, act: "tab", value: tab.id, mods: [] } : undefined;
+  }
+  if (name.startsWith(SCOPE_KEY_PREFIX)) {
+    const scope = entryAt(props.scopes, name.slice(SCOPE_KEY_PREFIX.length));
+    return scope && !scope.disabled ? { type: "action", key: keypath, act: "scope", value: scope.id, mods: [] } : undefined;
+  }
+  if (name.startsWith(BAR_KEY_PREFIX)) {
+    const entry = entryAt(props.actions, name.slice(BAR_KEY_PREFIX.length));
+    // Same exclusion as read: a stale `act:` key must not resurrect close/cancel.
+    if (!entry || entry.disabled || BAR_HIDDEN_IDS[entry.id]) return undefined;
+    return { type: "action", key: keypath, act: entry.id, mods: [] };
+  }
+  return undefined;
+}
+
 export const tspPickerAdapter: DialogAdapter = {
   id: "tsp-picker",
 
@@ -264,23 +351,36 @@ export const tspPickerAdapter: DialogAdapter = {
         focused: props.selected === item.id,
       };
     });
+    const extraActions = pickerExtraActions(props);
+    const search = typeof props.query === "string" ? { query: props.query } : undefined;
+    const title = typeof props.title === "string" ? props.title : "Select";
     if (items.length === 0) {
-      // Nothing to choose (e.g. `/hub` with no running agents): show the
-      // picker's own empty-state text instead of a "0 items" list. Close is
-      // the only action; `act` maps cancel onto the picker's `close` event.
       const text = tspText(props.empty) || tspText(props.message) || "Nothing to show";
+      if (extraActions.length === 0 && !search) {
+        // Nothing to choose and nothing to switch/filter/search by either
+        // (e.g. `/hub` with no running agents): an info card whose only
+        // action is close; `act` maps cancel onto the picker's `close`.
+        return { kind: "info", title, text, closable: true };
+      }
+      // Tabs, scopes, bar actions and search still apply to an empty result
+      // (e.g. `/tree` filtered down to nothing): stay a select with no rows
+      // so those buttons survive, with the empty-state text in the title.
       return {
-        kind: "info",
-        title: typeof props.title === "string" ? props.title : "Select",
-        text,
-        closable: true,
+        kind: "select",
+        title: `${title} — ${text}`,
+        items: [],
+        total: 0,
+        ...(search ? { search } : {}),
+        ...(extraActions.length > 0 ? { extraActions } : {}),
       };
     }
     return {
       kind: "select",
-      title: typeof props.title === "string" ? props.title : "Select",
+      title,
       items,
       total: typeof props.total === "number" ? props.total : items.length,
+      ...(search ? { search } : {}),
+      ...(extraActions.length > 0 ? { extraActions } : {}),
     };
   },
 
@@ -289,6 +389,17 @@ export const tspPickerAdapter: DialogAdapter = {
     const found = findPicker(component);
     if (!found) return false;
     const { owner, keypath, props } = found;
+    if (action.type === "search") {
+      // The picker filters through its own input box: replace its contents
+      // and let the host re-filter the list.
+      if (!setInputValue(component, action.query)) return false;
+      try {
+        ctx.requestRender();
+      } catch {
+        // A host without a live renderer has nothing to redraw; the text landed.
+      }
+      return true;
+    }
     let target: unknown;
     if (action.type === "choose" && action.key.startsWith(STRIP_KEY_PREFIX)) {
       const raw = action.key.slice(STRIP_KEY_PREFIX.length);
@@ -300,6 +411,8 @@ export const tspPickerAdapter: DialogAdapter = {
       const catalogue = Array.isArray(props.items) ? props.items : [];
       if (!catalogue.some((item) => isObject(item) && item.id === action.key)) return false;
       target = { type: "activate", key: keypath, item: action.key };
+    } else if (action.type === "key") {
+      target = pickerBarEvent(keypath, props, action.name);
     } else if (action.type === "cancel") {
       target = { type: "action", key: keypath, act: "close", mods: [] };
     }

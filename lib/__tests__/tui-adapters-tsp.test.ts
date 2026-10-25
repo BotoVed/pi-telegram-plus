@@ -317,6 +317,157 @@ describe("tsp picker act", () => {
   });
 });
 
+describe("tsp picker tabs, scopes and action bar", () => {
+  const treeProps = {
+    title: "Tree",
+    items: [{ id: "m1", label: "msg one" }],
+    tabs: [
+      { id: "default", label: "Default" },
+      { id: "no-tools", label: [{ t: "No " }, { t: "tools" }] },
+      { id: "all", label: "All" },
+    ],
+    tab: "no-tools",
+  };
+
+  it("turns tabs into extra actions with the active one marked", () => {
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: treeProps }), ctxFor()));
+    expect(model.extraActions).toEqual([
+      { label: "Default", key: "tab:0" },
+      { label: "● No tools", key: "tab:1" },
+      { label: "All", key: "tab:2" },
+    ]);
+  });
+
+  it("answers a tab key with a tab action carrying the entry's id", () => {
+    const component = makeComponent({ k: "frame", c: [{ key: "picker", k: "picker", p: treeProps }] });
+    expect(tspPickerAdapter.act(component, { type: "key", name: "tab:1" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "picker", act: "tab", value: "no-tools", mods: [] }]);
+  });
+
+  it("refuses a tab index the host no longer offers", () => {
+    const component = makeComponent({ k: "picker", p: treeProps });
+    expect(tspPickerAdapter.act(component, { type: "key", name: "tab:3" }, ctxFor())).toBe(false);
+    expect(tspPickerAdapter.act(component, { type: "key", name: "tab:" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([]);
+  });
+
+  it("marks the active scope, skips disabled entries and answers scope keys", () => {
+    const scopes = [
+      { id: "cur", label: "Current" },
+      { id: "sub", label: "Subtree", disabled: "terminal only" },
+      { id: "all", label: "All" },
+    ];
+    const props = { title: "Tree", items: [{ id: "m1", label: "msg one" }], scopes, scope: "all" };
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: props }), ctxFor()));
+    expect(model.extraActions).toEqual([
+      { label: "Current", key: "scope:0" },
+      { label: "● All", key: "scope:2" },
+    ]);
+    const component = makeComponent({ k: "picker", p: props });
+    expect(tspPickerAdapter.act(component, { type: "key", name: "scope:2" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "scope", value: "all", mods: [] }]);
+    // An entry disabled since the draw: the press is refused.
+    const turnedOff = makeComponent({
+      k: "picker",
+      p: { ...props, scopes: [scopes[0], scopes[1], { id: "all", label: "All", disabled: true }] },
+    });
+    expect(tspPickerAdapter.act(turnedOff, { type: "key", name: "scope:2" }, ctxFor())).toBe(false);
+    expect(turnedOff.events).toEqual([]);
+  });
+
+  it("turns action-bar entries into keys, hiding close, cancel and disabled", () => {
+    const props = {
+      title: "Tree",
+      items: [{ id: "m1", label: "msg one" }],
+      actions: [
+        { id: "switch", label: "Switch" },
+        { id: "summarize", label: [{ t: "Summarize & " }, { t: "switch" }] },
+        { id: "label", label: "Label", disabled: "no label key" },
+        { id: "cancel", label: "Cancel" },
+        { id: "close", label: "Close" },
+      ],
+    };
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: props }), ctxFor()));
+    expect(model.extraActions).toEqual([
+      { label: "Switch", key: "act:0" },
+      { label: "Summarize & switch", key: "act:1" },
+    ]);
+    const component = makeComponent({ k: "picker", p: props });
+    expect(tspPickerAdapter.act(component, { type: "key", name: "act:0" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "switch", mods: [] }]);
+    // Disabled entries and the hidden close/cancel ids are refused on act too.
+    expect(tspPickerAdapter.act(component, { type: "key", name: "act:2" }, ctxFor())).toBe(false);
+    expect(tspPickerAdapter.act(component, { type: "key", name: "act:3" }, ctxFor())).toBe(false);
+    expect(tspPickerAdapter.act(component, { type: "key", name: "act:4" }, ctxFor())).toBe(false);
+    expect(component.events).toHaveLength(1);
+  });
+});
+
+describe("tsp picker search", () => {
+  /** A picker component whose own input box records every delivered chunk. */
+  function typingComponent(props: unknown) {
+    const keys: string[] = [];
+    return {
+      keys,
+      describe: () => ({ k: "picker", p: props }),
+      handleNativeEvent: () => undefined,
+      handleInput: (data: string) => {
+        keys.push(data);
+      },
+    };
+  }
+
+  it("advertises the search box and types the query into the picker input", () => {
+    const component = typingComponent({ title: "Tree", items: [{ id: "a", label: "a" }], query: "" });
+    const model = asSelect(tspPickerAdapter.read(component, ctxFor()));
+    expect(model.search).toEqual({ query: "" });
+    expect(tspPickerAdapter.act(component, { type: "search", query: "abc" }, ctxFor())).toBe(true);
+    expect(component.keys).toEqual(["\x15", "a", "b", "c"]);
+  });
+
+  it("keeps search absent without a query, and refuses typing without an input", () => {
+    const model = asSelect(
+      tspPickerAdapter.read(makeComponent({ k: "picker", p: { items: [{ id: "a", label: "a" }], query: null } }), ctxFor()),
+    );
+    expect(model.search).toBeUndefined();
+    const mute = makeComponent({ k: "picker", p: { items: [{ id: "a", label: "a" }], query: "" } });
+    expect(tspPickerAdapter.act(mute, { type: "search", query: "x" }, ctxFor())).toBe(false);
+  });
+});
+
+describe("tsp picker empty state with controls", () => {
+  it("keeps tabs as buttons over an empty list, empty text in the title", () => {
+    const props = {
+      title: "Tree",
+      items: [],
+      empty: [{ t: "2 entries " }, { t: "hidden by the filter" }],
+      tabs: [{ id: "default", label: "Default" }, { id: "all", label: "All" }],
+      tab: "default",
+    };
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: props }), ctxFor()));
+    expect(model.title).toBe("Tree — 2 entries hidden by the filter");
+    expect(model.items).toEqual([]);
+    expect(model.total).toBe(0);
+    expect(model.extraActions).toEqual([
+      { label: "● Default", key: "tab:0" },
+      { label: "All", key: "tab:1" },
+    ]);
+  });
+
+  it("keeps a search-only empty picker a select with its search box", () => {
+    const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: { items: [], query: "abc" } }), ctxFor()));
+    expect(model.search).toEqual({ query: "abc" });
+    expect(model.items).toEqual([]);
+  });
+
+  it("stays info when an empty list has no tabs, scopes, actions or search", () => {
+    const model = asInfo(
+      tspPickerAdapter.read(makeComponent({ k: "picker", p: { title: "Agents", items: [], empty: "No agents." } }), ctxFor()),
+    );
+    expect(model).toEqual({ kind: "info", title: "Agents", text: "No agents.", closable: true });
+  });
+});
+
 describe("tsp race hand-off (§4.12)", () => {
   it("declines a picker while the extension dialog race is live", () => {
     const component = makeComponent({ k: "picker", p: pickerProps });
