@@ -16,456 +16,78 @@ missing or mislabelled cannot be published.
 
 ## [Unreleased]
 
-### Changed
+Telegram now behaves like the host's own terminal: host commands run in the host, host dialogs appear in
+the chat as buttons, and either side can answer them. This release drops a large amount of plugin-side
+reimplementation and several settings, so read **Breaking changes** before upgrading.
 
-- **`/copy`, `/hotkeys`, `/quit` and `/exit` are Telegram-friendly now.** `/copy` answers `Nothing to copy.`
-  when the session has no reply yet, instead of an English line that looked like answer text. `/hotkeys` no
-  longer lists terminal keys you cannot press in a chat: it explains what to do on Telegram instead (answer
-  dialogs with their buttons, `/stop` cancels the turn and the open dialogs, `!`/`!!` run shell commands on
-  the host, `/tg` manages bots and projects). `/exit` is now handled here as well, and both it and `/quit`
-  ask first - `Quit pi?` - so a stray tap no longer shuts pi down silently; declining does nothing.
-- **An open dialog in Telegram now follows the host.** When the terminal fills a
-  dialog in slowly - pi's `/resume` "show all" draws an empty list first and loads
-  the sessions behind it - the Telegram copy refreshes within a second instead of
-  waiting for the next button tap or focus change. A message sent to a chat whose
-  dialog is still waiting now always gets the same notice (with the dialog's title),
-  whether it was a `!` shell command or plain text.
-- **Output-only commands now run in the host.** On pi, `/session`, `/compact`,
-  `/name`, `/changelog`, `/debug`, `/export`, `/share` and `/new` are submitted
-  through the host's own command path instead of being re-rendered in Telegram.
-  The plugin captures the host's status and chat output (including the
-  compaction summary) and returns it to the chat; the terminal and Telegram
-  therefore see the same command result. `/new` uses the host's `ctx.newSession`
-  control API so the Telegram polling instance is retired cleanly. OMP's
-  report/panel commands stay on the existing mirror path until panel capture
-  lands.
-- **A draft typed in the terminal survives a Telegram command.** The editor
-  content is saved before submission and restored when the command scope ends;
-  text typed while the command runs is never overwritten.
+### Breaking changes
 
-- **Extension dialogs belong to the host, so either end can answer them.** With the
-  TUI bridge in `full` mode, a command started in Telegram no longer answers its own
-  `select` / `confirm` / `input` / `custom` prompts inside the plugin: the host renders
-  the dialog, the DialogBroker shows it in Telegram with real buttons, and the terminal
-  user can answer it too — whoever answers first wins, and the other side's keyboard is
-  withdrawn. The command runs under a scope owned by the issuing chat, so the dialog
-  lands in the chat that asked for it instead of being tracked without a message.
-  Affordances the host has no twin for - the nested `menu` keyboard the plugin's management
-  screens walk - stay served by the plugin, so `/tg` keeps working while the host owns prompts.
-  Hosts whose dialogs the broker could not read stayed outside it entirely, and OMP was such a
-  host: its overlays keep their rows in private fields, so the broker saw an unreadable screen
-  and the plugin kept answering in Telegram by itself.
-- **OMP dialogs belong to the host as well.** The broker now reads an OMP overlay from what the
-  host itself advertises instead of from field names - the question and options of the call that
-  opened the dialog, then the rows and the highlighted row of the frame the dialog draws - so on
-  OMP, as on pi, extension `select` / `confirm` / `input` / `custom` prompts and the `ask` tool
-  (single- and multi-question) appear in Telegram as real choice buttons, and a terminal answer
-  and a Telegram tap compete fairly: whoever answers first resolves the host's dialog once and
-  the other keyboard disappears.
-
-- **`/export` sends the file back.** A `/export` started in Telegram now receives the exported
-  session as a document (caption `Session export`, replying to the message that asked for it) instead of
-  only the host's `Session exported to: <path>` line, which points at a file the chat cannot
-  reach. pi's `/export <name>.jsonl` takes the sibling JSONL method and is covered as well. The
-  wrapper sits on the session class prototype, so a session object the host swaps later is still
-  watched, and it only fires inside an `export` scope - OMP's `/share`, which writes a temporary
-  file through the same method, still sends nothing.
-
-### Fixed
-
-- **Two notices still pointed at menu rows that no longer exist.** The bot list marks the default bot with
-  `⭐ default` (it said `★ default`), and enabling a project with no default bot now points at
-  `/tg → Bots → ⭐ Default bot` instead of the removed "Bot list → Set as default" path.
-- **Secrets are now hidden everywhere they can come back.** A key you typed into a Telegram prompt was
-  masked only in some places: dialog buttons could print it, and so could the assistant's own reply, which
-  often quotes the value back at you. Masking now runs before the text is turned into Telegram formatting,
-  so a key containing `&`, `<` or `>` is caught as well, and it covers dialog text and button labels,
-  assistant answers (HTML and Rich Message), tool-call hints, and tool output.
-- **A redraw no longer closes a dialog.** OMP hands focus back to the editor for a frame while it
-  redraws an open overlay. That single frame was read as "answered in the terminal": the Telegram
-  dialog was written off mid-question, its keyboard withdrawn, and the screen mirror took the
-  chat over. A dialog now has to stay unfocused for a quarter-second before it counts as closed,
-  which a terminal answer still passes and a redraw does not.
-- **A spinner no longer answers for the dialog.** The host's "working" panel holds the keyboard so
-  `Esc` can interrupt, and the broker treated any focused component as a dialog: it drew the
-  spinner as an unanswerable screen with a keyboard, and that screen then claimed the message you
-  typed for the dialog that was still loading - the text never reached the model. A panel with no
-  question in it is no longer drawn as a dialog; the terminal mirror still shows it. Recognising
-  a question that has no readable rows now happens *after* the loader checks, because that
-  recognition costs a claim on the entry the host recorded: a spinner that took focus first used
-  to leave with the question's identity, and the dialog that arrived afterwards reached the
-  adapters nameless.
-
-- **A refused repaint keeps a live keyboard.** Redrawing a dialog stripped its buttons whenever
-  the edit call failed, but a failure usually says nothing about the dialog - flood control, or
-  content Telegram considers unchanged - and the question behind it is still open, now with no way
-  to answer it from the chat. A failed repaint is logged and the next one redraws; only a dialog
-  that has actually finished loses its keyboard.
-
-- **One question, one keyboard.** While the broker shows a dialog in a chat, the terminal mirror
-  keeps streaming the screen but stops offering its own arrow keys: two keyboards for the same
-  question meant taps landed on the mirror and the dialog stayed open.
-- **A prompt's answer stays with the prompt.** A dialog still open in the terminal is
-  mirrored into the chat as a screen snapshot, and that mirror claimed every following text
-  message as a search term: the answer typed for a Telegram prompt (a bot token, a secret)
-  disappeared into the snapshot's filter, and the abandoned prompt then consumed the *next*
-  message - even a slash command. A prompt the plugin raised in this chat is answered first;
-  the mirrored dialog only takes text when nothing in the chat is waiting for it.
-- **Host dialogs stay readable while a Telegram command runs.** A command borrows the host's
-  UI context, and the hooks that label a freshly opened dialog (`input`, `select`, `confirm`)
-  were installed once, onto whichever context was installed at that moment. When that happened
-  to be the plugin's own proxy, the host's real context was skipped: every dialog after it read
-  as an unreadable snapshot, so the `/tg` flows that ask for a value (retry count, a bot's name
-  or token) showed a screen of arrow keys and never took the typed answer. The hooks now unwrap
-  the plugin's proxy to the host context underneath and re-check on the focus tracker's tick.
-- **The TUI bridge is visible to every copy of the plugin.** OMP resolves
-  `pi-telegram-plus` under two module paths, so one process holds two copies, and only the
-  copy whose patch landed first was ever told a terminal mode had been captured. The copy
-  serving the chat concluded there was no bridge: it ignored the 88 commands the host
-  advertises and kept dialogs on its own Telegram keyboards, where the terminal user could
-  not answer them. The captured mode is now shared per process.
-- **TUI mirrors keep the dialog header.** Hosts pad a dialog to the terminal
-  height with blank rows, and the mirror's byte budget used to be spent on that
-  padding: `/setup` lost the OAuth authorization URL, leaving only the local
-  shortcut. Padding is collapsed first and an overflowing screen keeps both
-  ends, so instructions stay visible.
-- **Wrapped authorization URLs are rejoined.** The host hard-wraps a URL at the
-  render width; the link list now stitches the continuation lines back
-  together instead of offering a truncated, dead link.
-- **Interactive mirrors expose the host's own cancel keys.** The key legends
-  advertise `⌃C`; the mirror now sends it (plus `⇧Tab`, Home, End), so a prompt
-  that only exits on interrupt can be left from Telegram.
-- **A mirrored prompt is no longer frozen after six minutes.** The polling loop
-  now runs until the dialog closes, the turn ends, or the host stops rendering.
-- **Dialogs expose the keys their own legend advertises.** The host footer
-  names actions the mirror lacked (`⌃R` reload, `⌃O` expand, `⌃Q` submit,
-  `PgUp`/`PgDn`); the last lines of the dialog are parsed and those keys become
-  buttons, so /extensions, /agents and /mcp no longer dead-end on a shortcut.
-- **Pasted newlines no longer submit a dialog field early.**
-- **A Telegram `/new` creates exactly one session.** `/new`, `/reload`, `/fork`
-  and `/clone` replace the session or reload the runtime in-process; the
-  replacement runtime re-reads the saved cursor, and because the triggering
-  update was not yet confirmed Telegram re-served it and the command ran a
-  second time — a second new session, a second reload. The cursor for an update
-  is now committed before any of those host calls, so the replacement runtime
-  never re-fetches it.
-
-- **A dialog the terminal owns no longer silences Telegram.** A host dialog that
-  belongs to no chat — opened by typing in the terminal, or by a command whose scope the
-  plugin could not attribute — is tracked without a Telegram message. The screen mirror
-  used to stand down for *any* tracked dialog, so such a dialog swallowed the keyboard and
-  `/settings`, `/login` and `!bash` answered with nothing at all: no message, no buttons.
-  It now stands down only for a dialog that actually drew a message in the chat it serves.
-
-- **A typed Telegram answer reaches the dialog that asked for it.** The answer was
-  written into the terminal's keystroke stream, which the dialog's own input field never
-  received: `ui.input` and `ui.inputSecret` prompts stayed open and the message vanished
-  into them. It is now typed into the component's own field and submitted with Enter, and
-  a secret answer is still deleted from the chat.
-
-- **Buttons keep working when the host moves focus to the overlay wrapper.** OMP opens a
-  dialog and then hands the keyboard to the container that holds it. The broker read that as a
-  new dialog, so every button already in the chat died ("this menu has expired") halfway
-  through a flow. The session now follows the question rather than the object: the wrapper
-  receives the keystrokes, while reading and typing still go to the component that holds the
-  rows, and the message, its buttons and any half-typed answer stay valid.
-
-- **A question behind a spinner is still answerable.** The host puts its "working" panel in
-  front of an open dialog so `Esc` can interrupt the turn; the broker closed the dialog and
-  withdrew the keyboard at that moment, so a multi-question `ask` never reached its Submit
-  row. The panel is still never drawn as a dialog, but it no longer ends the question behind
-  it, and a tap on the dialog still reaches the dialog.
-
-- **A redraw of an unchanged dialog keeps its buttons.** The same dialog losing and regaining
-  focus (which OMP does while it repaints) used to bump the dialog's version, and the buttons
-  you were looking at were reported stale - "the list changed, choose again" - although
-  nothing had moved. The version now changes only when the buttons themselves change: a redraw
-  that merely moves the terminal's own cursor leaves the keyboard in the chat untouched.
-
-- **A command no longer waits behind a dialog nobody answered.** The host queues every later
-  command behind an unanswered dialog, so one abandoned question turned the next command into
-  a 30-second silence. A command now closes only the dialog *this chat* was shown - as you would
-  press `Esc` yourself - and the chat is told which question was closed; only the dead keyboard is
-  stripped from the old message, never written over, because the command answers on that same
-  message. A question the terminal opened, or one no chat was ever shown, is no longer answered on
-  anyone's behalf: the command is refused with "there is an unfinished dialog in the terminal -
-  handle it there, or send /stop" rather than queueing silently behind it. A dialog the terminal
-  had already answered is closed without a word.
-
-- **Choices work on lists the terminal has filtered or paged.** When a host keeps its rows in
-  private fields, the highlighted row is only visible in the frame the dialog draws; the count
-  of arrow presses was taken from the full option list, so a filtered or scrolled list landed
-  on the wrong row. The steps are now counted between the rows actually on screen, and a row
-  that is not on screen is refused instead of guessed.
-
-- **Screens nobody can model stay with the screen mirror.** A dialog no adapter can read was
-  also posted to the chat as a wall of text with a keyboard that could not answer it, while the
-  mirror - which can drive it with real arrow keys - was silenced for that message. Two
-  keyboards for one question followed. Such a screen is now left to the mirror alone.
-
-- **A command that only reports still reports to the chat.** Once OMP's dialogs went through
-  the host, a command's own context carried the host's raw UI, whose notifications print only
-  in the terminal: `/changelog`, `/copy`, `/debug` and the rest answered with a single line the
-  remote user never received, so each looked like a 30-second hang. The command's UI is routed
-  again - prompts stay with the host so the terminal can answer them - and a notification
-  reaches the chat exactly once: where the host's UI already reports to the chat, nothing is
-  copied over it.
-
-- **Options the host pads are still recognised.** OMP hands its extension host option strings
-  that carry their own indentation and a "this is the current value" dot, while the frame draws
-  a cursor mark in front of the same text; the two never matched, so taps in the configuration
-  submenus and on `/model` were refused with "this button does nothing here". Labels are now
-  compared with that decoration stripped.
-
-### Testing
-
-- **Per-command parity audit (`npm run test:e2e:parity`).** Boots a fresh isolated host
-  (real pi/OMP in `tmux`, mock Bot API + provider) for *each* advertised command, records
-  the host screen and the Telegram surface, and fails when a host dialog produced no
-  mirror (or a native picker) at all. The earlier one-host-for-everything audit leaked
-  dialogs into the next command; a fresh host per command makes the matrix deterministic.
-- **Acceptance now checks payloads, not just calls.** The mock Bot API enforces the real
-  contract (text/caption limits, HTML tag and entity rules, keyboard shape,
-  `callback_data` size, command names) and answers 400 like Telegram, every recorded call
-  is re-validated by `scripts/e2e/telegram-contract.mjs`, and mirrored screens are
-  cross-checked against the host's `tmux` pane so a stale or fabricated mirror fails the
-  step. `npm run test:e2e:real` additionally round-trips one temporary message through
-  api.telegram.org (send → edit → delete) and asserts the real API rejects an unsupported
-  tag while the local validator agrees.
-
-- **A suite refuses a port another run owns.** Every e2e suite injects updates through a
-  mock Bot API on a fixed port; a `--keep` run that never died left that port answering for
-  the *old* host, and the next suite then read a different chat and reported failures the
-  plugin never caused. All five suites probe both ports before spawning anything and name
-  the collision instead of sharing it silently. A command step that first has to close an
-  unanswered dialog now waits for the command's own reply rather than the notice that
-  precedes it.
-
-- **Dialog round trip (`npm run test:e2e:dialogs`).** Raises `select`, `confirm`, `input`,
-  `inputSecret` and `custom` from an extension, plus the `ask` tool from the mock provider,
-  answers each one from Telegram *and* from the terminal, and asserts the value the
-  extension call actually resolved to (read back from the stage-0 probe document) instead
-  of the shape of the keyboard — including that a secret answer never reaches the Bot API.
-
-- **The dialog driver taps what is on screen.** A dialog is redrawn while the host finishes
-  painting it, and every edit hands out fresh callback values, so the suite now works off the
-  newest keyboard in the chat and remembers which row it pressed by that row's own text.
-  Reusing the keyboard captured at open time made the multi-question `ask` tick the same box
-  back and forth forever: pressing something the user could no longer see is refused, and
-  Submit never appeared.
+- **Only pi `1.4.0` and OMP `18.12.x` are supported.** On any other version, or when the version cannot be
+  read, the extension refuses to start, shows the reason in the status line, and answers Telegram
+  messages with it. The multi-version compatibility matrix (`test:pi-versions`, `compat:gen`,
+  `compat:check`, `docs/compat-results.json`) is gone.
+- **The `tuiBridge` setting is removed.** There is one mode: the host draws its own dialogs and the plugin
+  brings them to Telegram. An old `tuiBridge` value in a config file is ignored with a warning.
+- **The flat `/tg-*` commands are removed.** Everything lives in the `/tg` menu; typing an old `/tg-*`
+  command gets a pointer to `/tg`.
+- **The plugin no longer reimplements host commands.** `/model`, `/scoped-models`, `/settings`, `/login`,
+  `/logout`, `/session`, `/name`, `/resume`, `/tree`, `/fork`, `/clone`, `/compact`, `/export`, `/share`,
+  `/changelog` and every other host command are submitted to the host and run there; their pickers and
+  prompts reach Telegram as described under **Added**.
+- **`/debug` belongs to the host.** The plugin's own debug report moved to `/tg` → 🛠 Debug info.
+- **All plugin text is in English** (buttons, menus, notices, dialog titles).
+- **`/tg` menu layout.** Bots: ➕ Add bot, Bot list (Update / Pairing / Remove per bot), ⭐ Default bot.
+  Project: the bound bot and the real connection state (🟢 Connected, 🔄 Connecting, 🟡 In use by another
+  instance, ⚪ Disconnected) instead of `Enabled: ● on / ○ off`.
 
 ### Added
 
-- **Remote selection of mirrored TUI dialogs.** With the TUI bridge in `full` mode,
-  selection dialogs mirrored into Telegram (the provider login list, `/settings`, model
-  pickers) render like the `/model` command's picker: a bold title, one button per
-  option, and `◀ Prev` / `Next ▶` rows. The host only renders a window of a long list
-  (OMP: ten rows) and scrolls it with the cursor, so paging drives the host itself with
-  PageUp/PageDown and re-renders from the new window instead of slicing the parsed rows
-  — the login catalog alone holds 100+ providers, all reachable. `▸` marks where the
-  host cursor actually is, and tapping another option sends only the keystrokes needed
-  to move there and confirm; no emulated arrow keyboard and no TUI screen dump. `Esc /
-  Type / Refresh / Close` stay underneath. Stale taps are never guessed at: if the list
-  changed underneath the keyboard, or the current position cannot be read, Telegram says
-  so and rebuilds the keyboard instead of firing blind arrows. Cursor detection covers
-  both the default `❯` marker and the private-area chevron emitted under
-  `symbolPreset: nerd`, verified end-to-end against both presets.
-- **The host dialog owns `/login` and `/logout`.** In `full` mode those commands are
-  routed to the terminal on every host instead of a Telegram-native re-implementation,
-  so both surfaces show the same labels, ordering, status markers and paging; the native
-  handlers remain the fallback when the bridge is off or the host catalog lacks the
-  command. pi renders its selectors without side borders — a `→` cursor row closed by a
-  key legend (complete list) or a provider window with an `(n/total)` indicator — which
-  the parser now recognizes; windowed pi lists page by walking arrow steps because pi
-  ignores PageUp/PageDown. Mirrored lines strip APC/OSC/CSI control strings, not just
-  SGR colors.
-- **Prompts render in the terminal and are mirrored.** In `full` mode the host UI keeps
-  ownership of every interactive prompt — extension `select/confirm/input/custom` and
-  tools such as `ask` — so the question appears in the TUI exactly as it would without
-  the plugin, and the requesting chat receives a mirror of it. Answers travel back as
-  keystrokes (pick/keys/typed text), so both surfaces stay on one implementation. The
-  Telegram-native prompts remain for `off`/`commands` mode, where no controllable mirror
-  exists. Prompts are modal: one owns the terminal at a time, and a mirror message is
-  created per prompt.
-- **Command acceptance harness.** `npm run test:e2e:commands` boots real pi and OMP in
-  isolated `tmux` sessions against the mock Bot API and mock provider, dispatches every
-  command the bot advertises plus the hidden `/tg-*` management commands, and walks the
-  `/tg` menu through levels 1-4 (Bots → list → per-bot actions, Project → bind, Config →
-  every setting flow, Commands → entries, Switch instance), then `/model`,
-  `/scoped-models`, `/login`, `/logout`, `/settings`, `/reload`, `/quit`, `/exit` and
-  `/tg-cwd-disconnect` in separate phases (the last two stop serving by design). The mock
-  provider can now emit a scripted `tool_call`, so the acceptance drives the host's `ask`
-  tool end-to-end: model → tool → TUI dialog → mirrored option → answer → model reply.
+- **Host dialogs in Telegram.** A dialog raised by a command or turn started from Telegram is drawn by the
+  host in the terminal and shown in the chat at the same time; whoever answers first wins, and the other
+  side's dialog or keyboard is withdrawn.
+  - Extension `select` / `confirm` / `input` (both hosts) and OMP's `editor`, `ask` tool and tool
+    approvals are answered by handing the value straight to the waiting call and closing the host's copy
+    through its cancel signal - no simulated keystrokes.
+  - pi's built-in pickers (models, scoped models, sessions, session tree, fork/clone messages, settings
+    with search and submenus, project trust, login providers) are read from the components' own fields.
+  - OMP's built-in pickers and settings pages (including `/model`'s role assignment step) are read from
+    the components' semantic description and answered with structured events.
+  - A dialog the plugin cannot model gets a plain "answer it in the terminal" notice with one Cancel
+    button; the plugin never mirrors screen text or guesses keys.
+  - An open dialog follows late changes in the terminal (for example a list that loads after it opens).
+- **`!` / `!!` shell commands run through the host**, so extensions that guard shell commands see them;
+  the **Shell confirm** policy still applies, and the final output is sent once the command finishes.
+- **`/export` sends the exported session file** back to the chat (HTML and JSONL).
+- **`/quit` and `/exit` ask for confirmation** from Telegram; `/hotkeys` explains how to use the chat
+  instead of listing terminal keys.
+- **Pairing page** under `/tg` → Bots → Bot list → <bot> → Pairing: show the pairing code, issue a new
+  one, or unpair.
+- **`npm run test:e2e:state`**: does the same operation once in the terminal and once from Telegram on
+  fresh hosts and checks that the resulting host state matches.
+
+### Changed
+
+- **Project disconnect sticks.** Disconnecting in `/tg` → Project is saved (also for projects that use the
+  default bot) and survives restarts; the instance hands over to another pi instance immediately. You
+  reconnect from the terminal with `/tg`.
+- **Text sent while a dialog is open** goes to the dialog when it takes text (input fields, searchable
+  lists); otherwise the chat is told a dialog is waiting instead of the text becoming a prompt. A new
+  command from the same chat closes that chat's open dialog first.
+- **E2E suites skip commands that reach external services** (`/share`, `/collab`, `/join`, `/leave`,
+  `/update`, `/upgrade`).
 
 ### Fixed
 
-- **Panel titles were border glyphs.** `readTitle` only stripped `─`/`━`, so a panel whose
-  border uses `┄` (OMP's `/context`, `/mcp`, `/jobs`) produced a title of dashes, and
-  non-interactive panels ignored the boxed title entirely (they showed `TUI`). Titles are
-  now read from any box-drawing border and used for transcript panels too.
-- **Static panels dead-ended in Telegram.** `/mcp`, `/context`, `/jobs`, `/ssh` close with
-  `⎋` in the terminal; the mirror showed the panel with no control at all. Such screens
-  now carry a `⎋ Close` button that sends the same key.
-- **Selectors invented options from detail panels.** Rows from prose lines, key legends,
-  subtitles and two-pane detail views (`/btw`) became tappable buttons that sent blind
-  keystrokes. Sentences, truncated descriptions (`…`), `⎋ close` hints and search rows are
-  dropped, subtitles above the cursor are ignored, and compound layouts fall back to a
-  plain screen mirror with keys instead of fabricated options.
-
-- **Full-screen host panels were mirrored as the chat screen underneath.** `/settings`
-  opens on the TUI's overlay stack, which `render(width)` does not include — the mirror
-  showed the idle chat (splash, editor) with a `TUI selector` title while the terminal
-  showed the panel. Overlays are now rendered and composited into the snapshot, so the
-  mirror shows the real `Settings` panel (title taken from its border) and keeps its
-  controls, since overlay focus accepts keys.
-- **Finished mirrors kept the editor chrome.** When a dialog closed, the mirror rendered
-  the whole final screen, which ends with the editor prompt row and its session-title
-  border — so a logout result appeared to trail off into an unrelated "AUDIT: …" line
-  with a `❯`. Those rows are chrome, not dialog output, and are now trimmed (trailing
-  blank lines included) before the result is sent.
-- **Input dialogs had no visible way to type.** The OAuth code prompt (and every other
-  host input overlay) mirrored as arrow keys, so nothing told the user how to answer.
-  Such screens now carry an explicit hint — tap `⌨️ Type`, send the text as the next
-  message, then `⏎ Enter` — and the Type button is labelled accordingly. After the text
-  lands, the host's own submit row is mirrored as a selectable option, so the value can
-  be submitted with one tap.
-- **Non-selector overlays looked like a raw screen dump.** OAuth wait screens and other
-  informational dialogs carry no options, so they fall back to a screen mirror — but it
-  was titled "TUI selector", hid the authorization URL inside a `<pre>` block (Telegram
-  does not linkify there), and never refreshed while the host waited. Such overlays now
-  keep their dialog title, repeat up to three URLs as tappable `🔗` lines, and refresh on
-  a throttled interval until the overlay closes.
-- **Single-option dialogs were not mirrored.** The parser required two rows, so a
-  one-account logout picker ("Select … account to log out" with one entry and its
-  `↑/↓ select · cancel` legend) fell back to an arrow-keyboard screen dump. Dialogs that
-  render their legend now mirror a single option as a button.
-- **`ask` prompts bypassed the mirror.** Tool execute contexts are not always the second
-  argument (OMP's `ask` receives the UI fifth) and tool-context routing was only installed
-  on hosts without `setUIContext`, so the tool resolved the host UI directly. Every
-  argument carrying a `ui` is now routed, and the routing wrappers are installed on every
-  host. Radio groups (`○`/`●` rows) are parsed as options without folding the question
-  text into the list.
-- **The `/tg` Commands menu hid plugin commands on OMP.** The catalog was built from
-  `pi.getCommands()` plus the host catalog; OMP does not surface extension commands
-  through that API, so `/status`, `/tg` and friends were missing from the menu even
-  though the bot menu listed them. The plugin's own dispatch map is now merged in.
-- **Every option past the first screen of a mirrored selector was unreachable.** OMP
-  renders ten rows of its scrolling selector window over a catalog that holds 100+
-  providers; the mirror treated the rendered rows as the whole list, so it always showed
-  a single page. Paging now drives the host window and the end of the list is learned
-  from a no-op page, so the whole catalog is reachable from Telegram.
-- **`/status` crashed on hosts whose session omits fields.** OMP sessions can report
-  no `thinkingLevel` (and hosts may omit token/cost stats entirely), and the status
-  snapshot fed those straight into string operations — `undefined is not an object`.
-  Missing values now render as `off`/`-`/`0` instead of throwing.
-- **The TUI mirror collapsed to a bare title on tall terminals.** A full-screen
-  snapshot over Telegram's chunk limit was split, and the mirror edit delivered only
-  the first chunk — the message showed `TUI` with no screen. The snapshot is now
-  tail-truncated to fit one message, keeping the bottom of the screen where dialogs
-  and the latest output render.
-- **A re-delivered update could replay its side effects forever.** The startup backlog
-  probe re-serves the last processed update; the poller mistook it for a foreign cursor,
-  rewound below it, and re-handled it on every cycle — for `/reload` that meant a reload
-  loop that swallowed later commands. The rewind now fires only for a cursor strictly
-  ahead of the stream, and updates at or below the cursor are skipped instead of re-run.
-- **The Bot menu's thinking entry fell through to the model on OMP.** OMP has no
-  native `/thinking` slash command (its thinking control is a hotkey) and the plugin
-  registers no `thinking` handler either, so the static menu entry reached nothing and
-  the text went to the provider as a prompt. The static entry is gone: `/thinking`
-  appears in the menu only when the host itself provides the command. The thinking
-  level is set from `/tg` → Config → **Thinking level**.
-- **The Bot menu offered host commands OMP does not serve.** The curated static list is
-  pi-based, so on OMP the menu advertised `/clone`, `/import`, `/name` and `/reload` —
-  commands absent from OMP's own command surface, where typing them falls through to
-  the model as prompt text. Once the TUI bridge has captured the live host catalog,
-  static entries missing from it are omitted; plugin-served commands (`/tg`, `/cwd`,
-  `/status`, …) stay, and with no captured catalog the curated list is kept unchanged.
-  `/scoped-models` left the whitelist: OMP serves it neither natively nor through the
-  plugin, so it is no longer menu-visible on OMP. Kept static entries now display the
-  host catalog's live description when captured, so menu wording cannot drift from the
-  host's own copy.
-  The curated list also gained pi's `/trust` (dispatched through the TUI bridge).
-- **`/login`, `/logout`, `/fork` and `/clone` crashed or dead-ended on OMP.**
-  Their Telegram handlers call pi-only APIs (`ModelRuntime`/legacy `AuthStorage`
-  auth, `ctx.fork`) that OMP does not expose — OMP keeps auth in its own store
-  and forks through `session.fork`/`ctx.branch` — so the handlers threw
-  `TypeError: ... is not a function` or printed a message blaming the pi
-  version. Dispatch now checks the capability before running the handler: when
-  it is missing and the TUI bridge is on, the command is routed to the host's
-  own `/login` / `/fork` (OMP serves both in its TUI, and the dialog is
-  mirrored back to Telegram); when the host cannot serve it either, Telegram
-  gets an explicit "run it in the terminal" notice instead of a stack trace.
-  On pi nothing changes: the native handlers keep running. The fork/clone
-  handlers gained the same guard as a last resort, and the legacy-auth failure
-  message now names the host and the bridge instead of blaming pi.
-- **TUI bridge mirroring and remote controls could stall or target stale state.** Snapshot
-  focus detection no longer recurses or guesses from rendered words, submit wrapping is
-  isolated per editor/session, and pi/OMP command menus now come from live host registries.
-  Telegram `/settings` waits for the real selector, all key/type/refresh/close callbacks
-  use the host input pipeline, and local command mirroring no longer times out. Menu refresh
-  work is isolated per bot/API endpoint, both delayed refreshes run, and recent commands
-  receive their intended priority. Keyboard de-duplication tracks the button layout, not
-  just the text, so a rebuilt selector always reaches Telegram. The isolated TUI E2E
-  suite now exercises the recorded pi E2E version matrix plus OMP, including streamed
-  bash output, exit codes, confirmation, and `!!` context exclusion.
-- **The global default bot could not be unset cleanly.** `/tg → Bots → Bot list →
-  <bot>` exposed it as a project-aware toggle (`Default: ● on / ○ off`): on an unbound
-  project it demanded a confirmation, and after clearing it never re-resolved the running
-  routing, so the process kept polling the removed default until restart. The action is now
-  a global `Set as default` / `Clear default`, never touches a project binding, and clearing
-  applies immediately: an unbound project warns, closes the menu and stops Telegram for that
-  process; a bound project stays connected and the menu stays open. `/tg-bot-default clear`
-  (also `none` / `off`) provides the same operation without the menu.
-- **A polling outage flooded the chat with identical `Telegram polling failed`
-  messages.** Every failed `getUpdates` (retried at 1s → 30s backoff) sent its own
-  chat notice, and each notice itself retried up to four times on a flaky link.
-  Notices are now collapsed: an outage shorter than 30s stays silent, a sustained
-  outage produces one message that names the failure class (network, auth,
-  conflict, rate limit, server, update processing), repeats only when the class
-  changes or after 30 minutes, and emits one "polling restored" message on
-  recovery. Notice sends are single-attempt. Update-handler and cursor-persist
-  failures are reported as "update processing failed" and now back off instead of
-  re-fetching the same update in a tight loop.
-- **OMP rendered Telegram command confirmations in the terminal, so `/new` never
-  answered over Telegram.** OMP's `ExtensionRunner` keeps its UI context in a private field
-  and has no `setUIContext()`, so the runner-level UI swap used during Telegram turns was a
-  no-op. `/new`'s `ctx.ui.confirm()` therefore opened in the OMP TUI while Telegram received
-  no prompt and no buttons; the command stayed pending until someone answered in the
-  terminal. The Telegram dispatcher now overrides `ui` on the per-command context whenever
-  the runner cannot accept a UI context, so every command-level prompt (confirm, select,
-  input, editor, custom) routes to Telegram. The runner's `getUIContext()` and
-  `createContext()` are also overridden per runner to consult the active Telegram UI stack,
-  which routes tool approvals, session-level selects, extension hooks, and extension tools
-  (including pi-goal dialogs) while a Telegram turn is active and falls back to the TUI
-  otherwise. Built-in `ask` and eval-prelude (`computer`) contexts get `ui` from OMP's
-  private `ToolContextStore`, so the plugin wraps their execution context and
-  `ToolSession.getToolContext` with the same active-turn routing. The bash PTY overlay is a
-  capability gate rather than a dialog and stays terminal-local. pi keeps its
-  `newSession({ withSession })` post-switch hook; OMP ignores `withSession`, so its
-  “New session started.” notification now uses `newSession({ setup })`.
-  See [compatibility.md](docs/compatibility.md#omp-oh-my-pi-pi-coding-agent).
-- **The Bot menu silently dropped commands past its 100-entry cap.** Telegram's
-  `setMyCommands` accepts at most 100 entries and the builder truncated the rest, so on
-  hosts with large catalogs the tail — including recently used commands — never appeared.
-  When the catalog exceeds the cap the menu now reserves its last slot for `/more`, which
-  opens a paged inline keyboard (30 commands per page) of the overflow; tapping a button
-  runs that command immediately.
-
-### Removed
-
-- **The flat `/tg-thinking`, `/tg-config`, and `/tg-list` commands.** Each duplicated a
-  capability the `/tg` menu already owns: the model thinking level moved to `/tg` → Config
-  → **Thinking level** (hosts with a native `/thinking` keep it), config keys were already
-  editable under `/tg` → Config (Tool / Thinking / Retry / TUI bridge / Shell confirm), and
-  the current binding plus its enabled state show under `/tg` → Project. Typing the removed
-  commands now falls through to the model as prompt text, like any unknown command.
-
-- **TUI slash registration of the Telegram management commands.** `/tg-bot-*`,
-  `/tg-bind-cwd`, `/tg-unbind-cwd`, `/tg-cwd-connect`, `/tg-cwd-disconnect` and
-  `/tg-switch` no longer appear in the host TUI slash menu: bot tokens and local-cwd
-  bindings are chat-side management, and `/tg` owns those flows. They stay dispatchable
-  from Telegram (via `/tg` or by typing them). The TUI keeps `/tg`, `/cwd`, `/cd`,
-  `/status`, `/stop`, `/debug`.
+- **Secrets are masked everywhere the plugin sends text**: dialog text and buttons, command output,
+  assistant replies (including code blocks sent as files and Rich Messages), tool hints and plugin
+  notices. Masking runs before HTML conversion, so keys containing `&`, `<` or `>` are caught. Secrets
+  typed into the plugin's own secret prompts are tracked too, and everything is forgotten when a new
+  session starts.
+- **Commands that replace the session are not run twice.** The Telegram update cursor is saved before a
+  command is handed to the host.
+- **OMP `/clear` and `/delete` report their result** instead of an empty reply.
+- **Telegram returns to the first page** when a dialog swaps in a different list (OMP model roles).
+- Several dialog, focus and output-capture fixes found by the end-to-end suites on both hosts.
 
 ## [0.0.12] — 2026-10-19
 

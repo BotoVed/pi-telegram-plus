@@ -128,13 +128,13 @@ A new command from the same chat while one of its dialogs is open closes that di
 
 - Host commands keep their host names (`/model`, `/resume`, `/settings`, …) and are executed by the host.
 - Everything about the Telegram bridge itself lives in one menu, `/tg` (bots, project binding, config, instance switching). The old flat `/tg-*` commands are gone; typing one gets a pointer to `/tg`.
-- Plugin-only commands: `/tg`, `/stop`, `/status`, `/debug`, `/cwd`, `/cd`.
+- Plugin-only commands: `/tg`, `/stop`, `/status`, `/cwd`, `/cd`. Where a plugin feature would share a name with a host command it lives inside `/tg` instead (for example `/tg` → 🛠 Debug info), so `/debug` and the like reach the host.
 - `/pair <code>` is a Telegram-only bootstrap message handled before normal dispatch, because the setup prompt is copied into Telegram before any user is authorized.
 - Telegram command menus do not allow hyphens; the controller accepts both `_` and `-` forms. When the catalog exceeds Telegram's 100-entry cap, the last menu slot becomes `/more`, a paged keyboard of the overflow.
 
 ### Multi-instance Coordination
 
-Several local pi processes can share one bot (the **default bot** or a bot bound to a shared project). Coordination keeps Telegram traffic attached to exactly one owner at a time. The **default bot** (`/tg` → Bots → Bot list → Set as default) is the equivalent of the former "global" bot — projects without an explicit binding fall back to it.
+Several local pi processes can share one bot (the **default bot** or a bot bound to a shared project). Coordination keeps Telegram traffic attached to exactly one owner at a time. The **default bot** (`/tg` → Bots → ⭐ Default bot) is the equivalent of the former "global" bot — projects without an explicit binding fall back to it.
 
 1. **Registration** — each enabled process advertises itself under `~/.pi/agent/` with cwd, session, model, busy state, and a heartbeat.
 2. **Single active owner** — only the active instance polls Telegram and is allowed to send outbound messages. Standby instances stay quiet even if their local agent is streaming.
@@ -191,15 +191,16 @@ Opens an inline-keyboard menu with four submenus (each with a **⬅️ Back** op
 
 | Menu | Actions |
 |------|--------|
-| **🤖 Bots** | **➕ Add bot** — prompt for name + token, create pairing code · **Bot list** — list registered bots (★ default marker, @username, pairing status); select a bot to open its action menu: **Set as default / Clear default** (global: sets or clears the default bot, never touching a project binding; clearing on an unbound project warns that this process loses Telegram, closes the menu and re-resolves routing immediately; making another bot the default moves an unbound project to that bot and closes the menu) / **Update** (token / name / allowedUserId / apiBase) / **Remove** (confirm; warns if default) |
-| **📁 Project** | **Bot: <current>** — shows the bound bot (or `(default)`); press to change binding (pick another bot or **Unbind**) · **Enabled: ● on / ○ off** — toggle the bot on/off for this project |
-| **⚙️ Config** | **Tool: <current>** — select hidden / brief / full · **Thinking: <current>** — select hidden / brief / full · **Thinking level: <current>** — model reasoning effort (off/minimal/low/medium/high/xhigh; shown when the model supports it) · **Retry: <current>** — input a number 0–10 · **Shell confirm: <current>** — dangerous / always / never |
+| **🤖 Bots** | **➕ Add bot** — prompt for name + token, create a pairing code · **Bot list** — every registered bot with `⭐ default` and `paired` / `not paired` markers; pick one for **Update** (token / name / allowedUserId / apiBase), **Pairing** (show the pairing code and issue a new one, or **Unpair** after a confirmation — the chat stops working until you pair again) and **Remove** (confirm; warns if it is the default) · **⭐ Default bot: <name>** — pick the bot every unbound project uses, or **Clear default** |
+| **📁 Project** | **Bot: <name>** (or `<name> (default)` when the folder follows the default bot) — bind this folder to another bot or **Unbind** · the connection state, read from the running instance: **🟢 Connected → Disconnect**, **🔄 Connecting → Disconnect**, **🟡 In use by another instance**, **⚪ Disconnected → Connect**. Disconnecting asks first, is saved (also for folders that follow the default bot) and survives restarts; Telegram then stops responding, so you reconnect from the terminal with `/tg` |
+| **⚙️ Config** | **🔧 Tool** — hidden / brief / full · **💭 Thinking** — hidden / brief / full · **🧠 Thinking level** — model reasoning effort (shown when the model supports it) · **🔄 Retry** — 0–10 · **🐚 Shell confirm** — dangerous / always / never |
 | **🔄 Switch instance** | List live pi instances sharing this bot token; select one to switch. Must be run on the currently active instance. |
+| **🛠 Debug info** | The plugin's own diagnostics (model, thinking, streaming, entries, cwd). `/debug` itself runs the host's command. |
 | **❌ Close** | Exit the menu. |
 
 The menu uses the same UI abstraction that renders Telegram inline keyboards (`ctx.ui.select` / `input` / `inputSecret` / `confirm`). In Telegram, navigation edits **one message in place** — moving between levels updates that message instead of posting a new one per level. A leaf action that needs its own prompt (input, confirm, a value picker) appears below it, and the menu then continues as a fresh message under that prompt. The local TUI falls back to ordinary selects. Each leaf action shows a result notification, then returns to its submenu.
 
-**How it works:** Bots are registered once (`/tg` → Bots → Add bot; token, username and pairing are stored centrally in `~/.pi/agent/tg.json`). Projects reference a bot by id (`/tg` → Project → Bot: <current> → pick a bot, stored in `<project>/.pi/telegram.json`) — no token re-paste or re-pairing. Unbound projects fall back to the **default bot** (`/tg` → Bots → Bot list → <bot> → Set as default / Clear default).
+**How it works:** Bots are registered once (`/tg` → Bots → Add bot; token, username and pairing are stored centrally in `~/.pi/agent/tg.json`). Projects reference a bot by id (`/tg` → Project → Bot: <current> → pick a bot, stored in `<project>/.pi/telegram.json`) — no token re-paste or re-pairing. Unbound projects fall back to the **default bot** (`/tg` → Bots → ⭐ Default bot, which also offers **Clear default**).
 
 #### Pairing / authorization
 
@@ -214,7 +215,6 @@ The menu uses the same UI abstraction that renders Telegram inline keyboards (`c
 | `/tg` | Telegram management menu |
 | `/stop` | Abort the current agent turn and cancel this chat's open dialog |
 | `/status` | Show a runtime snapshot (workspace, model, context, messages) |
-| `/debug` | Show debug info |
 | `/cwd` | Show the current working directory |
 | `/cd` | Switch pi's working directory |
 
@@ -228,7 +228,7 @@ Common issues and diagnostic steps. The extension writes a structured JSON Lines
 
 ### The bot does not respond to my messages
 - Verify the bot token is correct: register it via `/tg` → Bots → Add bot with the token from [@BotFather](https://t.me/BotFather), or fix an existing bot's token via `/tg` → Bots → Bot list → <bot> → Update.
-- Confirm the bot is connected: `/tg` → **Project** shows the current binding and its **Enabled** state. If it is off, toggle it on there. A configured token is auto-enabled again on the next pi start.
+- Confirm the bot is connected: `/tg` → **Project** shows the current binding and the real connection state. If it says **⚪ Disconnected**, connect it there from the terminal — a disconnect is remembered across restarts, so it does not come back on its own.
 - Make sure you are the authorized user. After setup, pi prints a one-time pairing code locally; send `/pair <code>` to the bot from your Telegram account. To reset authorization, remove the bot (`/tg` → Bots → Bot list → <bot> → Remove) and re-add it.
 - When several local pi processes share the token, check the local TUI footer: only `connected(current)` / `active(current)` owns polling and outbound traffic. From that owner, open `/tg` → 🔄 Switch instance to inspect and select another live instance. Dead owners fail over automatically after their heartbeat expires.
 - The file-based polling lock remains a final safety guard. If the expected instance is already active but polling still reports a lock conflict, restart the conflicting older process or remove only the confirmed stale `tg-poll-*.lock` directory under `~/.pi/agent/`. Retired/candidate lock leftovers are cleaned automatically and should not need manual deletion.
