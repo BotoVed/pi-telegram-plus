@@ -39,6 +39,8 @@
 | 3D pi 内置选择器 | 读字段的适配器（pi 1.4.0）；`/fork`、`/clone` 交给宿主，选择器用 `UserMessageSelectorComponent` 适配器，之后删除插件自带的消息列表（决定 52） | T3.3–T3.10，含 1.4 新增 `/thinking`、`/trust` | pi 同组命令（含 `/fork`、`/clone`）达到同样效果 |
 | 3E 收尾验收 | 只有输出的命令逐个验证；阶段 3 总验收 | T3.2（剩余）、T3.12、T3.13 | 两个宿主全量 E2E 通过；清单中属于阶段 3 的条目清空；README 中已过时的说明（`/tg-*`、`tuiBridge`、屏幕镜像）由主控改写 |
 
+**3E 待核对**（主控 2026-10-25 读 OMP 源码发现）：OMP 内置工具（bash 等）的审批经工具自己的 UI 对象（`ToolContextStore`）调用 `ui.approve`，插件目前只给 `ask` 工具的 `execute` 做了 Telegram 路由，所以 Telegram 发起的回合里这类审批可能不会出现在 Telegram。3E 用 E2E 确认；属实则另开任务。
+
 **3E 分工**（用户 2026-10-25）：主控跑全量 E2E、逐条分析失败原因并写修复任务书；**代码修改仍由 Qwen 执行**。
 
 3A 检查点（用户 2026-10-25：3A 仍太大，再拆）：
@@ -86,7 +88,7 @@
 | B0 | 测试脚本：E2E 用的 pi agent 设置写 `doubleEscapeAction: "none"`，避免 `clearDialog()` 打开 Session Tree | S25 | ☑ | `81a9dea` |
 | B1 | 竞答核心 + `select`（两个宿主）：按调用参数建 broker 会话，先答者生效，另一方关闭；竞答占用的组件不再由焦点路径建会话 | B0 | ☑ | `eb08ade`；会话仍由焦点打开，按钮经入口上的竞答句柄作答（方案 §4.12 第 2–6 步） |
 | B2 | 竞答：`confirm`、`input`（两个宿主） | B1 | ☑ | `d9923f8` |
-| B3a | 竞答：OMP 的 `editor`、`approve`（pi 的 `editor` 不接受 signal，不竞答） | B2 | ☐ | |
+| B3a | 竞答：OMP 的 `editor`、`approve`（pi 的 `editor` 不接受 signal，不竞答） | B2 | ☑ | `71597ba` |
 | B3b | 竞答：OMP 的 `askDialog`（ask 工具：插件按 Telegram 的选择拼出 `{ kind: "submit", results }`，含自定义答案） | B3a | ☐ | |
 | B4 | 删除被竞答取代的焦点路径适配器分支（扩展 select/confirm/input；OMP 读画面部分仍留给 T3.2g） | B3b | ☐ | |
 | T3.2d | OMP TSP 适配器：读取 + 操作（内置选择器与 `custom` 的基础） | 3B | ☐ | |
