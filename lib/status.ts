@@ -20,9 +20,14 @@ export function formatTelegramStatusLine(
     processing?: boolean;
     error?: string;
     botUsername?: string;
+    /** Host version gate refusal (§0.1); wins over every other state. */
+    unsupported?: string;
   },
 ): string {
   const label = theme.fg("accent", "telegram+");
+  if (state.unsupported) {
+    return `${label} ${theme.fg("error", state.unsupported)}`;
+  }
   if (state.error) {
     return `${label} ${theme.fg("error", "error")} ${theme.fg("muted", state.error)}`;
   }

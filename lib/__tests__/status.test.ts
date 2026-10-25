@@ -7,6 +7,18 @@ const theme: StatusLineTheme = {
 };
 
 describe("formatTelegramStatusLine", () => {
+  it("shows the version gate refusal over every other state", () => {
+    const result = formatTelegramStatusLine(theme, {
+      hasBotToken: true,
+      pollingActive: true,
+      paired: true,
+      error: "boom",
+      unsupported: "不支持的 pi 版本 1.3.0，需要 1.4.0",
+    });
+    expect(result).toContain("不支持的 pi 版本 1.3.0");
+    expect(result).not.toContain("boom");
+  });
+
   it("shows error state", () => {
     const result = formatTelegramStatusLine(theme, {
       hasBotToken: true,

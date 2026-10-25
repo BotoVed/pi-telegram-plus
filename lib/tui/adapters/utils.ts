@@ -9,15 +9,15 @@
  *   only where the component exposes a setter for exactly that purpose.
  */
 
-/** OMP versions whose dialog frames the frame-reading adapters were verified against (§4.6.6 exception 2). */
-export const OMP_FRAME_VERSIONS = /^18\.12\./;
+/** OMP versions the plugin supports: the frame-reading adapters were verified against these (§4.6.6 exception 2), and startup refuses anything else (§0.1). Single copy - tui-bridge gates on it too. */
+export const SUPPORTED_OMP_VERSIONS = /^18\.12\./;
 let ompVersion: string | undefined;
 export function setOmpVersion(version: string | undefined): void {
   ompVersion = version;
 }
 /** True when frame reading may be used: not OMP, or an OMP version in the verified range. */
 export function ompFrameSupported(host: "pi" | "omp"): boolean {
-  return host !== "omp" || (ompVersion !== undefined && OMP_FRAME_VERSIONS.test(ompVersion));
+  return host !== "omp" || (ompVersion !== undefined && SUPPORTED_OMP_VERSIONS.test(ompVersion));
 }
 
 /** CSI sequences, OSC strings and stray control bytes that colour the render. */

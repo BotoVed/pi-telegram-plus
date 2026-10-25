@@ -1,9 +1,12 @@
 import { stripAnsi } from "./ansi.ts";
 import { log } from "./logger.ts";
 import { probeCapture } from "./tui/probe.ts";
-import { setOmpVersion } from "./tui/adapters/utils.ts";
+import { setOmpVersion, SUPPORTED_OMP_VERSIONS } from "./tui/adapters/utils.ts";
 
 const bridgeLog = log.child("tui-bridge");
+
+/** The only host versions this plugin supports (§0.1): anything else refuses to start. */
+export const SUPPORTED_PI_VERSION = "1.4.0";
 
 export type TuiHost = "pi" | "omp" | "unknown";
 
@@ -33,6 +36,8 @@ export type TuiBridgeAdapter = {
   ready(): Promise<void>;
   isAvailable(): boolean;
   getHost(): TuiHost;
+  /** Why the host version gate refused the bridge (§0.1); undefined when the host version is supported. */
+  getUnsupportedReason?(): string | undefined;
   getCommands(): Promise<TuiCommand[]>;
   submit(text: string): boolean;
   submitResult?(text: string): { ok: boolean; result?: unknown };
@@ -61,6 +66,8 @@ type BridgeState = TuiHostState & {
   suppressLocalSubmit: boolean;
   localSubscribers: Set<(text: string) => void>;
   captureSubscribers: Set<(state: TuiHostState) => void>;
+  /** Set when the host version is unsupported: the bridge installs no patches and stays unavailable (§0.1). */
+  unsupportedReason?: string;
 };
 
 // A host can load this package twice in one process (OMP resolves it under two
@@ -106,18 +113,23 @@ async function loadOmpMode(): Promise<HostObject | undefined> {
   }
 }
 
+/** Read a module's VERSION export, which hosts expose as a string or getter. */
+function versionFromModule(mod: HostObject | undefined): string | undefined {
+  const version = mod?.VERSION;
+  if (typeof version === "string") return version;
+  if (typeof version === "function") {
+    const value = (version as () => unknown)();
+    return typeof value === "string" ? value : undefined;
+  }
+  return undefined;
+}
+
 async function loadOmpVersion(): Promise<string | undefined> {
   try {
     // @oh-my-pi/pi-utils only exists when running under OMP: a static import
     // would break the pi-only install (§4.6.6 exception 2 version gate).
     const mod: unknown = await import("@oh-my-pi/pi-utils");
-    const version = (mod as HostObject | undefined)?.VERSION;
-    if (typeof version === "string") return version;
-    if (typeof version === "function") {
-      const value = (version as () => unknown)();
-      return typeof value === "string" ? value : undefined;
-    }
-    return undefined;
+    return versionFromModule(asHostObject(mod));
   } catch {
     return undefined;
   }
@@ -140,6 +152,22 @@ async function loadOmpCommands(): Promise<TuiCommand[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * Startup version gate (§0.1): one supported host version, no fallbacks. Under
+ * OMP the pi specifier is redirected to OMP modules, so a readable OMP version
+ * decides the host; otherwise the pi version must match exactly.
+ */
+function unsupportedVersionReason(ompVersion: string | undefined, piVersion: string | undefined): string | undefined {
+  if (ompVersion !== undefined) {
+    return SUPPORTED_OMP_VERSIONS.test(ompVersion)
+      ? undefined
+      : `不支持的 OMP 版本 ${ompVersion}，需要 18.12.x`;
+  }
+  return piVersion === SUPPORTED_PI_VERSION
+    ? undefined
+    : `不支持的 pi 版本 ${piVersion ?? "未知"}，需要 ${SUPPORTED_PI_VERSION}`;
 }
 
 function patchMethod(prototype: HostObject, name: string, host: TuiHost): boolean {
@@ -262,6 +290,18 @@ export function installTuiBridge(): Promise<void> {
     ]);
     setOmpVersion(ompVersion);
     state.hostCommands = ompCommands;
+    // The pi version comes off the module loadPiMode already imported; a second
+    // concurrent import of the same specifier is what the mock host resolves
+    // inconsistently in tests, and buys nothing in production.
+    const piVersion = versionFromModule(pi);
+    const reason = unsupportedVersionReason(ompVersion, piVersion);
+    if (reason !== undefined) {
+      // No patches at all: without a patched host entry point the bridge can
+      // never capture a mode, so isAvailable() stays false by construction.
+      state.unsupportedReason = reason;
+      bridgeLog.error(reason);
+      return;
+    }
     const ompProto = asHostConstructor(omp?.InteractiveMode);
     if (ompProto) {
       patchMethod(ompProto, "initHooksAndCustomTools", "omp");
@@ -585,7 +625,7 @@ function submitToHost(text: string): boolean {
   return submitToHostResult(text).ok;
 }
 
-export const tuiBridge: TuiBridgeAdapter = {
+export const tuiBridge: TuiBridgeAdapter & { getUnsupportedReason(): string | undefined } = {
   async ready(): Promise<void> {
     await installTuiBridge();
     for (let attempt = 0; attempt < 120; attempt += 1) {
@@ -596,6 +636,7 @@ export const tuiBridge: TuiBridgeAdapter = {
   },
   isAvailable: () => state.mode !== undefined && state.editor !== undefined && state.ui !== undefined,
   getHost: () => state.host,
+  getUnsupportedReason: () => state.unsupportedReason,
   getCommands: () => getTuiCommands(),
   submit: (text: string) => submitToHost(text),
   submitResult: (text: string) => submitToHostResult(text),

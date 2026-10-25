@@ -698,6 +698,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
       processing: activeTurns.size > 0,
       error,
       botUsername: config.botUsername,
+      unsupported: tuiBridge.getUnsupportedReason(),
     };
   }
 

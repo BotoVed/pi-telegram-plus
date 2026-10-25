@@ -767,6 +767,13 @@ export function createTelegramController(deps: {
 }): TelegramController {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
+  // §0.1: when the startup version gate refused the host, the outage notice
+  // names the version problem instead of the generic "run interactively" hint.
+  const bridgeOutageNotice = (): string => {
+    const reason = bridge.getUnsupportedReason?.();
+    if (reason !== undefined) return `${reason}。插件已停止工作。`;
+    return `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`;
+  };
   const hostIsOmp = deps.isOmpHost ?? isOmpHost;
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -1277,7 +1284,7 @@ export function createTelegramController(deps: {
     // with the fixed outage notice instead of silently falling back; plugin-owned
     // bot management stays available.
     if (!bridge.isAvailable() && !PLUGIN_LOCAL_COMMANDS[name]) {
-      await deps.transport.sendText(chatId, `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`, messageThreadId, sourceMessageId)
+      await deps.transport.sendText(chatId, bridgeOutageNotice(), messageThreadId, sourceMessageId)
         .catch(ctrlLog.swallow("warn", "sendText bridge outage notice failed", { chatId }));
       return true;
     }
@@ -1642,7 +1649,7 @@ export function createTelegramController(deps: {
         const handled = trimmed ? await tryHandleSlashCommand(text, chatId, messageThreadId, sourceMessageId) : false;
         if (!handled) {
           if (!bridge.isAvailable()) {
-            await deps.transport.sendText(chatId, `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`, messageThreadId, sourceMessageId)
+            await deps.transport.sendText(chatId, bridgeOutageNotice(), messageThreadId, sourceMessageId)
               .catch(ctrlLog.swallow("warn", "sendText bridge outage notice failed", { chatId }));
             return;
           }
