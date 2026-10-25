@@ -18,6 +18,9 @@ const outputLog = log.child("tui-output");
 const OUTPUT_DEBOUNCE_MS = 700;
 const OUTPUT_EDIT_MS = 1000;
 const MAX_COMPONENTS = 20;
+/** OMP keeps flushing PTY output asynchronously after `setComplete` returns;
+ * render the final frame one beat later so that is what we push (3E). */
+const BASH_SETTLE_MS = 300;
 const AGENT_CTORS = /^(AssistantMessageComponent|UserMessageComponent|ToolExecutionComponent|BashExecutionComponent|qs|_Te|Aw)$/;
 const AGENT_FIELDS = ["lastMessage", "hasToolCalls", "toolCallId"];
 
@@ -69,6 +72,9 @@ export class OutputCapture {
    * render already went out. */
   private readonly bashTracked = new WeakSet<object>();
   private readonly bashPushed = new WeakSet<object>();
+  /** Components whose `setComplete` has fired; only these may owe a final
+   * render at scope end (F2: an unfinished one never pushes its running frame). */
+  private readonly bashCompleted = new WeakSet<object>();
 
   constructor(
     private readonly transport: OutputTransport,
@@ -104,13 +110,27 @@ export class OutputCapture {
     };
   }
 
+  /** True while the active binding claims a host bash component whose
+   * `setComplete` has not fired yet. `OriginTracker.holdOpen` keeps the
+   * scope alive while this holds, so the idle end never cuts the command's
+   * final output short. */
+  hasRunningBash(): boolean {
+    const binding = this.binding;
+    if (!binding) return false;
+    return binding.bashComponents.some((child) => !this.bashCompleted.has(child));
+  }
+
   /** Flush the active binding and stop claiming output for it. */
   finish(): void {
     const binding = this.binding;
     if (!binding || binding.finished) return;
-    // D3b: a bash component whose `setComplete` never reached us still owes
-    // its final render to the ack message.
-    for (const child of binding.bashComponents) this.emitBashOutput(child, binding, true);
+    // D3b: only a completed component still owes its final render to the ack
+    // message. A still-running one means the scope ended by timeout or
+    // replacement; its "running" frame is not output, so drop it (F2).
+    for (const child of binding.bashComponents) {
+      if (this.bashCompleted.has(child)) this.emitBashOutput(child, binding, true);
+      else outputLog.debug("bash component unfinished at scope end; running frame dropped", { scope: binding.scope.id });
+    }
     binding.finished = true;
     if (binding.timer) {
       clearTimeout(binding.timer);
@@ -122,8 +142,9 @@ export class OutputCapture {
   }
 
   /** D3b: claim a BashExecutionComponent for the "!" scope. Its final render
-   * goes out exactly once: when the host calls `setComplete`, or when the
-   * scope ends without that call (the `finish` fallback). */
+   * goes out exactly once: `BASH_SETTLE_MS` after the host calls
+   * `setComplete`, or at scope end when the component finished but the scope
+   * ends first (the `finish` fallback). An unfinished component is dropped. */
   private trackBashComponent(child: Record<string, unknown>): void {
     const binding = this.binding;
     if (!binding || binding.finished || this.bashPushed.has(child)) return;
@@ -131,7 +152,12 @@ export class OutputCapture {
     if (this.bashTracked.has(child)) return;
     this.bashTracked.add(child);
     hookMethod(child, "setComplete", "output-bash-complete", undefined, () => {
-      this.emitBashOutput(child, binding, false);
+      this.bashCompleted.add(child);
+      // Postpone the idle end past the settle delay so `finish` cannot beat
+      // the timer and render before the host's async output flush landed.
+      this.origin.touch(binding.scope);
+      const timer = setTimeout(() => this.emitBashOutput(child, binding, false), BASH_SETTLE_MS);
+      timer.unref?.();
     });
   }
 

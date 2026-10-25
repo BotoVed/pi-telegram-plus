@@ -791,6 +791,10 @@ export function createTelegramController(deps: {
       const writer = bridge.writeEditorText;
       return writer ? writer.call(bridge, text) : writeHostEditorText(text);
     },
+    // F2: keep a "!" scope alive while the host's bash component is still
+    // running, so its final output is pushed after the command finishes.
+    // `outputCapture` is built below; the closure resolves it by call time.
+    holdOpen: (): boolean => outputCapture.hasRunningBash(),
   });
   const secretStore = new SecretStore();
   const outputCapture = new OutputCapture(deps.transport, originTracker, secretStore);

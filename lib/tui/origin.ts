@@ -53,6 +53,10 @@ export type ScopeDeps = {
   isEditorFocused(): boolean;
   readDraft(): string;
   writeDraft(text: string): boolean;
+  /** Extra hold: while this returns true the idle end is postponed. The
+   * shell path uses it to keep a "!" scope alive until the host's bash
+   * component has finished; the SCOPE_MAX_MS cap above still applies. */
+  holdOpen?(): boolean;
 };
 
 type EndListener = (scope: CommandScope, reason: ScopeEndReason) => void;
@@ -157,6 +161,9 @@ export class OriginTracker {
     if (!scope.submitDone) return;
     if (!this.deps.isEditorFocused()) return;
     if (now - scope.lastOutputAt < IDLE_MS) return;
+    // Output the command still owes (e.g. a running bash component's final
+    // render) postpones the idle end; SCOPE_MAX_MS still caps the scope.
+    if (this.deps.holdOpen?.()) return;
     this.end(scope, "idle");
   }
 

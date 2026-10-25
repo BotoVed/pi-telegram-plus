@@ -78,6 +78,26 @@ describe("command gateway", () => {
     expect(writes).toContain("draft text");
   });
 
+  it("holds an idle scope open while holdOpen is true", async () => {
+    vi.useFakeTimers();
+    let hold = true;
+    const origin = new OriginTracker({
+      isEditorFocused: () => true,
+      readDraft: () => "",
+      writeDraft: () => true,
+      holdOpen: () => hold,
+    });
+    const ended: string[] = [];
+    origin.onEnd((scope, reason) => ended.push(`${scope.label}:${reason}`));
+    const scope = origin.begin({ chatId: 1 }, "!", "!sleep 5", "");
+    origin.markSubmitDone(scope);
+    await vi.advanceTimersByTimeAsync(IDLE_MS + 1000);
+    expect(ended).toEqual([]);
+    hold = false;
+    await vi.advanceTimersByTimeAsync(300);
+    expect(ended).toEqual(["!:idle"]);
+  });
+
   it("does not overwrite text the user typed during the scope", async () => {
     vi.useFakeTimers();
     let draft = "saved";
@@ -315,7 +335,7 @@ describe("OutputCapture shell scope", () => {
   // The class name is part of the contract: the capture identifies the host's
   // component by constructor name (BASH_EXECUTOR_CTORS).
   class BashExecutionComponent {
-    constructor(private readonly lines: string[]) {}
+    constructor(public lines: string[]) {}
     render() { return ["$ echo hi", ...this.lines, "exit: 0"]; }
     setComplete(_exitCode: number, _cancelled?: boolean): void {}
   }
@@ -347,17 +367,42 @@ describe("OutputCapture shell scope", () => {
     origin.end(scope, "idle");
   });
 
-  it("renders the final content at scope end when setComplete never fires", async () => {
+  it("drops the running frame at scope end when setComplete never fires", async () => {
+    vi.useFakeTimers();
+    const { transport, origin, output, chat } = attachedChat();
+    const scope = origin.begin({ chatId: 1 }, "!", "!sleep 5", "");
+    output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ !sleep 5</b>" });
+    chat.addChild(new BashExecutionComponent(["⠋ Running…"]));
+    expect(output.hasRunningBash()).toBe(true);
+    output.finish();
+    await vi.advanceTimersByTimeAsync(20);
+    // The scope ended (timeout/replacement) while the command still ran;
+    // pushing the spinner frame would strand it as the "final" output.
+    expect(transport.edits.every((edit) => !edit.text.includes("exit: 0"))).toBe(true);
+    origin.end(scope, "timeout");
+  });
+
+  it("pushes the frame rendered after setComplete, not the running one", async () => {
     vi.useFakeTimers();
     const { transport, origin, output, chat } = attachedChat();
     const scope = origin.begin({ chatId: 1 }, "!", "!echo hi", "");
     output.bind(scope, { chatId: 1, messageId: 9, ackHtml: "<b>▶️ !echo hi</b>" });
-    chat.addChild(new BashExecutionComponent(["late"]));
-    output.finish();
-    await vi.advanceTimersByTimeAsync(20);
+    const component = new BashExecutionComponent(["⠋ Running…"]);
+    expect(output.hasRunningBash()).toBe(false);
+    chat.addChild(component);
+    expect(output.hasRunningBash()).toBe(true);
+    component.setComplete(0);
+    expect(output.hasRunningBash()).toBe(false);
+    // OMP flushes the remaining PTY output asynchronously after setComplete;
+    // the pushed frame is the render taken after the settle delay.
+    component.lines = ["hi", "exit: 0"];
+    await vi.advanceTimersByTimeAsync(299);
+    expect(transport.edits).toEqual([]);
+    await vi.advanceTimersByTimeAsync(750);
     const text = transport.edits.at(-1)?.text ?? "";
     expect(text).toContain("exit: 0");
-    expect(text).toContain("✓ 完成");
+    expect(text).not.toContain("Running");
+    output.finish();
     origin.end(scope, "idle");
   });
 
