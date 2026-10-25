@@ -1,15 +1,19 @@
 /**
- * Adapter #10 — OMP's tool-approval dialog (§4.6.4).
+ * Adapter #10 - OMP's tool-approval dialog (§4.6.4).
  *
- * The entry gives us three prompt strings (full / compact / session-scoped
- * approval); the *keys* the dialog answers to are whatever its own legend
+ * With a race handle on the entry (§4.12) the dialog is the built-in tool
+ * approval behind a raced `ui.approve` call: the answers are the fixed
+ * once/session/deny set the method resolves with, so the adapter never looks
+ * at the screen.
+ *
+ * Without one, the *keys* the dialog answers to are whatever its own legend
  * advertises, and those differ between hosts and versions. So the adapter only
  * claims a dialog whose render names its keys: a button that presses a key
  * nobody listens for is worse than no button at all, because it reports success
  * while nothing happened.
  *
  * With no readable legend the adapter declines, and the snapshot adapter takes
- * over — which still leaves the terminal's own keys and the escape hatch.
+ * over - which still leaves the terminal's own keys and the escape hatch.
  */
 import type { DialogAdapter, DialogModel } from "../model.ts";
 import { ompFrameSupported, plain, renderText } from "./utils.ts";
@@ -53,23 +57,39 @@ export const approvalAdapter: DialogAdapter = {
 
   detect(component, ctx) {
     if (ctx.entry?.kind !== "approval") return false;
+    // A raced approve needs no legend: the answers go to the extension call.
+    if (ctx.entry.race) return true;
     // The legend comes out of the drawn frame: bound to the verified OMP
     // versions (§4.6.6 exception 2), snapshot takes over otherwise.
     if (!ompFrameSupported(ctx.host)) return false;
     return parseLegend(renderText(component)).length > 0;
   },
-
   read(component, ctx): DialogModel {
-    const options = parseLegend(renderText(component));
+    const entry = ctx.entry;
+    // Raced: the fixed answers `ui.approve` resolves with, not the legend.
+    const options = entry?.race
+      ? [
+          { key: "once", label: "允许一次" },
+          ...(entry.approval?.session ? [{ key: "session", label: entry.approval.session }] : []),
+          { key: "deny", label: "拒绝" },
+        ]
+      : parseLegend(renderText(component));
     return {
       kind: "approval",
-      title: ctx.entry?.title ?? "Tool approval",
-      detail: ctx.entry ? detailOf(ctx.entry) : undefined,
+      title: entry?.title ?? "Tool approval",
+      detail: entry ? detailOf(entry) : undefined,
       options,
     };
   },
-
   act(component, action, ctx) {
+    const race = ctx.entry?.race;
+    if (race && !race.settled) {
+      if (action.type === "cancel") return race.answer("deny"), true;
+      if (action.type === "approve" && (action.key === "once" || action.key === "session" || action.key === "deny")) {
+        return race.answer(action.key), true;
+      }
+      return false;
+    }
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "approve") return false;
     const options = parseLegend(renderText(component));

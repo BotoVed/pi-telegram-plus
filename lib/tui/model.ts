@@ -114,7 +114,7 @@ export type EntryInfo = {
   source: "pi" | "omp";
   /** Entry method name, for logs and adapter whitelists. */
   method?: string;
-  /** Live race handle when the extension's own `select`/`confirm`/`input` call is racing the host dialog (§4.12). */
+  /** Live race handle when the extension's own dialog call (`select`/`confirm`/`input`, OMP's `editor`/`approve`) is racing the host dialog (§4.12). */
   race?: RaceHandle;
 };
 

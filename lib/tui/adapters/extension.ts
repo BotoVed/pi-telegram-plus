@@ -289,6 +289,13 @@ export const extensionEditorAdapter: DialogAdapter = {
   },
 
   act(component, action, ctx) {
+    // OMP's raced editor: the extension's own `editor` call takes the answer
+    // directly, and its signal closes the dialog (~2 ms, S25) - no keys.
+    const race = ctx.entry?.kind === "editor" ? ctx.entry.race : undefined;
+    if (race && !race.settled) {
+      if (action.type === "cancel") return race.answer(undefined), true;
+      if (action.type === "submit") return race.answer(action.text ?? ""), true;
+    }
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "submit") return false;
     const text = action.text ?? "";

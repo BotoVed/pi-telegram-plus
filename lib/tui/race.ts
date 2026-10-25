@@ -1,8 +1,9 @@
 /**
- * The UI race (§4.12, decision 53): when an extension calls `ui.select`,
- * `ui.confirm` or `ui.input`, the host still draws its dialog, but a Telegram
- * answer goes straight into the extension's own call instead of steering the
- * host component with keystrokes.
+ * The UI race (§4.12, decision 53): when an extension calls one of the host's
+ * dialog methods (`select`, `confirm`, `input`, and on OMP `editor` and
+ * `approve`), the host still draws its dialog, but a Telegram answer goes
+ * straight into the extension's own call instead of steering the host
+ * component with keystrokes.
  * The wrapper races the plugin-side `RaceHandle` against the host's promise:
  * whoever answers first wins, and a Telegram win aborts the host dialog
  * through the `signal` handed to the original call (measured ~2 ms to close
@@ -18,6 +19,16 @@ export type RaceHandle = {
   answer(value: unknown): boolean;
   readonly settled: boolean;
 };
+
+/** The dialog methods `installRace` can wrap. */
+export type RaceMethod = "select" | "confirm" | "input" | "editor" | "approve";
+
+/** Where each dialog method's option object (the one carrying `signal`) sits
+ * in the host signature: OMP's `editor(title, prefill, dialogOptions,
+ * editorOptions)` keeps a fourth argument, `approve(prompt, dialogOptions)`
+ * takes its options second. */
+
+export const OPTS_INDEX: Record<RaceMethod, number> = { select: 2, confirm: 2, input: 2, editor: 2, approve: 1 };
 
 /** The handle of the race call currently running synchronously. */
 let pendingRace: RaceHandle | undefined;
@@ -46,7 +57,7 @@ export function takePendingRace(): RaceHandle | undefined {
  */
 export function installRace(
   target: Record<string, unknown>,
-  method: "select" | "confirm" | "input",
+  method: RaceMethod,
   tagged: WeakSet<object>,
 ): boolean {
   const current = target[method];
@@ -55,7 +66,12 @@ export function installRace(
   const call = current as (...args: unknown[]) => unknown;
   const wrapped = function ptpRace(this: unknown, ...args: unknown[]): unknown {
     const controller = new AbortController();
-    const opts = args[2] && typeof args[2] === "object" ? (args[2] as Record<string, unknown>) : undefined;
+    const index = OPTS_INDEX[method];
+    const argsCopy = [...args];
+    while (argsCopy.length < index + 1) argsCopy.push(undefined);
+    const opts = argsCopy[index] && typeof argsCopy[index] === "object"
+      ? (argsCopy[index] as Record<string, unknown>)
+      : undefined;
     const caller = opts?.signal;
     const signal = caller instanceof AbortSignal
       ? AbortSignal.any([caller, controller.signal])
@@ -75,7 +91,9 @@ export function installRace(
     let result: unknown;
     pendingRace = handle;
     try {
-      result = call.call(this, args[0], args[1], { ...(opts ?? {}), signal });
+      // Every argument past the options object (editor's `editorOptions` at
+      // index 3) goes through untouched.
+      result = call.apply(this, [...argsCopy.slice(0, index), { ...(opts ?? {}), signal }, ...argsCopy.slice(index + 1)]);
     } finally {
       pendingRace = undefined;
     }

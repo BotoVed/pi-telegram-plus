@@ -8,9 +8,11 @@
  * side wins, whether the loser's signal aborts, and that the entry layer
  * still sees the call (`pushEntry` takes the handle before the host runs).
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { installRace, takePendingRace, type RaceHandle } from "../tui/race.ts";
-import { extensionInputAdapter, extensionSelectAdapter } from "../tui/adapters/extension.ts";
+import { extensionEditorAdapter, extensionInputAdapter, extensionSelectAdapter } from "../tui/adapters/extension.ts";
+import { approvalAdapter } from "../tui/adapters/approval.ts";
+import { setOmpVersion } from "../tui/adapters/utils.ts";
 import { hookEntryMethods, UI_CONTEXT_SPECS } from "../tui/entry.ts";
 import { FocusTracker } from "../tui/focus.ts";
 import type { AdapterContext, EntryInfo } from "../tui/model.ts";
@@ -18,14 +20,14 @@ import type { AdapterContext, EntryInfo } from "../tui/model.ts";
 type FakeHost = {
   target: Record<string, unknown>;
   /** What the fake host method saw on each call. */
-  seen: { signals: AbortSignal[]; handles: (RaceHandle | undefined)[]; opts: unknown[] };
+  seen: { signals: AbortSignal[]; handles: (RaceHandle | undefined)[]; opts: unknown[]; editorOptions: unknown[] };
   /** Settle the n-th dialog the way the terminal user would. */
   settle: Array<(value: unknown) => void>;
   reject: Array<(error: unknown) => void>;
 };
 
 function fakeHost(options?: { confirmViaSelector?: boolean }): FakeHost {
-  const seen = { signals: [] as AbortSignal[], handles: [] as (RaceHandle | undefined)[], opts: [] as unknown[] };
+  const seen = { signals: [] as AbortSignal[], handles: [] as (RaceHandle | undefined)[], opts: [] as unknown[], editorOptions: [] as unknown[] };
   const settle: Array<(value: unknown) => void> = [];
   const reject: Array<(error: unknown) => void> = [];
   /** Every dialog method has the same shape: the third argument carries `signal`. */
@@ -49,6 +51,15 @@ function fakeHost(options?: { confirmViaSelector?: boolean }): FakeHost {
     input(_title: string, _placeholder?: string, opts?: { signal?: AbortSignal }) {
       return open(opts);
     },
+    /** OMP's editor: options at index 2, `editorOptions` survives at index 3. */
+    editor(_title: string, _prefill?: string, opts?: { signal?: AbortSignal }, editorOptions?: unknown) {
+      seen.editorOptions.push(editorOptions);
+      return open(opts);
+    },
+    /** OMP's approve: the prompt is the only positional, options sit at index 1. */
+    approve(_prompt: unknown, opts?: { signal?: AbortSignal }) {
+      return open(opts ?? {});
+    },
   };
   return { target, seen, settle, reject };
 }
@@ -69,6 +80,18 @@ function callConfirm(target: Record<string, unknown>) {
 function callInput(target: Record<string, unknown>) {
   return (title: string, placeholder?: string, opts?: Record<string, unknown>): Promise<unknown> =>
     (target.input as (title: string, placeholder?: string, opts?: Record<string, unknown>) => Promise<unknown>)(title, placeholder, opts);
+}
+
+/** Calls the wrapped `editor` on a fake target with OMP's full 4-argument signature. */
+function callEditor(target: Record<string, unknown>) {
+  return (title: string, prefill?: string, opts?: Record<string, unknown>, editorOptions?: unknown): Promise<unknown> =>
+    (target.editor as (title: string, prefill?: string, opts?: Record<string, unknown>, editorOptions?: unknown) => Promise<unknown>)(title, prefill, opts, editorOptions);
+}
+
+/** Calls the wrapped `approve` on a fake target: OMP built-ins pass no dialogOptions. */
+function callApprove(target: Record<string, unknown>) {
+  return (prompt: unknown, opts?: Record<string, unknown>): Promise<unknown> =>
+    (target.approve as (prompt: unknown, opts?: Record<string, unknown>) => Promise<unknown>)(prompt, opts);
 }
 
 describe("race wrapper (installRace)", () => {
@@ -180,6 +203,50 @@ describe("race wrapper (installRace)", () => {
     }
     callSelect(target)("Pick", ["alpha"], {});
     expect(seen.handles[0]).toBeDefined();
+  });
+
+  it("editor: the options go in at index 2 and editorOptions survives at index 3", async () => {
+    const { target, seen, settle } = fakeHost();
+    expect(installRace(target, "editor", new WeakSet<object>())).toBe(true);
+    const editorOptions = { multiLine: true };
+    const dialog = callEditor(target)("Compose", "draft", { placeholder: "keep me" }, editorOptions);
+    const opts = seen.opts[0] as Record<string, unknown>;
+    expect(opts?.placeholder).toBe("keep me");
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
+    expect(seen.editorOptions[0]).toBe(editorOptions);
+    expect(seen.editorOptions[0]).not.toHaveProperty("signal");
+    const handle = seen.handles[0];
+    expect(handle?.answer("typed")).toBe(true);
+    await expect(dialog).resolves.toBe("typed");
+    expect(seen.signals[0]?.aborted).toBe(true);
+    // The terminal user answering first still wins.
+    const hostWins = callEditor(target)("Compose", "draft", undefined, editorOptions);
+    settle[1]?.("from editor");
+    await expect(hostWins).resolves.toBe("from editor");
+    expect(seen.handles[1]?.settled).toBe(true);
+  });
+
+  it("approve: the wrapped call supplies the options object at index 1", async () => {
+    const { target, seen, settle } = fakeHost();
+    expect(installRace(target, "approve", new WeakSet<object>())).toBe(true);
+    // OMP's built-in tool approval passes no dialogOptions at all.
+    const dialog = callApprove(target)({ full: "Run `git push`?", compact: "git push?", session: "all session" });
+    const opts = seen.opts[0] as Record<string, unknown>;
+    expect(opts).toBeDefined();
+    expect(opts?.signal).toBeInstanceOf(AbortSignal);
+    expect(seen.handles[0]?.answer("session")).toBe(true);
+    await expect(dialog).resolves.toBe("session");
+    expect(seen.signals[0]?.aborted).toBe(true);
+    const hostWins = callApprove(target)({ full: "Run `git push`?", compact: "git push?" });
+    settle[1]?.("deny");
+    await expect(hostWins).resolves.toBe("deny");
+    // A caller-supplied signal still composes with the abort.
+    const caller = new AbortController();
+    callApprove(target)({ full: "x?" }, { signal: caller.signal, other: 1 });
+    const merged = seen.opts[2] as Record<string, unknown>;
+    expect(merged?.other).toBe(1);
+    caller.abort();
+    expect((seen.signals[2] as AbortSignal).aborted).toBe(true);
   });
 });
 
@@ -354,5 +421,182 @@ describe("FocusTracker takes the pending race into the entry", () => {
     expect(info?.race?.answer(true)).toBe(true);
     expect((fake.target.confirm as () => unknown).name).toBe("ptp-race:confirm");
     expect(takePendingRace()).toBeUndefined();
+  });
+});
+
+describe("extensionEditorAdapter with a race handle", () => {
+  function editorCtx(race: RaceHandle | undefined) {
+    const sendKey = vi.fn(() => true);
+    const entry: EntryInfo = { kind: "editor", source: "omp", title: "Compose", prefill: "draft", race };
+    const ctx = { host: "omp", entry, sendKey, requestRender: vi.fn() } as AdapterContext;
+    // A real editor shape: the fallback path *could* setText + Enter.
+    const setText = vi.fn();
+    return { ctx, sendKey, setText, component: { getText: () => "draft", setText, handleInput: vi.fn() } };
+  }
+
+  it("submit answers the extension call with the text, without keys", () => {
+    const answer = vi.fn(() => true);
+    const { ctx, sendKey, setText, component } = editorCtx({ answer, settled: false });
+    expect(extensionEditorAdapter.act(component, { type: "submit", text: "a\nb" }, ctx)).toBe(true);
+    expect(answer).toHaveBeenCalledWith("a\nb");
+    expect(setText).not.toHaveBeenCalled();
+    expect(sendKey).not.toHaveBeenCalled();
+  });
+
+  it("an empty submit answers with the empty string", () => {
+    const answer = vi.fn(() => true);
+    const { ctx, sendKey, component } = editorCtx({ answer, settled: false });
+    expect(extensionEditorAdapter.act(component, { type: "submit" }, ctx)).toBe(true);
+    expect(answer).toHaveBeenCalledWith("");
+    expect(sendKey).not.toHaveBeenCalled();
+  });
+
+  it("cancel answers with undefined, without keys", () => {
+    const answer = vi.fn(() => true);
+    const { ctx, sendKey, setText, component } = editorCtx({ answer, settled: false });
+    expect(extensionEditorAdapter.act(component, { type: "cancel" }, ctx)).toBe(true);
+    expect(answer).toHaveBeenCalledWith(undefined);
+    expect(setText).not.toHaveBeenCalled();
+    expect(sendKey).not.toHaveBeenCalled();
+  });
+
+  it("a settled handle writes the field and presses Enter as before", () => {
+    const answer = vi.fn(() => false);
+    const { ctx, sendKey, setText, component } = editorCtx({ answer, settled: true });
+    expect(extensionEditorAdapter.act(component, { type: "submit", text: "hi" }, ctx)).toBe(true);
+    expect(answer).not.toHaveBeenCalled();
+    expect(setText).toHaveBeenCalledWith("hi");
+    expect(sendKey).toHaveBeenCalledWith("enter");
+  });
+});
+
+describe("approvalAdapter with a race handle", () => {
+  afterEach(() => {
+    setOmpVersion(undefined);
+  });
+
+  function approvalCtx(race: RaceHandle | undefined, session?: string) {
+    const sendKey = vi.fn(() => true);
+    const entry: EntryInfo = {
+      kind: "approval",
+      source: "omp",
+      title: "Tool approval",
+      approval: { full: "Run `git push`?", compact: "git push?", session },
+      race,
+    };
+    const ctx = { host: "omp", entry, sendKey, requestRender: vi.fn() } as AdapterContext;
+    // A component with nothing readable: only the race path can claim it.
+    return { ctx, sendKey, component: {} };
+  }
+
+  const live = () => {
+    const answer = vi.fn(() => true);
+    return { handle: { answer, settled: false } as RaceHandle, answer };
+  };
+
+  it("detect claims an unreadable dialog on the handle alone", () => {
+    const { ctx, component } = approvalCtx(live().handle);
+    expect(approvalAdapter.detect(component, ctx)).toBe(true);
+  });
+
+  it("read offers the fixed once/deny answers, without the screen", () => {
+    const { ctx, component } = approvalCtx(live().handle);
+    const model = approvalAdapter.read(component, ctx);
+    expect(model.kind).toBe("approval");
+    if (model.kind !== "approval") return;
+    expect(model.options).toEqual([
+      { key: "once", label: "允许一次" },
+      { key: "deny", label: "拒绝" },
+    ]);
+    expect(model.title).toBe("Tool approval");
+    expect(model.detail).toContain("git push?");
+  });
+
+  it("read adds the session option only when the prompt carries one", () => {
+    const { ctx, component } = approvalCtx(live().handle, "Allow `git push` all session");
+    const model = approvalAdapter.read(component, ctx);
+    if (model.kind !== "approval") throw new Error("expected an approval model");
+    expect(model.options.map((option) => option.key)).toEqual(["once", "session", "deny"]);
+    expect(model.options[1]?.label).toBe("Allow `git push` all session");
+  });
+
+  it("approve answers the extension call with the key, without keys", () => {
+    for (const key of ["once", "session", "deny"] as const) {
+      const { handle, answer } = live();
+      const { ctx, sendKey, component } = approvalCtx(handle);
+      expect(approvalAdapter.act(component, { type: "approve", key }, ctx)).toBe(true);
+      expect(answer).toHaveBeenCalledWith(key);
+      expect(sendKey).not.toHaveBeenCalled();
+    }
+  });
+
+  it("cancel answers with deny, without keys", () => {
+    const { handle, answer } = live();
+    const { ctx, sendKey, component } = approvalCtx(handle);
+    expect(approvalAdapter.act(component, { type: "cancel" }, ctx)).toBe(true);
+    expect(answer).toHaveBeenCalledWith("deny");
+    expect(sendKey).not.toHaveBeenCalled();
+  });
+
+  it("an unknown key answers nothing", () => {
+    const { handle, answer } = live();
+    const { ctx, component } = approvalCtx(handle);
+    expect(approvalAdapter.act(component, { type: "approve", key: "always" }, ctx)).toBe(false);
+    expect(answer).not.toHaveBeenCalled();
+  });
+
+  it("without a handle it still reads the drawn key legend", () => {
+    setOmpVersion("18.12.5");
+    const { ctx, sendKey } = approvalCtx(undefined);
+    const component = { render: () => "Allow `git push`?\ny approve\nn deny" };
+    expect(approvalAdapter.detect(component, ctx)).toBe(true);
+    const model = approvalAdapter.read(component, ctx);
+    if (model.kind !== "approval") throw new Error("expected an approval model");
+    expect(model.options.map((option) => option.key)).toEqual(["y", "n"]);
+    expect(approvalAdapter.act(component, { type: "approve", key: "y" }, ctx)).toBe(true);
+    expect(sendKey).toHaveBeenCalledWith("y");
+    expect(approvalAdapter.act(component, { type: "cancel" }, ctx)).toBe(true);
+    expect(sendKey).toHaveBeenCalledWith("esc");
+    expect(approvalAdapter.act(component, { type: "approve", key: "s" }, ctx)).toBe(false);
+  });
+
+  it("without a handle or a legend it declines", () => {
+    setOmpVersion("18.12.5");
+    const { ctx } = approvalCtx(undefined);
+    expect(approvalAdapter.detect({ render: () => "Allow `git push`?" }, ctx)).toBe(false);
+  });
+});
+
+describe("FocusTracker host gating of the raced methods", () => {
+  function attachTracker(hostName: "pi" | "omp") {
+    const fake = fakeHost();
+    const tracker = new FocusTracker();
+    const attached = tracker as unknown as { attach(state: unknown): void };
+    attached.attach({
+      host: hostName,
+      ui: { setFocus: () => undefined },
+      mode: {},
+      session: { extensionRunner: { getUIContext: () => fake.target } },
+    });
+    return { fake, tracker };
+  }
+
+  it("pi gets no editor race: its editor takes no options, so nothing could abort it", () => {
+    const { fake } = attachTracker("pi");
+    expect((fake.target.select as () => unknown).name).toBe("ptp-race:select");
+    expect((fake.target.editor as () => unknown).name).not.toBe("ptp-race:editor");
+    // pi has no `approve` to race: a target without the method installs nothing.
+    expect(installRace({ notify: () => undefined }, "approve", new WeakSet<object>())).toBe(false);
+  });
+
+  it("omp races editor and approve as well", () => {
+    const { fake, tracker } = attachTracker("omp");
+    expect((fake.target.editor as () => unknown).name).toBe("ptp-race:editor");
+    expect((fake.target.approve as () => unknown).name).toBe("ptp-race:approve");
+    callEditor(fake.target)("Compose", "draft", {});
+    // The entry above took the handle, exactly like select/confirm/input.
+    const info = tracker.entryFor({});
+    expect(info?.kind).toBe("editor");
+    expect(info?.race?.answer("typed")).toBe(true);
   });
 });
