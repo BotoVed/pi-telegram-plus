@@ -10,6 +10,9 @@ import { log } from "../logger.ts";
 
 const tgCmdLog = log.child("tg-commands");
 
+/** Live Telegram connection state of THIS pi process, as reported by the runtime. */
+export type TelegramConnectionState = "connected" | "connecting" | "other-instance" | "disconnected";
+
 export type TelegramCommandDeps = {
   getConfig: () => TelegramConfig;
   setConfig: (c: TelegramConfig) => void;
@@ -23,6 +26,11 @@ export type TelegramCommandDeps = {
   syncTelegramCommands: () => Promise<void>;
   startStatusHeartbeat: () => void;
   clearStatusError: () => void;
+  /** Actual runtime connection state (status-bar source), not config fields. */
+  connectionState: () => TelegramConnectionState;
+  /** Trigger a coordinator reconcile and wait for it to settle (so the menu
+   *  can re-render with the real connection state right after a toggle). */
+  awaitReconcile: () => Promise<void>;
 };
 
 // ── Shared UI type ─────────────────────────────────────────────────────────
@@ -148,7 +156,10 @@ export async function clearBotDefaultFlow(
     ui.notify("No default bot is set.", "info");
     return false;
   }
-  const followsDefault = !(await readProjectBinding(cwd));
+  // 没有 botId 的绑定 = 跟随全局默认 Bot（包括 disableProjectFlow 写下的
+  // `{ enabled: false }` 断开记录）——不能把它误当成"已绑定"。
+  const binding = await readProjectBinding(cwd);
+  const followsDefault = !binding?.binding.botId;
   ui.notify(
     followsDefault
     ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg → Project → Bot) or set a default in the TUI to reconnect."
@@ -349,8 +360,9 @@ export async function enableProjectFlow(
   if (deps.isTelegramEnabled()) deps.getPolling().start();
   deps.clearStatusError();
   deps.startStatusHeartbeat();
+  await deps.awaitReconcile();
   deps.refreshStatus();
-  ui.notify(`Telegram bot enabled for current project.`, "info");
+  ui.notify(`已连接当前目录的 Telegram。`, "info");
 }
 
 export async function disableProjectFlow(
@@ -360,17 +372,11 @@ export async function disableProjectFlow(
 ): Promise<void> {
   const workspacePath = resolve(cwd);
   const project = await readProjectBinding(workspacePath);
-  const wasEnabled = deps.getConfig().telegramEnabled !== false;
-  // Disabling changes routing (enabled true→false) and disconnects the bot, so an
-  // in-progress /tg menu ends and can no longer render. Notify BEFORE the switch
-  // (while still the active owner) so the message is delivered, and tell the user
-  // how to re-enable (the menu can't, once disconnected).
-  if (wasEnabled && project) {
-    ui.notify(
-      `Disabling bot for this project. If /tg is open it will close; re-enable via /tg → Project → Enabled after restarting pi.`,
-      "info",
-    );
-  }
+  // Notify BEFORE the disconnect: once reconcile below releases the active
+  // role, the active transport suppresses outbound sends, so this is the last
+  // message Telegram will deliver for this project. Reconnect is terminal-only
+  // from here on (/tg → Project → 连接).
+  ui.notify(`已断开当前目录的 Telegram。Telegram 将不再响应，只能在终端用 /tg 重新连接。`, "info");
   if (project) {
     await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: false }));
   } else {
@@ -383,8 +389,8 @@ export async function disableProjectFlow(
   deps.switchResolvedConfig(await readResolvedTelegramConfig(workspacePath));
   await deps.getPolling().stop();
   deps.clearStatusError();
+  await deps.awaitReconcile();
   deps.refreshStatus();
-  ui.notify(`Telegram bot disabled for current project.`, "info");
 }
 
 export async function unbindProjectFlow(

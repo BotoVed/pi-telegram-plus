@@ -331,7 +331,7 @@ async function runHost(host, label, phase = "main") {
       }
     } else {
       // The flat tg-cwd-disconnect command is gone (T4.10): disconnect goes
-      // through the /tg menu - /tg → 📁 Project → Enabled toggle → confirm.
+      // through the /tg menu - /tg → 📁 Project → 断开 row → confirm.
       try {
         const since = await cursor();
         await dispatch("/tg");
@@ -340,9 +340,9 @@ async function runHost(host, label, phase = "main") {
         const projectButton = findButton(mainMenu, /📁 Project/);
         if (!projectButton) throw new Error(`no 📁 Project entry: ${buttonsOf(mainMenu).map((b) => b.text).join(" / ")}`);
         const project = await click(projectButton, mainMenu.body?.message_id ?? mainMenu.message_id);
-        const enabledButton = findButton(project, /^Enabled: ● on$/);
-        if (!enabledButton) throw new Error(`no enabled toggle: ${buttonsOf(project).map((b) => b.text).join(" / ")}`);
-        const prompt = await click(enabledButton, project.body?.message_id ?? project.message_id);
+        const disconnectButton = findButton(project, /→ 断开$/);
+        if (!disconnectButton) throw new Error(`no disconnect row: ${buttonsOf(project).map((b) => b.text).join(" / ")}`);
+        const prompt = await click(disconnectButton, project.body?.message_id ?? project.message_id);
         const yes = findButton(prompt, /^(Yes|Confirm|OK|✅.*)$/i);
         if (!yes) throw new Error(`no confirm button: ${buttonsOf(prompt).map((b) => b.text).join(" / ")}`);
         await click(yes, prompt.body?.message_id ?? prompt.message_id).catch(() => undefined);
@@ -351,9 +351,9 @@ async function runHost(host, label, phase = "main") {
         // sendMessage afterwards - judge on that, not the click's response.
         const notice = await waitFor("disable notice", (state) =>
           state.calls.slice(since).find((entry) => entry.method === "sendMessage"
-            && /Disabling bot|disabled/i.test(String(entry.body?.text ?? ""))) ?? false)
+            && /已断开当前目录的 Telegram/i.test(String(entry.body?.text ?? ""))) ?? false)
           .catch(() => undefined);
-        record("menu Project → Enabled disables the project", Boolean(notice),
+        record("menu Project → 断开 disables the project", Boolean(notice),
           notice ? String(notice.body?.text ?? "").replace(/\s+/g, " ").slice(0, 90) : "no disable notice after confirm");
         await sleep(1500);
         record("host stays alive after disconnect", hostAlive());
@@ -644,8 +644,8 @@ async function runHost(host, label, phase = "main") {
 
     // Level 2-3: Project → bind picker.
     main = await openMain();
-    const project = await menuStep("Project", main, /📁 Project/, [/Project/, /Bot: /, /Enabled: /]);
-    const bindButton = buttonsOf(project).find((b) => /^Bot: /.test(String(b.text ?? "")));
+    const project = await menuStep("Project", main, /📁 Project/, [/Project/, /绑定 Bot：/, /断开|连接|使用中/]);
+    const bindButton = buttonsOf(project).find((b) => /^绑定 Bot：/.test(String(b.text ?? "")));
     if (bindButton) {
       await menuStep("Project → bind", project, new RegExp(String(bindButton.text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), [/Bind project to bot/]);
     } else {
@@ -943,9 +943,9 @@ async function runHost(host, label, phase = "main") {
   try {
     // Bind / unbind go through the /tg menu (the flat commands are gone, T4.10).
     let main = await openMain();
-    const project = await menuStep("Project (bind flow)", main, /📁 Project/, [/Project/, /Bot: /, /Enabled: /]);
-    const botRow = findButton(project, /^Bot: /);
-    if (!botRow) throw new Error(`no Bot: row: ${buttonsOf(project).map((b) => b.text).join(" / ")}`);
+    const project = await menuStep("Project (bind flow)", main, /📁 Project/, [/Project/, /绑定 Bot：/, /断开|连接|使用中/]);
+    const botRow = findButton(project, /^绑定 Bot：/);
+    if (!botRow) throw new Error(`no 绑定 Bot row: ${buttonsOf(project).map((b) => b.text).join(" / ")}`);
     const picker = await click(botRow, project.body?.message_id ?? project.message_id);
     const botButton = buttonsOf(picker).find((b) => /(pi|omp)-bot|bi\(|★|·/.test(String(b.text ?? "")));
     if (!botButton) throw new Error(`no bot option: ${buttonsOf(picker).map((b) => b.text).join(" / ")}`);
@@ -955,8 +955,8 @@ async function runHost(host, label, phase = "main") {
     await settle();
 
     main = await openMain();
-    const project2 = await menuStep("Project (unbind flow)", main, /📁 Project/, [/Project/, /Bot: /, /Enabled: /]);
-    const botRow2 = findButton(project2, /^Bot: /);
+    const project2 = await menuStep("Project (unbind flow)", main, /📁 Project/, [/Project/, /绑定 Bot：/, /断开|连接|使用中/]);
+    const botRow2 = findButton(project2, /^绑定 Bot：/);
     if (!botRow2) throw new Error(`no Bot: row: ${buttonsOf(project2).map((b) => b.text).join(" / ")}`);
     const picker2 = await click(botRow2, project2.body?.message_id ?? project2.message_id);
     const unbindButton = findButton(picker2, /^Unbind$/);

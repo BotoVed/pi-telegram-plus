@@ -13,7 +13,7 @@ vi.mock("../telegram-api.ts", () => ({
 }));
 
 import { registerTgMenuCommand, type SwitchInstanceDeps } from "../commands/tg-menu.ts";
-import type { TelegramCommandDeps } from "../commands/telegram-commands.ts";
+import type { TelegramCommandDeps, TelegramConnectionState } from "../commands/telegram-commands.ts";
 import type { TgConfigDeps } from "../commands/register.ts";
 import { readBotRegistry, readProjectBinding, addBot, writeProjectBinding } from "../config.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
@@ -73,6 +73,8 @@ describe("/tg multi-level menu", () => {
   let config: TelegramConfig;
   let resolvedConfig: ResolvedTelegramConfig | undefined;
   let pollingActive: boolean;
+  let connectionStateValue: TelegramConnectionState;
+  let awaitReconcileCalls: number;
 
   beforeEach(async () => {
     originalAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -86,6 +88,9 @@ describe("/tg multi-level menu", () => {
     pollingActive = false;
     mocks.getTelegramBotUsername.mockReset();
     mocks.getTelegramBotUsername.mockResolvedValue("testbot");
+
+    connectionStateValue = "disconnected";
+    awaitReconcileCalls = 0;
 
     const deps: TelegramCommandDeps = {
       getConfig: () => config,
@@ -107,6 +112,8 @@ describe("/tg multi-level menu", () => {
       syncTelegramCommands: async () => undefined,
       startStatusHeartbeat: () => undefined,
       clearStatusError: () => undefined,
+      connectionState: () => connectionStateValue,
+      awaitReconcile: async () => { awaitReconcileCalls += 1; },
     };
 
     const configDeps: TgConfigDeps = {
@@ -333,21 +340,72 @@ describe("/tg multi-level menu", () => {
     expect(ui.select.mock.calls[3][1]).toEqual(["Set as default", "Update", "Remove", "⬅️ Back"]);
   });
 
-  it("Project → shows current binding in the Bot label", async () => {
+  it("Project → shows the effective bot in the 绑定 Bot label", async () => {
     const bot = makeBot({ name: "proj-bot", token: "t-p" });
     await addBot(bot);
     const { ui } = makeScriptedUi({ select: ["📁 Project", "⬅️ Back", "❌ Close"] });
     await commands.get("tg")!("", makeCtx(ui));
     const projectCall = ui.select.mock.calls[1]; // 2nd select = Project submenu (after main)
-    expect(projectCall[1]).toContain("Bot: proj-bot (default)");
+    expect(projectCall[1]).toContain("绑定 Bot：proj-bot（全局默认）");
   });
 
-  it("Project → Bot label → pick bot → writes .pi/telegram.json", async () => {
+  it("Project → second item reflects connectionState", async () => {
+    const bot = makeBot({ name: "state-bot", token: "t-s" });
+    await addBot(bot);
+    const expected: Record<TelegramConnectionState, string> = {
+      "connected": "🟢 已连接 → 断开",
+      "connecting": "🔄 连接中 → 断开",
+      "other-instance": "🟡 其他实例使用中",
+      "disconnected": "⚪ 已断开 → 连接",
+    };
+    for (const state of Object.keys(expected) as TelegramConnectionState[]) {
+      connectionStateValue = state;
+      const { ui } = makeScriptedUi({ select: ["📁 Project", "⬅️ Back", "❌ Close"] });
+      await commands.get("tg")!("", makeCtx(ui));
+      const options = ui.select.mock.calls[1][1] as string[];
+      expect(options).toContain(expected[state]);
+    }
+  });
+
+  it("Project → 其他实例使用中 → click only notifies", async () => {
+    const bot = makeBot({ name: "other-bot", token: "t-o" });
+    await addBot(bot);
+    connectionStateValue = "other-instance";
+    const { ui, notifyCalls } = makeScriptedUi({
+      select: ["📁 Project", "🟡 其他实例使用中", "⬅️ Back", "❌ Close"],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    expect(notifyCalls.some((c) => c.message.includes("同一个 Bot 正由另一个 pi 实例服务"))).toBe(true);
+    expect(ui.confirm).not.toHaveBeenCalled();
+    expect(awaitReconcileCalls).toBe(0);
+  });
+
+  it("Project → no usable bot → only the 绑定 Bot item (no connection row)", async () => {
+    const { ui } = makeScriptedUi({ select: ["📁 Project", "⬅️ Back", "❌ Close"] });
+    await commands.get("tg")!("", makeCtx(ui));
+    const options = ui.select.mock.calls[1][1] as string[];
+    expect(options).toEqual(["绑定 Bot：未设置", "⬅️ Back"]);
+  });
+
+  it("Project → a { enabled: false } disconnect record follows the default bot and offers no Unbind", async () => {
+    const bot = makeBot({ name: "default-bot", token: "t-d" });
+    await addBot(bot);
+    await writeProjectBinding(projectDir, { enabled: false });
+    const { ui } = makeScriptedUi({
+      select: ["📁 Project", "绑定 Bot：default-bot（全局默认）", "⬅️ Back", "⬅️ Back", "❌ Close"],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    const bindCall = ui.select.mock.calls[2]; // bot picker after clicking the binding row
+    expect(bindCall[0]).toBe("Bind project to bot");
+    expect(bindCall[1]).not.toContain("Unbind");
+  });
+
+  it("Project → 绑定 Bot → pick bot → writes .pi/telegram.json", async () => {
     const bot = makeBot({ name: "bind-bot", token: "t-b" });
     await addBot(bot);
     const botChoice = botChoiceFull(bot, true);
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["📁 Project", "Bot: bind-bot (default)", botChoice, "⬅️ Back", "❌ Close"],
+      select: ["📁 Project", "绑定 Bot：bind-bot（全局默认）", botChoice, "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
     const binding = await readProjectBinding(projectDir);
@@ -356,61 +414,65 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message.includes("Project bound to bot"))).toBe(true);
   });
 
-  it("Project → Enabled toggle → enables a disabled binding", async () => {
+  it("Project → ⚪ 已断开 → 连接 re-enables, awaits reconcile, new notice", async () => {
     const bot = makeBot({ name: "default-bot", token: "t-d" });
     await addBot(bot);
-    // seed a disabled binding (binding is the source of truth for the toggle)
     await writeProjectBinding(projectDir, { botId: bot.id, enabled: false });
+    connectionStateValue = "disconnected";
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["📁 Project", "Enabled: ○ off", "⬅️ Back", "❌ Close"],
+      select: ["📁 Project", "⚪ 已断开 → 连接", "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.enabled).toBe(true);
-    expect(notifyCalls.some((c) => c.message.includes("enabled for current project"))).toBe(true);
+    expect(awaitReconcileCalls).toBe(1);
+    expect(notifyCalls.some((c) => c.message.includes("已连接当前目录的 Telegram"))).toBe(true);
   });
 
-  it("Project → Enabled toggle → disables binding", async () => {
+  it("Project → 🟢 已连接 → 断开 confirms, disables, awaits reconcile, new notice", async () => {
     const bot = makeBot({ name: "dis-bot", token: "t-d" });
     await addBot(bot);
-    const botChoice = botChoiceFull(bot, true);
-    // bind first
-    const { ui: ui1 } = makeScriptedUi({ select: ["📁 Project", "Bot: dis-bot (default)", botChoice, "⬅️ Back"] });
-    await commands.get("tg")!("", makeCtx(ui1));
-    // toggle off (with disable confirm)
-    const { ui: ui2, notifyCalls } = makeScriptedUi({ select: ["📁 Project", "Enabled: ● on", "⬅️ Back", "❌ Close"], confirm: [true] });
-    await commands.get("tg")!("", makeCtx(ui2));
-    const binding = await readProjectBinding(projectDir);
-    expect(binding?.binding.enabled).toBe(false);
-    expect(notifyCalls.some((c) => c.message.includes("disabled for current project"))).toBe(true);
-  });
-
-  it("Project → Enabled toggle → cancel confirm does not disable", async () => {
-    const bot = makeBot({ name: "dis-bot", token: "t-d" });
-    await addBot(bot);
-    const botChoice = botChoiceFull(bot, true);
-    const { ui: ui1 } = makeScriptedUi({ select: ["📁 Project", "Bot: dis-bot (default)", botChoice, "⬅️ Back"] });
-    await commands.get("tg")!("", makeCtx(ui1));
-    // toggle off but cancel the confirm
-    const { ui: ui2 } = makeScriptedUi({ select: ["📁 Project", "Enabled: ● on", "⬅️ Back", "❌ Close"], confirm: [false] });
-    await commands.get("tg")!("", makeCtx(ui2));
-    const binding = await readProjectBinding(projectDir);
-    expect(binding?.binding.enabled).toBe(true); // unchanged
-  });
-
-  it("Project → Bot label → Unbind → confirms and removes binding", async () => {
-    const bot = makeBot({ name: "unbind-bot", token: "t-u" });
-    await addBot(bot);
-    const botChoice = botChoiceFull(bot, true);
-    // bind first
-    const { ui: ui1 } = makeScriptedUi({ select: ["📁 Project", "Bot: unbind-bot (default)", botChoice, "⬅️ Back"] });
-    await commands.get("tg")!("", makeCtx(ui1));
-    // unbind via Bot label → Unbind
-    const { ui: ui2, notifyCalls } = makeScriptedUi({
-      select: ["📁 Project", "Bot: unbind-bot", "Unbind", "⬅️ Back", "❌ Close"],
+    await writeProjectBinding(projectDir, { botId: bot.id, enabled: true });
+    connectionStateValue = "connected";
+    const { ui, notifyCalls } = makeScriptedUi({
+      select: ["📁 Project", "🟢 已连接 → 断开", "⬅️ Back", "❌ Close"],
       confirm: [true],
     });
-    await commands.get("tg")!("", makeCtx(ui2));
+    await commands.get("tg")!("", makeCtx(ui));
+    expect(ui.confirm).toHaveBeenCalledWith(
+      "断开当前目录的 Telegram？",
+      "断开后 Telegram 将不再响应，只能在终端用 /tg 重新连接。",
+    );
+    const binding = await readProjectBinding(projectDir);
+    expect(binding?.binding.enabled).toBe(false);
+    expect(awaitReconcileCalls).toBe(1);
+    expect(notifyCalls.some((c) => c.message.includes("已断开当前目录的 Telegram"))).toBe(true);
+  });
+
+  it("Project → 断开 confirm cancel does not disable", async () => {
+    const bot = makeBot({ name: "dis-bot", token: "t-d" });
+    await addBot(bot);
+    await writeProjectBinding(projectDir, { botId: bot.id, enabled: true });
+    connectionStateValue = "connected";
+    const { ui } = makeScriptedUi({
+      select: ["📁 Project", "🟢 已连接 → 断开", "⬅️ Back", "❌ Close"],
+      confirm: [false],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    const binding = await readProjectBinding(projectDir);
+    expect(binding?.binding.enabled).toBe(true); // unchanged
+    expect(awaitReconcileCalls).toBe(0);
+  });
+
+  it("Project → 绑定 Bot → Unbind → confirms and removes binding", async () => {
+    const bot = makeBot({ name: "unbind-bot", token: "t-u" });
+    await addBot(bot);
+    await writeProjectBinding(projectDir, { botId: bot.id, enabled: true });
+    const { ui, notifyCalls } = makeScriptedUi({
+      select: ["📁 Project", "绑定 Bot：unbind-bot", "Unbind", "⬅️ Back", "❌ Close"],
+      confirm: [true],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
     const binding = await readProjectBinding(projectDir);
     expect(binding).toBeUndefined();
     expect(notifyCalls.some((c) => c.message.includes("Removed Telegram project binding"))).toBe(true);

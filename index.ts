@@ -24,6 +24,7 @@ import { getCurrentTelegramTurn } from "./lib/turn-context.ts";
 
 import { registerAllCommands } from "./lib/commands/register.ts";
 import { registerTgMenuCommand } from "./lib/commands/tg-menu.ts";
+import type { TelegramConnectionState } from "./lib/commands/telegram-commands.ts";
 import { syncTelegramCommands, scheduleTelegramCommandRefresh, cancelTelegramCommandRefreshes } from "./lib/menu-commands.ts";
 import { installTuiBridge, tuiBridge, getTuiCommands } from "./lib/tui-bridge.ts";
 import type { ResolvedTelegramConfig, TelegramConfig, TelegramTurn } from "./lib/types.ts";
@@ -248,6 +249,8 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     syncTelegramCommands: () => syncTelegramCommands(config.botToken, pi),
     startStatusHeartbeat: () => heartbeat.startStatusHeartbeat(refreshStatus),
     clearStatusError: () => { lastStatusError = undefined; },
+    connectionState,
+    awaitReconcile,
   }, tgConfigDeps, {
     getCoordinator: () => coordinator,
     getCurrentChatId: () => config.activeChatId,
@@ -597,6 +600,12 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     const token = config.botToken;
     if (!token || !isTelegramEnabled()) {
       replayAbortController?.abort();
+      // Hand the active-instance role over right away so another pi instance
+      // serving the same Bot takes over on its next reconcile instead of
+      // waiting for our heartbeat to expire. Best-effort: never fail here.
+      await coordinator?.releaseActive().catch((error) => {
+        indexLog.warn("release Telegram active instance on disconnect failed", { error });
+      });
       coordinator = undefined;
       await polling.stop();
       refreshStatus();
@@ -684,6 +693,23 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
         refreshStatus(lastStatusError);
       });
   };
+
+  /** The runtime's real Telegram connection state - same signal the status
+   *  bar uses; the /tg Project menu renders this instead of config fields. */
+  function connectionState(): TelegramConnectionState {
+    if (!config.botToken || !isTelegramEnabled()) return "disconnected";
+    if (coordinator?.isActive() && polling.isActive()) return "connected";
+    const active = coordinator?.getActive();
+    if (active && active.instanceId !== coordinator?.instanceId) return "other-instance";
+    return "connecting";
+  }
+
+  /** Queue a reconcile and wait for it to settle: after an enable/disable the
+   *  Project menu re-renders immediately and must see the post-toggle state. */
+  function awaitReconcile(): Promise<void> {
+    requestCoordinatorReconcile();
+    return reconcileTail;
+  }
 
   coordinatorTimer = setInterval(requestCoordinatorReconcile, 2_000);
 

@@ -365,6 +365,27 @@ export class TelegramInstanceCoordinator {
         }
     }
 
+    /**
+     * Hand the active-instance role over when this instance disconnects
+     * Telegram (project disabled / token removed): if we are the recorded
+     * active, delete active.json and our own instance record under the state
+     * lock so another live instance's next reconcile elects it immediately
+     * instead of waiting for our heartbeat to go stale.
+     *
+     * A no-op when another instance is the recorded active — releasing then
+     * would steal the role from a healthy owner.
+     */
+    async releaseActive(): Promise<void> {
+        await this.withStateLock(async () => {
+            const active = await this.readJson<TelegramActiveInstance>(this.activePath);
+            if (!active || active.instanceId !== this.instanceId) return;
+            await rm(this.activePath, { force: true });
+            await rm(join(this.instancesDir, `${this.instanceId}.json`), { force: true });
+            this.cachedActive = undefined;
+            this.cachedActiveAt = 0;
+        });
+    }
+
     private listAliveInstancesSync(): TelegramInstanceMetadata[] {
         const names = readdirSafeSync(this.instancesDir);
         const instances: TelegramInstanceMetadata[] = [];

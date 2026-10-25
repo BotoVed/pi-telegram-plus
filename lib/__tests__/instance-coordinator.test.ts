@@ -266,6 +266,44 @@ describe("TelegramInstanceCoordinator", () => {
         });
     });
 
+    describe("releaseActive (disconnect handoff)", () => {
+        const activePath = () => join(rootDir, "tg-runtime", telegramTokenHash(TOKEN), "active.json");
+        const instancePath = (id: string) => join(rootDir, "tg-runtime", telegramTokenHash(TOKEN), "instances", `${id}.json`);
+
+        it("lets another instance take over without waiting for heartbeat expiry", async () => {
+            const first = create("instance-a");
+            const second = create("instance-b");
+            await first.reconcile(heartbeat("/workspace/a"));
+            await second.reconcile(heartbeat("/workspace/b"));
+            expect(first.isActive()).toBe(true);
+            expect(second.isActive()).toBe(false);
+
+            await first.releaseActive();
+
+            expect(first.isActive()).toBe(false);
+            await expect(readFile(activePath(), "utf8")).rejects.toThrow(/ENOENT/);
+            await expect(readFile(instancePath("instance-a"), "utf8")).rejects.toThrow(/ENOENT/);
+            // B takes over on its very next reconcile - no stale-heartbeat wait.
+            const snapshot = await second.reconcile(heartbeat("/workspace/b"));
+            expect(snapshot.active.instanceId).toBe("instance-b");
+            expect(second.isActive()).toBe(true);
+        });
+
+        it("does not touch the active record or heartbeats when this instance is not active", async () => {
+            const first = create("instance-a");
+            const second = create("instance-b");
+            await first.reconcile(heartbeat("/workspace/a"));
+            await second.reconcile(heartbeat("/workspace/b"));
+
+            await second.releaseActive();
+
+            const active = JSON.parse(await readFile(activePath(), "utf8"));
+            expect(active.instanceId).toBe("instance-a");
+            expect(await readFile(instancePath("instance-b"), "utf8")).toContain("instance-b");
+            expect(second.isActive()).toBe(false);
+        });
+    });
+
     describe("failoverHasOtherLiveInstances", () => {
         const activeOf = (instanceId: string, generation: number): TelegramActiveInstance => ({
             instanceId, generation, updatedAt: STARTED_AT, reason: "failover",

@@ -81,6 +81,8 @@ describe("Telegram management flows (bot registry + project binding)", () => {
       syncTelegramCommands: async () => undefined,
       startStatusHeartbeat: () => undefined,
       clearStatusError: () => undefined,
+      connectionState: () => "disconnected" as const,
+      awaitReconcile: async () => undefined,
     };
   });
 

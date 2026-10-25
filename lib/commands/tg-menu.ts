@@ -4,7 +4,7 @@ import { basename } from "node:path";
 import { readBotRegistry, readProjectBinding } from "../config.ts";
 import type { TelegramInstanceMetadata } from "../instance-coordinator.ts";
 import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
-import type { MenuUi, TelegramCommandDeps } from "./telegram-commands.ts";
+import type { MenuUi, TelegramCommandDeps, TelegramConnectionState } from "./telegram-commands.ts";
 import type { TgConfigDeps, SessionDeps } from "./register.ts";
 import type { BotRecord, BotRegistry } from "../types.ts";
 import { configToolFlow, configThinkingFlow, configRetryFlow, configBashFlow } from "./tg-config.ts";
@@ -261,24 +261,38 @@ async function botDetailMenu(
   }
 }
 
-// ── Project submenu (two toggles: binding + enabled) ────────────────────────
+// ── Project submenu (binding + real connection state) ──────────────────────
+
+/** Second item: the actual runtime connection state (same source as the
+ *  status bar), offered as the matching action. */
+function connectionChoice(state: TelegramConnectionState): string {
+  if (state === "connected") return "🟢 已连接 → 断开";
+  if (state === "connecting") return "🔄 连接中 → 断开";
+  if (state === "other-instance") return "🟡 其他实例使用中";
+  return "⚪ 已断开 → 连接";
+}
 
 async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): Promise<boolean> {
   while (true) {
     const [registry, project] = await Promise.all([readBotRegistry(), readProjectBinding(cwd)]);
     const boundBotId = project?.binding.botId;
+    // 绑定里没有 botId = 跟随全局默认 Bot（`{ enabled: false }` 断开记录
+    // 也算跟随默认，不是"已绑定"）。
+    const followsDefault = !boundBotId;
     const effectiveBotId = boundBotId ?? registry.defaultBotId;
     const effectiveBot = effectiveBotId ? registry.bots.find((b) => b.id === effectiveBotId) : undefined;
-    const hasBinding = !!project;
-    const enabled = project?.binding.enabled !== false; // binding is the source of truth (config may lag a persist cycle)
 
     const botLabel = effectiveBot
-      ? `Bot: ${effectiveBot.name}${!hasBinding ? " (default)" : ""}`
-      : "Bot: (none)";
+      ? `绑定 Bot：${effectiveBot.name}${followsDefault ? "（全局默认）" : ""}`
+      : "绑定 Bot：未设置";
+
+    const connection = deps.connectionState();
+    const connectLabel = connectionChoice(connection);
 
     const choice = await pick(ui, "📁 Project", [
       botLabel,
-      `Enabled: ${enabled ? "● on" : "○ off"}`,
+      // 没有可用 Bot 时谈不上连接，隐藏这一项。
+      ...(effectiveBot ? [connectLabel] : []),
       BACK_LABEL,
     ]);
     if (!choice || choice === BACK_LABEL) return true; // back to main
@@ -289,7 +303,8 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
         continue;
       }
       const choices = registry.bots.map((b) => formatBotLabel(b, registry));
-      const selected = await pick(ui, "Bind project to bot", [...choices, ...(hasBinding ? [UNBIND_LABEL] : []), BACK_LABEL]);
+      // 解绑只对"绑定里有 botId"的项目有意义。
+      const selected = await pick(ui, "Bind project to bot", [...choices, ...(boundBotId ? [UNBIND_LABEL] : []), BACK_LABEL]);
       if (!selected || selected === BACK_LABEL) continue;
       if (selected === UNBIND_LABEL) {
         await unbindProjectFlow(ui, deps, cwd);
@@ -297,18 +312,21 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
         const bot = registry.bots[choices.indexOf(selected)];
         if (bot) await bindProjectFlow(ui, deps, cwd, bot.id);
       }
-    } else if (choice.startsWith("Enabled:")) {
-      if (enabled) {
+    } else if (choice === connectLabel) {
+      if (connection === "other-instance") {
+        ui.notify("同一个 Bot 正由另一个 pi 实例服务", "info");
+      } else if (connection === "disconnected") {
+        // flow awaits reconcile, so the next render shows the new state.
+        await enableProjectFlow(ui, deps, cwd);
+      } else {
         const ok = await ui.confirm(
-          "Disable bot for this project?",
-          "Disabling will disconnect the bot — the /tg menu will close and you can't re-enable it from Telegram. Re-enable via /tg → Project → Enabled after restarting pi. Continue?",
+          "断开当前目录的 Telegram？",
+          "断开后 Telegram 将不再响应，只能在终端用 /tg 重新连接。",
         );
         if (ok) await disableProjectFlow(ui, deps, cwd);
-      } else {
-        await enableProjectFlow(ui, deps, cwd);
       }
     }
-    // loop re-renders Project (reflects new binding / enabled state)
+    // loop re-renders Project (binding + live connection state)
   }
 }
 
