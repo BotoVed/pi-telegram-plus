@@ -101,7 +101,7 @@
 
 | # | 任务 | 依赖 | 状态 | 提交 |
 |---|---|---|---|---|
-| P1 | pi 内置列表选择器：`/model`、`/scoped-models`、`/login`/`/logout` 提供方、`/trust`、`/fork`/`/clone` 消息列表（按构造器名读字段） | 3C | ☐ | |
+| P1 | pi 内置列表选择器：`/model`、`/scoped-models`、`/login`/`/logout` 提供方、`/trust`、`/fork`/`/clone` 消息列表（按构造器名读字段） | 3C | ☑ | `4eef2dd` |
 | P2 | pi `/settings`（`SettingsList`：当前值、切换、子菜单） | P1 | ☐ | |
 | P3 | pi `/resume`（`SessionSelectorComponent`） | P1 | ☐ | |
 | P4 | pi `/tree`（`TreeSelectorComponent`） | P1 | ☐ | |
