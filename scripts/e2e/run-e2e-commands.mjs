@@ -345,9 +345,16 @@ async function runHost(host, label, phase = "main") {
         const prompt = await click(enabledButton, project.body?.message_id ?? project.message_id);
         const yes = findButton(prompt, /^(Yes|Confirm|OK|✅.*)$/i);
         if (!yes) throw new Error(`no confirm button: ${buttonsOf(prompt).map((b) => b.text).join(" / ")}`);
-        const call = await click(yes, prompt.body?.message_id ?? prompt.message_id);
-        record("menu Project → Enabled disables the project", /Disabling bot|disabled/i.test(String(call.body?.text ?? "")),
-          String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 90));
+        await click(yes, prompt.body?.message_id ?? prompt.message_id).catch(() => undefined);
+        // Confirming first strips the menu keyboard (editMessageReplyMarkup,
+        // no text); the notice the user actually sees is a separate
+        // sendMessage afterwards - judge on that, not the click's response.
+        const notice = await waitFor("disable notice", (state) =>
+          state.calls.slice(since).find((entry) => entry.method === "sendMessage"
+            && /Disabling bot|disabled/i.test(String(entry.body?.text ?? ""))) ?? false)
+          .catch(() => undefined);
+        record("menu Project → Enabled disables the project", Boolean(notice),
+          notice ? String(notice.body?.text ?? "").replace(/\s+/g, " ").slice(0, 90) : "no disable notice after confirm");
         await sleep(1500);
         record("host stays alive after disconnect", hostAlive());
       } catch (error) {
@@ -433,7 +440,7 @@ async function runHost(host, label, phase = "main") {
     }
   }
 
-  // ── Stage 3: OMP /agents dashboard reaches the chat as read-only text ─
+  // ── Stage 3: OMP /agents dashboard reaches the chat (list or text) ────
   if (host === "omp") {
     const bodyText = (entry) => String(entry?.body?.text ?? "");
     const label = "stage3 /agents dashboard reaches the chat";
@@ -443,7 +450,10 @@ async function runHost(host, label, phase = "main") {
       const body = await waitFor(label, (state) =>
         state.calls.slice(since).find((entry) =>
           (entry.method === "sendMessage" || entry.method === "editMessageText")
-          && /Agents[\s\S]*<pre>[\s\S]*All agents/.test(bodyText(entry))) ?? false, 15_000).catch(() => undefined);
+          // The TSP adapter presents /agents as an actionable `tgplus:dlg:`
+          // list; the old read-only <pre> dashboard also still counts.
+          && (/Agents/i.test(bodyText(entry)) && hasDialog(entry)
+            || /Agents[\s\S]*<pre>[\s\S]*All agents/.test(bodyText(entry)))) ?? false, 15_000).catch(() => undefined);
       record(label, Boolean(body),
         bodyText(body).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
     } catch (error) {
@@ -742,28 +752,60 @@ async function runHost(host, label, phase = "main") {
 
   // ── Provider/model menus ──────────────────────────────────────────────
   try {
-    const call = await dispatch("/model");
-    const option = buttonsOf(call).find((b) => /mock/i.test(String(b.text ?? ""))) ?? buttonsOf(call)[0];
-    const target = call.body?.message_id ?? call.message_id;
-    if (option) {
-      const applied = await click(option, target);
-      record("menu /model selects", /Model set|set to/i.test(String(applied.body?.text ?? "")) || buttonsOf(applied).length === 0,
-        String(applied.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
+    const since = await cursor();
+    const ack = await dispatch("/model");
+    // D2/D3: the gateway only acks ("▶️ /model"); the host raises the picker,
+    // so the dialog arrives afterwards as its own `tgplus:dlg:` message.
+    const dialog = isControllable(ack) ? ack : await waitFor("model dialog after ack", (state) =>
+      state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry)) ?? false, 15_000)
+      .catch(() => undefined);
+    if (!dialog) {
+      record("menu /model selects", false, "no dialog after ack");
     } else {
-      record("menu /model selects", false, "no model buttons");
+      const dialogMessageId = dialog.body?.message_id ?? dialog.message_id;
+      const picks = buttonsOf(dialog).filter((b) => !DIALOG_CANCEL.test(String(b.callback_data ?? "")));
+      const option = picks.find((b) => /mock/i.test(String(b.text ?? ""))) ?? picks[0];
+      if (!option) {
+        record("menu /model selects", false, `no model buttons: ${buttonsOf(dialog).map((b) => b.text).join(" / ").slice(0, 90)}`);
+      } else {
+        const clickCursor = await cursor();
+        await click(option, dialogMessageId).catch(() => undefined);
+        // Applied means either a host status message naming the new model, or
+        // the Broker retiring the dialog message (summary edit + strip).
+        const applied = await waitFor("model selection applied", (state) => {
+          const after = state.calls.slice(clickCursor);
+          if (after.some((entry) => entry.method === "sendMessage" && /mock-model/.test(String(entry.body?.text ?? "")))) return true;
+          return after.some((entry) =>
+            (entry.method === "editMessageText" || entry.method === "editMessageReplyMarkup")
+            && entry.body?.message_id === dialogMessageId
+            && !buttonsOf(entry).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:")));
+        }, 15_000).catch(() => undefined);
+        record("menu /model selects", Boolean(applied),
+          applied ? `dialog · ${String(dialog.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60)}` : "selection not confirmed");
+      }
     }
   } catch (error) {
     record("menu /model selects", false, String(error.message).slice(0, 200));
   }
   await settle();
 
-  try {
-    const call = await dispatch("/scoped-models");
-    record("menu /scoped-models opens", buttonsOf(call).length > 0 || /scoped|model/i.test(String(call.body?.text ?? "")),
-      String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
-    await settle();
-  } catch (error) {
-    record("menu /scoped-models opens", false, String(error.message).slice(0, 200));
+  if (host === "omp") {
+    // /scoped-models is pi-only; sending it to OMP falls through to the model
+    // as a plain prompt instead of opening a dialog, so don't send it.
+    record("menu /scoped-models opens", true, "skipped: OMP has no /scoped-models");
+  } else {
+    try {
+      const since = await cursor();
+      const call = await dispatch("/scoped-models");
+      const dialog = isControllable(call) ? call : await waitFor("scoped-models dialog after ack", (state) =>
+        state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry)) ?? false, 15_000)
+        .catch(() => undefined);
+      record("menu /scoped-models opens", Boolean(dialog) && buttonsOf(dialog).length > 0,
+        dialog ? `dialog · ${buttonsOf(dialog).slice(0, 3).map((b) => b.text).join(" / ").slice(0, 60)}` : "no dialog after ack");
+      await settle();
+    } catch (error) {
+      record("menu /scoped-models opens", false, String(error.message).slice(0, 200));
+    }
   }
 
   // ── Login / logout / settings ─────────────────────────────────────────

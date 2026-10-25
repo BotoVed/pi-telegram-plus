@@ -207,7 +207,10 @@ async function auditCommand(host, command, outFile) {
       if (nowCount !== lastCount) { lastCount = nowCount; stableSince = Date.now(); continue; }
       if (Date.now() - stableSince >= 2500) break;
     }
-    const tapIndex = Number(process.env.PITG_PARITY_TAP ?? "");
+    // Only tap when the variable is a real non-empty value: Number("") is 0,
+    // which used to auto-tap the first option on every audit run.
+    const tapRaw = String(process.env.PITG_PARITY_TAP ?? "").trim();
+    const tapIndex = tapRaw === "" ? NaN : Number(tapRaw);
     if (Number.isInteger(tapIndex) && tapIndex >= 0) {
       const stateBefore = await controlGet();
       const kb = stateBefore.calls.slice(cursor).filter((entry) => Array.isArray(rowsOf(entry))).at(-1);

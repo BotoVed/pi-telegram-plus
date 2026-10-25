@@ -7,13 +7,6 @@
       "step": "menu /settings opens",
       "task": "3A-3",
       "reason": "OMP 的 settings 面板还没有 broker 适配器，D4 明确告知前 Telegram 上没有键盘"
-    },
-    {
-      "suite": "commands",
-      "host": "omp",
-      "step": "menu /login opens",
-      "task": "3A-3",
-      "reason": "OMP 的登录对话框还没有 broker 适配器，D4 明确告知前 Telegram 上没有键盘"
     }
   ]
 }

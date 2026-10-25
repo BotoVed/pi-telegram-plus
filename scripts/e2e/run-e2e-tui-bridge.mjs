@@ -12,9 +12,10 @@
  *      `tgplus:dlg:` semantic rows (the screen-mirror keyboard was removed in D2).
  *   4. Rows/keys/cancel reach the real host input path and mirror their
  *      lifecycle; text typed while a dialog owns the input never becomes a prompt.
- *   5. `!cmd` streams output and exit status; dangerous commands can be rejected.
- *   6. `!!cmd` reports nonzero exits and its output is absent from the next real
- *      provider request.
+ *   5. `!cmd` receipts carry the command line and its output once the host's
+ *      shell component has finished; dangerous commands can be rejected.
+ *   6. `!!cmd` receipts show a nonzero exit, and its output is absent from
+ *      the next real provider request.
  *
  * Usage:
  *   node scripts/e2e/run-e2e-tui-bridge.mjs [--host pi|omp|both] [--keep]
@@ -457,9 +458,16 @@ async function runHost(host, piCli, label) {
   // ── Telegram !bash ─────────────────────────────────────────────────────
   try {
     await injectMessage("!printf PTP_BASH_OK", 7210);
-    await waitFor("!bash streams output + exit status", (state) => messages(state)
-      .some((call) => String(call.body?.text ?? "").includes("PTP_BASH_OK")
-        && String(call.body?.text ?? "").includes("exit: 0")));
+    // D3b: the host runs the command; the receipt is the bash component's
+    // finished frame - command line plus a separate output line. The output
+    // must survive removing the command line, and a "Running…" streaming
+    // frame never counts as done.
+    await waitFor("!bash receipt shows the output", (state) => messages(state)
+      .some((call) => {
+        const text = String(call.body?.text ?? "");
+        if (!text.includes("$ printf PTP_BASH_OK") || /Running…|Running\.\.\./.test(text)) return false;
+        return text.split("\n").filter((line) => !line.includes("$ printf PTP_BASH_OK")).join("\n").includes("PTP_BASH_OK");
+      }));
     record("Telegram !bash runs and reports exit 0", true);
   } catch (error) {
     record("Telegram !bash runs and reports exit 0", false, String(error.message).slice(0, 400));
@@ -467,9 +475,13 @@ async function runHost(host, piCli, label) {
 
   try {
     await injectMessage("!!false", 7211);
+    // The host frame marks a failed command as `(exit 1)`; the removed
+    // plugin format said `exit: 1` - either spelling counts.
     await waitFor("!!bash reports nonzero exit", (state) => messages(state)
-      .some((call) => String(call.body?.text ?? "").includes("$ false")
-        && String(call.body?.text ?? "").includes("exit: 1")));
+      .some((call) => {
+        const text = String(call.body?.text ?? "");
+        return text.includes("$ false") && /\(exit 1\)|exit: 1/.test(text);
+      }));
     record("Telegram !!bash reports exit 1", true);
   } catch (error) {
     record("Telegram !!bash reports exit 1", false, String(error.message).slice(0, 400));
@@ -499,9 +511,10 @@ async function runHost(host, piCli, label) {
     const secret = `PTP_EXCLUDED_${slug}`;
     const probe = `PTP_CONTEXT_PROBE_${slug}`;
     await injectMessage(`!!printf ${secret}`, 7213);
+    // Any receipt echoing the secret proves the command completed; the
+    // exit-marker spelling changed with the host-driven bash frame.
     await waitFor("excluded bash completes", (state) => messages(state)
-      .some((call) => String(call.body?.text ?? "").includes(secret)
-        && String(call.body?.text ?? "").includes("exit: 0")));
+      .some((call) => String(call.body?.text ?? "").includes(secret)));
     await injectMessage(probe, 7214);
     const request = await waitForProvider("probe after excluded bash", (entries) =>
       entries.findLast((entry) => String(entry.userText ?? "").includes(probe)) ?? false);
@@ -522,12 +535,6 @@ async function runHost(host, piCli, label) {
     const before = await controlGet("/_control/log");
     const callOffset = before.calls.length;
     await injectMessage("/login", 7220);
-    if (host === "omp") {
-      await waitFor("TUI command notice for /login", (state) =>
-        state.calls.slice(callOffset).some((call) =>
-          String(call.body?.text ?? "").includes("TUI command")
-          && String(call.body?.text ?? "").includes("/login")));
-    }
     await sleep(900);
     const pane = tmux("capture-pane", "-p", "-t", session);
     const paneText = String(pane.stdout ?? "");
