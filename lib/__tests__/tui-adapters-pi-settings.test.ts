@@ -226,3 +226,87 @@ describe("act: cancel and unmapped actions", () => {
     expect(piSettingsAdapter.act(list, { type: "submit" }, ctx)).toBe(false);
   });
 });
+
+/** The same dialog with pi 1.4.0's `/settings` search box enabled. */
+function searchHarness() {
+  const changes: Change[] = [];
+  const items: Item[] = [
+    { id: "theme", label: "Theme", currentValue: "dark", values: ["dark", "light"] },
+    { id: "notifications", label: "Notifications", currentValue: "off", values: ["on", "off"] },
+    {
+      id: "tools",
+      label: "Tool visibility",
+      currentValue: "visible",
+      submenu: (current, done) => {
+        const list = new SelectList(
+          [
+            { value: "visible", label: "Visible" },
+            { value: "hidden", label: "Hidden" },
+          ],
+          5,
+          theme,
+        );
+        list.onSelect = (picked: { value: string }) => done(picked.value);
+        list.onCancel = () => done();
+        list.setFilter("");
+        void current;
+        return list;
+      },
+    },
+  ];
+  const list = new SettingsList(items as never, 10, theme, (id: string, value: string) => changes.push({ id, value }), () => {}, { enableSearch: true });
+  const ctx: AdapterContext = { host: "pi", sendKey: (name) => sendKeyTo(list, name), requestRender: () => {} };
+  return { list, ctx, changes };
+}
+
+describe("search", () => {
+  it("exposes the search box and its current query on the main list", () => {
+    const { list, ctx } = searchHarness();
+    expect(expectSettings(piSettingsAdapter.read(list, ctx)).search).toEqual({ query: "" });
+    expect(piSettingsAdapter.act(list, { type: "search", query: "the" }, ctx)).toBe(true);
+    expect(expectSettings(piSettingsAdapter.read(list, ctx)).search).toEqual({ query: "the" });
+  });
+
+  it("act search filters the list down to the matching rows", () => {
+    const { list, ctx } = searchHarness();
+    expect(piSettingsAdapter.act(list, { type: "search", query: "theme" }, ctx)).toBe(true);
+    const model = expectSettings(piSettingsAdapter.read(list, ctx));
+    expect(model.items.map((item) => item.label)).toEqual(["Theme"]);
+    expect(model.items[0]?.focused).toBe(true);
+  });
+
+  it("strips a leading space instead of activating the row", () => {
+    // While the filter is empty SettingsList treats space as Enter, so an
+    // untrimmed leading space would cycle Theme's value right here.
+    const { list, ctx, changes } = searchHarness();
+    expect(piSettingsAdapter.act(list, { type: "search", query: " theme" }, ctx)).toBe(true);
+    expect(changes).toEqual([]);
+    const model = expectSettings(piSettingsAdapter.read(list, ctx));
+    expect(model.search).toEqual({ query: "theme" });
+    expect(model.items.map((item) => item.label)).toEqual(["Theme"]);
+  });
+
+  it("an empty query clears the filter", () => {
+    const { list, ctx } = searchHarness();
+    expect(piSettingsAdapter.act(list, { type: "search", query: "theme" }, ctx)).toBe(true);
+    expect(piSettingsAdapter.act(list, { type: "search", query: "" }, ctx)).toBe(true);
+    const model = expectSettings(piSettingsAdapter.read(list, ctx));
+    expect(model.search).toEqual({ query: "" });
+    expect(model.items.map((item) => item.label)).toEqual(["Theme", "Notifications", "Tool visibility"]);
+  });
+
+  it("a submenu owns the keys: no search field, search refused", () => {
+    const { list, ctx } = searchHarness();
+    expect(piSettingsAdapter.act(list, { type: "submenu", key: "2:Tool visibility" }, ctx)).toBe(true);
+    const model = expectSettings(piSettingsAdapter.read(list, ctx));
+    expect(model.submenu).toBeDefined();
+    expect(model.search).toBeUndefined();
+    expect(piSettingsAdapter.act(list, { type: "search", query: "vis" }, ctx)).toBe(false);
+  });
+
+  it("no search field when the host did not enable search", () => {
+    const { list, ctx } = settingsHarness();
+    expect(expectSettings(piSettingsAdapter.read(list, ctx)).search).toBeUndefined();
+    expect(piSettingsAdapter.act(list, { type: "search", query: "theme" }, ctx)).toBe(false);
+  });
+});

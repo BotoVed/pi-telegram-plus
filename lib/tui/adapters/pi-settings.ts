@@ -9,8 +9,12 @@
  * terminal user. While a submenu is open, `SettingsList.handleInput`
  * forwards every key to it, so the same `sendKey` drives both levels and the
  * component keeps ownership of its own values.
+ *
+ * Search text is keystrokes too: unclaimed keys belong to the component's
+ * own `searchInput`, so a `search` action types into it the same way.
  */
 import { findShape, isSelectList } from "../find-shape.ts";
+import { setInputValue } from "../keys.ts";
 import type { DialogAdapter, DialogModel } from "../model.ts";
 import { constructorName, labelOf, moveCursor, resolveRowKey, rowKey, selectRow } from "./utils.ts";
 
@@ -51,6 +55,14 @@ function submenuRows(list: HostRecord): SettingRow[] {
     const label = labelOf(raw);
     return { key: rowKey(index, label), label, raw };
   });
+}
+
+/** The current search term; "" when the component has no readable input. */
+function searchQuery(component: HostRecord): string {
+  const input = component.searchInput;
+  if (!input || typeof input !== "object") return "";
+  const getValue = (input as HostRecord).getValue;
+  return typeof getValue === "function" ? text((getValue as () => unknown).call(input)) : "";
 }
 
 /** The open submenu as a nested model, or undefined while none is open. */
@@ -112,7 +124,12 @@ export const piSettingsAdapter: DialogAdapter = {
       };
     });
     const submenu = readSubmenu(record, rows);
-    return { kind: "settings", title: "Settings", items, ...(submenu ? { submenu } : {}) };
+    // Search belongs to the main list only: while a submenu is open every
+    // keystroke (typed or sent) belongs to the submenu.
+    const search = submenu === undefined && record.searchEnabled === true
+      ? { query: searchQuery(record) }
+      : undefined;
+    return { kind: "settings", title: "Settings", items, ...(search ? { search } : {}), ...(submenu ? { submenu } : {}) };
   },
 
   act(component, action, ctx) {
@@ -131,6 +148,15 @@ export const piSettingsAdapter: DialogAdapter = {
       const target = resolveRowKey(rows.map((row) => row.label), action.key);
       if (target === undefined) return false;
       return selectRow(ctx.sendKey, readNumber(list.selectedIndex), target);
+    }
+
+    if (action.type === "search") {
+      // Without the search box there is nothing to type into; a `search`
+      // action on such a host must fail, not swallow keys.
+      if (record.searchEnabled !== true) return false;
+      // A leading space would activate the row while the filter is empty
+      // (`SettingsList` treats space as Enter then), so drop leading blanks.
+      return setInputValue(record, action.query.replace(/^\s+/, ""));
     }
 
     const rows = mainRows(record);
