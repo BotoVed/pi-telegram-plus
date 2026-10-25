@@ -5,15 +5,25 @@
  * → its key, unkeyed child → its index, component boundary → restart at "")
  * and the props-to-model mapping, since both are the adapter's whole contract
  * with the host.
+ * The prefs tests pin the settings-page mapping and the §4.12 race hand-off.
  */
 import { describe, expect, it } from "vitest";
-import { findPicker, tspPickerAdapter } from "../tui/adapters/tsp.ts";
+import { findPicker, tspPickerAdapter, tspPrefsAdapter } from "../tui/adapters/tsp.ts";
 import type { AdapterContext, DialogModel } from "../tui/model.ts";
 
 type Node = { k: string; p?: unknown; c?: unknown[]; key?: string };
 
 function ctxFor(host: "pi" | "omp" = "omp"): AdapterContext {
   return { host, sendKey: () => true, requestRender: () => undefined };
+}
+
+function racedCtx(host: "pi" | "omp" = "omp"): AdapterContext {
+  return {
+    host,
+    entry: { kind: "select", source: host, race: { answer: () => true, settled: false } },
+    sendKey: () => true,
+    requestRender: () => undefined,
+  };
 }
 
 function makeComponent(tree: unknown, opts: { throws?: boolean } = {}) {
@@ -40,7 +50,41 @@ const pickerProps = {
   current: ["a"],
 };
 
+const prefsProps = {
+  title: "Settings",
+  pages: [
+    { id: "general", label: "通用" },
+    { id: "models", label: "模型" },
+    { id: "keys", label: "按键", disabled: "需要终端" },
+  ],
+  page: "models",
+  sections: [
+    {
+      id: "s1",
+      title: "推理",
+      rows: [
+        { id: "think", label: "思考", control: { k: "switch", on: true } },
+        { id: "off", label: "关闭项", disabled: "锁定", control: { k: "switch", on: false } },
+      ],
+    },
+    {
+      id: "s2",
+      title: "外观",
+      rows: [
+        {
+          id: "theme",
+          label: "主题",
+          control: { k: "choice", value: "dark", options: [{ value: "dark", label: "深色" }, { value: "light", label: "浅色" }] },
+        },
+        { id: "width", label: "宽度", control: { k: "number", value: 80 } },
+      ],
+    },
+  ],
+};
+
 const asSelect = (model: DialogModel) => (model.kind === "select" ? model : expect.fail(`not a select: ${model.kind}`));
+
+const asSettings = (model: DialogModel) => (model.kind === "settings" ? model : expect.fail(`not settings: ${model.kind}`));
 
 describe("tsp picker keypath", () => {
   it("uses the empty keypath when the component's root node is the picker", () => {
@@ -162,5 +206,109 @@ describe("tsp picker act", () => {
       throw new Error("not interactive");
     };
     expect(tspPickerAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(false);
+  });
+});
+
+describe("tsp race hand-off (§4.12)", () => {
+  it("declines a picker while the extension dialog race is live", () => {
+    const component = makeComponent({ k: "picker", p: pickerProps });
+    expect(tspPickerAdapter.detect(component, racedCtx())).toBe(false);
+  });
+
+  it("declines a prefs page while the race is live", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.detect(component, racedCtx())).toBe(false);
+  });
+
+  it("still detects when the entry carries no race", () => {
+    const ctx: AdapterContext = {
+      ...ctxFor(),
+      entry: { kind: "select", source: "omp" },
+    };
+    expect(tspPrefsAdapter.detect(makeComponent({ k: "prefs", p: prefsProps }), ctx)).toBe(true);
+  });
+});
+
+describe("tsp prefs read", () => {
+  it("maps pages, switches, choices and read-only controls onto the settings model", () => {
+    const component = makeComponent({ k: "frame", c: [{ key: "prefs", k: "prefs", p: prefsProps }] });
+    expect(tspPrefsAdapter.detect(component, ctxFor())).toBe(true);
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.title).toBe("Settings");
+    // The current page and every disabled page/row is left out.
+    expect(model.items).toEqual([
+      { key: "page:general", label: "📄 通用", hasSubmenu: true },
+      { key: "think", label: "思考", value: "开", values: ["开", "关"] },
+      { key: "theme", label: "主题", value: "深色", values: ["深色", "浅色"] },
+      { key: "width", label: "宽度", value: "（请在终端修改）" },
+    ]);
+  });
+});
+
+describe("tsp prefs act", () => {
+  it("answers a page submenu with a page action on the prefs keypath", () => {
+    const component = makeComponent({ k: "frame", c: [{ key: "body", k: "prefs", p: prefsProps }] });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "page:general" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "body", act: "page", value: "general", mods: [] }]);
+  });
+
+  it("refuses a page that is gone or disabled", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "page:keys" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "page:nope" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([]);
+  });
+
+  it("answers a switch cycle with the requested boolean change", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "开" }, ctxFor())).toBe(true);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "关" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([
+      { type: "change", key: "", item: "think", value: true },
+      { type: "change", key: "", item: "think", value: false },
+    ]);
+  });
+
+  it("flips a switch when no value is given", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "think", value: false }]);
+  });
+
+  it("maps a choice label back onto its option value", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "浅色" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "theme", value: "light" }]);
+  });
+
+  it("cycles to the next option when no value is given", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "theme", value: "light" }]);
+  });
+
+  it("answers cancel with a close action that carries no value", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "close", mods: [] }]);
+  });
+
+  it("refuses rows the page does not have and values it cannot map", () => {
+    const component = makeComponent({ k: "prefs", p: prefsProps });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "gone" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "width" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "也许" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "紫色" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "x" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([]);
+  });
+
+  it("re-reads the tree on every action instead of trusting a stale one", () => {
+    let tree: unknown = { k: "prefs", p: prefsProps };
+    const component = makeComponent(null);
+    component.describe = () => tree;
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "关" }, ctxFor())).toBe(true);
+    tree = { k: "text" };
+    expect(tspPrefsAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(false);
   });
 });
