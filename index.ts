@@ -18,6 +18,7 @@ import { formatTelegramStatusLine, clearTelegramStatus, TELEGRAM_STATUS_KEY } fr
 import { installTelegramStatusAlignment } from "./lib/status-footer.ts";
 import { createTelegramPollingRuntime } from "./lib/polling.ts";
 import { PollingNoticeGate, classifyPollingError } from "./lib/polling-notice.ts";
+import { deliverPendingNotices } from "./lib/pending-notices.ts";
 import { initLogger, log, type LogLevel } from "./lib/logger.ts";
 import { authorizeTelegramUser, ensureTelegramPairingCode, formatPairingInstructions } from "./lib/pairing.ts";
 import { getCurrentTelegramTurn } from "./lib/turn-context.ts";
@@ -689,6 +690,11 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     }
 
     if (!polling.isActive()) polling.start();
+    // Deliver notices a superseded runtime queued (/new and /reload results): its
+    // own transport drops them once the lease changes, so this active runtime
+    // sends them with its own transport. The take inside drains the queue, so a
+    // later reconcile never repeats a delivery.
+    deliverPendingNotices(transport);
     refreshStatus();
   };
 

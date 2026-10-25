@@ -9,6 +9,7 @@ import { escapeHtml } from "../html.ts";
 import { log } from "../logger.ts";
 import type { TelegramTransport } from "../types.ts";
 import { checkpointCurrentUpdateCursor } from "../polling.ts";
+import { queuePendingNotice } from "../pending-notices.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 import type { Origin, OriginTracker } from "./origin.ts";
 import type { OutputCapture } from "./output.ts";
@@ -206,7 +207,16 @@ export class CommandGateway {
         await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n<i>Cancelled</i>`).catch(() => undefined);
         return true;
       }
-      await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n✅ New session started`).catch(() => undefined);
+      // The session replacement swapped the extension runtime, so this runtime's
+      // transport drops any send it queues now: hand the result to the pending
+      // queue and let the replacement runtime edit this message.
+      queuePendingNotice({
+        chatId: request.origin.chatId,
+        messageThreadId: request.origin.messageThreadId,
+        editMessageId: messageId,
+        html: `${ackHtml}\n\n✅ New session started`,
+        createdAt: Date.now(),
+      });
       if (draft.length > 0 && this.deps.writeDraft) {
         const timer = setTimeout(() => { this.deps.writeDraft?.(draft); }, 150);
         timer.unref?.();

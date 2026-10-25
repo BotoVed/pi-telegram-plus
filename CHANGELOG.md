@@ -85,6 +85,8 @@ reimplementation and several settings, so read **Breaking changes** before upgra
   session starts.
 - **Commands that replace the session are not run twice.** The Telegram update cursor is saved before a
   command is handed to the host.
+- **`/new` and `/reload` report their result.** Both replace the plugin's runtime, which discards any
+  message the old one still had queued; the result now travels to the new runtime and is sent from there.
 - **OMP `/clear` and `/delete` report their result** instead of an empty reply.
 - **Telegram returns to the first page** when a dialog swaps in a different list (OMP model roles).
 - Several dialog, focus and output-capture fixes found by the end-to-end suites on both hosts.

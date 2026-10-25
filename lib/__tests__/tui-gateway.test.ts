@@ -4,6 +4,7 @@ import { OriginTracker, IDLE_MS } from "../tui/origin.ts";
 import { OutputCapture, renderComponent } from "../tui/output.ts";
 import { FocusTracker } from "../tui/focus.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
+import { takePendingNotices } from "../pending-notices.ts";
 
 const checkpointCursor = vi.hoisted(() => vi.fn(async () => false));
 vi.mock("../polling.ts", () => ({ checkpointCurrentUpdateCursor: checkpointCursor }));
@@ -562,5 +563,60 @@ describe("OutputCapture transcript-reset scopes", () => {
     await vi.advanceTimersByTimeAsync(20);
     expect(transport.edits.at(-1)?.text).toBe("<b>\u25b6\ufe0f /x</b>\n\n<i>\u2713 Done</i>");
     origin.end(scope, "idle");
+  });
+});
+
+describe("command gateway /new across a runtime replacement", () => {
+  function newSessionGateway(newSession: NonNullable<GatewayDeps["newSession"]>) {
+    const transport = fakeTransport();
+    const origin = new OriginTracker({ isEditorFocused: () => true, readDraft: () => "", writeDraft: () => true });
+    const deps: Omit<GatewayDeps, "isEnabled"> = {
+      bridge: fakeBridge(Promise.resolve()),
+      origin,
+      output: new OutputCapture(transport, origin),
+      focus: new FocusTracker(),
+      hostName: () => "pi" as const,
+      hostState: () => ({ host: "pi", mode: {}, editor: {} }),
+      readDraft: () => "",
+      newSession,
+    };
+    return { transport, gateway: new CommandGateway({ ...deps, isEnabled: () => true }) };
+  }
+
+  it("hands the success result to the pending queue instead of editing the ack", async () => {
+    takePendingNotices();
+    const { transport, gateway } = newSessionGateway(async () => undefined);
+
+    expect(await gateway.run({ name: "new", args: "", origin: { chatId: 1 }, transport })).toBe(true);
+
+    // The ack is the only send this runtime makes; the result rides the queue,
+    // because by then the replacement runtime owns the send lease.
+    expect(transport.sends).toHaveLength(1);
+    expect(transport.edits).toEqual([]);
+    expect(takePendingNotices()).toEqual([expect.objectContaining({
+      chatId: 1,
+      editMessageId: 1,
+      html: "<b>▶️ /new</b>\n\n✅ New session started",
+    })]);
+  });
+
+  it("edits the ack itself when the user cancels", async () => {
+    takePendingNotices();
+    const { transport, gateway } = newSessionGateway(async () => ({ cancelled: true }));
+
+    await gateway.run({ name: "new", args: "", origin: { chatId: 1 }, transport });
+
+    expect(transport.edits.at(-1)?.text).toContain("Cancelled");
+    expect(takePendingNotices()).toEqual([]);
+  });
+
+  it("edits the ack itself when the host rejects the new session", async () => {
+    takePendingNotices();
+    const { transport, gateway } = newSessionGateway(async () => { throw new Error("host refused"); });
+
+    await gateway.run({ name: "new", args: "", origin: { chatId: 1 }, transport });
+
+    expect(transport.edits.at(-1)?.text).toContain("Could not start a new session");
+    expect(takePendingNotices()).toEqual([]);
   });
 });

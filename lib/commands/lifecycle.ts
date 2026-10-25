@@ -1,3 +1,5 @@
+import { getCurrentTelegramTurn } from "../turn-context.ts";
+import { queuePendingNotice } from "../pending-notices.ts";
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { CommandRegistry } from "./register.ts";
 import { checkpointCurrentUpdateCursor } from "../polling.ts";
@@ -16,6 +18,21 @@ export function registerLifecycleCommands(registry: CommandRegistry): void {
     handler: async (_args, ctx) => {
       const ui = ctx.ui;
       ui.notify("Reloading…", "info");
+      // ctx.reload() re-activates the plugin in-process, so this runtime is no
+      // longer the active one by the time the reload lands: its transport drops
+      // anything queued after the lease changes. Queue the completion notice for
+      // the replacement runtime instead. Only Telegram-originated reloads have a
+      // turn scope; a terminal /reload has nothing to notify.
+      const turn = getCurrentTelegramTurn();
+      if (turn) {
+        queuePendingNotice({
+          chatId: turn.chatId,
+          messageThreadId: turn.messageThreadId,
+          replyTo: turn.sourceMessageId,
+          html: "✅ Reloaded.",
+          createdAt: Date.now(),
+        });
+      }
       // /reload re-activates the plugin in-process; commit this update first so
       // the replacement runtime does not re-fetch and re-run the unconfirmed
       // /reload (which would call ctx.reload() again).
