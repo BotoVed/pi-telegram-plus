@@ -8,7 +8,7 @@ import { createTelegramController } from "../controller.ts";
 import type { CapturedAgentSession, TelegramTransport } from "../types.ts";
 import type { TuiBridgeAdapter } from "../tui-bridge.ts";
 
-// v6 (决定 48): the host bridge is the only path. These tests pin the two
+// v6 (decision 48): the host bridge is the only path. These tests pin the two
 // behaviors that replace the removed `tuiBridge` config item.
 
 describe("legacy tuiBridge key is ignored", () => {

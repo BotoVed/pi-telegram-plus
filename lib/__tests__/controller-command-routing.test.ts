@@ -228,7 +228,7 @@ describe("§4.5 rule 6: a command settles this chat's open dialog before the gat
 
     expect(abandon).toHaveBeenCalledWith(42, undefined);
     expect(run).toHaveBeenCalledWith(expect.objectContaining({ name: "settings" }));
-    expect(harness.calls.some((call) => call.text?.includes("对话框"))).toBe(false);
+    expect(harness.calls.some((call) => call.text?.includes("unanswered dialog"))).toBe(false);
     abandon.mockRestore();
     run.mockRestore();
   });

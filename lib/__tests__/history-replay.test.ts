@@ -124,7 +124,7 @@ describe("replayTelegramHistory", () => {
     });
 
     it("carries a Rich Message payload for replayed assistant tables", () => {
-        const table = "| 项目 | 状态 |\n| --- | --- |\n| dsh-im | 已安装 |";
+        const table = "| Project | Status |\n| --- | --- |\n| dsh-im | Installed |";
         const replay = buildTelegramHistoryReplay([
             { type: "message", message: { role: "assistant", content: [{ type: "text", text: table }] } },
         ], { tool: "hidden", thinking: "hidden" });
@@ -134,6 +134,6 @@ describe("replayTelegramHistory", () => {
         if (item.type !== "text") throw new Error("expected a text item");
         expect(item.richMarkdown).toBe(`**🤖 Assistant**\n\n${table}`);
         // The HTML rendering stays the fallback for the same item.
-        expect(item.html).toContain("项目");
+        expect(item.html).toContain("Project");
     });
 });

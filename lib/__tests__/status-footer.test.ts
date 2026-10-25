@@ -48,7 +48,8 @@ describe("rightAlignStatusText", () => {
   });
 
   it("counts wide characters as two terminal cells", () => {
-    expect(rightAlignStatusText("状态", 6)).toBe("  状态");
+    // CJK for "status", written as escapes: each character is two terminal cells.
+    expect(rightAlignStatusText("\u72b6\u6001", 6)).toBe("  \u72b6\u6001");
   });
 });
 

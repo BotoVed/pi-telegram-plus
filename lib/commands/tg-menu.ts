@@ -198,8 +198,8 @@ async function commandsMenu(ui: MenuUi, deps: CommandMenuDeps): Promise<void> {
 
 async function botsMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): Promise<boolean> {
   while (true) {
-    // Re-read each iteration so the "全局默认 Bot" line always shows the
-    // current default (or 未设置).
+    // Re-read each iteration so the "Default bot" line always shows the
+    // current default (or "not set").
     const registry = await readBotRegistry();
     const defaultBot = registry.bots.find((b) => b.id === registry.defaultBotId);
     const defaultChoice = `${BOTS_MENU_DEFAULT_PREFIX}${defaultBot?.name ?? "not set"}`;
@@ -226,7 +226,7 @@ async function defaultBotMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string
       ui.notify(`No bots registered. Use ${BOTS_MENU_ADD} first.`, "info");
       return;
     }
-    // The current default is ⭐-marked via formatBotLabel; 清除默认 only exists
+    // The current default is ⭐-marked via formatBotLabel; "Clear default" only exists
     // while a default actually is set.
     const choices = registry.bots.map((b) => formatBotLabel(b, registry));
     const selected = await pick(ui, "⭐ Default bot", [
@@ -280,7 +280,7 @@ async function botDetailMenu(
       ui.notify("Bot no longer exists.", "info");
       return; // removed elsewhere → back to bot list
     }
-    // The global default is set only in the ⭐ 全局默认 Bot submenu; this page
+    // The global default is set only in the ⭐ Default bot submenu; this page
     // holds the bot's own actions.
     const choice = await pick(ui, `🤖 ${botNow.name}`, [BOT_ACTION_UPDATE, BOT_ACTION_PAIRING, BOT_ACTION_REMOVE, BACK_LABEL]);
     if (!choice || choice === BACK_LABEL) return; // back to bot list
@@ -347,8 +347,8 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
   while (true) {
     const [registry, project] = await Promise.all([readBotRegistry(), readProjectBinding(cwd)]);
     const boundBotId = project?.binding.botId;
-    // 绑定里没有 botId = 跟随全局默认 Bot（`{ enabled: false }` 断开记录
-    // 也算跟随默认，不是"已绑定"）。
+    // A binding without botId = follows the global default bot (a `{ enabled: false }`
+    // disconnect record also counts as following the default, not "bound").
     const followsDefault = !boundBotId;
     const effectiveBotId = boundBotId ?? registry.defaultBotId;
     const effectiveBot = effectiveBotId ? registry.bots.find((b) => b.id === effectiveBotId) : undefined;
@@ -362,7 +362,7 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
 
     const choice = await pick(ui, "📁 Project", [
       botLabel,
-      // 没有可用 Bot 时谈不上连接，隐藏这一项。
+      // No usable bot means nothing to connect; hide this entry.
       ...(effectiveBot ? [connectLabel] : []),
       BACK_LABEL,
     ]);
@@ -374,7 +374,7 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
         continue;
       }
       const choices = registry.bots.map((b) => formatBotLabel(b, registry));
-      // 解绑只对"绑定里有 botId"的项目有意义。
+      // Unbind only makes sense for projects whose binding has a botId.
       const selected = await pick(ui, "Bind project to bot", [...choices, ...(boundBotId ? [UNBIND_LABEL] : []), BACK_LABEL]);
       if (!selected || selected === BACK_LABEL) continue;
       if (selected === UNBIND_LABEL) {

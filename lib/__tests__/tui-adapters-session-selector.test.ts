@@ -25,15 +25,15 @@ class SessionSelectorComponent {
     filteredSessions: [
       {
         session: {
-          path: "/s/a.jsonl", id: "a", cwd: "/repo", name: "重构任务",
-          created: MODIFIED, modified: MODIFIED, messageCount: 12, firstMessage: "被忽略的首条消息",
+          path: "/s/a.jsonl", id: "a", cwd: "/repo", name: "Refactor task",
+          created: MODIFIED, modified: MODIFIED, messageCount: 12, firstMessage: "Ignored first message",
         },
         depth: 0,
       },
       {
         session: {
           path: "/s/b.jsonl", id: "b", cwd: "/repo",
-          created: MODIFIED, modified: MODIFIED, messageCount: 3, firstMessage: "修复\n登录问题",
+          created: MODIFIED, modified: MODIFIED, messageCount: 3, firstMessage: "Fix\nlogin issue",
         },
         depth: 0,
       },
@@ -102,8 +102,8 @@ describe("read", () => {
     const model = expectSelect(piSessionAdapter.read(new SessionSelectorComponent(), ctx));
     expect(model.title).toBe("Resume session (this folder)");
     expect(model.items.map((item) => item.label)).toEqual([
-      "重构任务 · 12 msgs",
-      "修复 登录问题 · 3 msgs",
+      "Refactor task · 12 msgs",
+      "Fix login issue · 3 msgs",
       `${"x".repeat(50)}… · 100 msgs`,
     ]);
     expect(model.items.map((item) => item.description)).toEqual([
@@ -114,8 +114,8 @@ describe("read", () => {
     expect(model.items.map((item) => item.current)).toEqual([false, true, false]);
     expect(model.items.map((item) => item.focused)).toEqual([false, true, false]);
     expect(model.items.map((item) => item.key)).toEqual([
-      "0:重构任务 · 12 msgs",
-      "1:修复 登录问题 · 3 msgs",
+      "0:Refactor task · 12 msgs",
+      "1:Fix login issue · 3 msgs",
       `2:${"x".repeat(50)}… · 100 msgs`,
     ]);
     expect(model.total).toBe(3);
@@ -139,7 +139,7 @@ describe("act", () => {
     expect(piSessionAdapter.act(component, { type: "choose", key: "2:" + `${"x".repeat(50)}… · 100 msgs` }, ctx)).toBe(true);
     expect(sent).toEqual(["down", "enter"]);
     sent.length = 0;
-    expect(piSessionAdapter.act(component, { type: "choose", key: "0:重构任务 · 12 msgs" }, ctx)).toBe(true);
+    expect(piSessionAdapter.act(component, { type: "choose", key: "0:Refactor task · 12 msgs" }, ctx)).toBe(true);
     expect(sent).toEqual(["up", "enter"]);
   });
 
@@ -189,7 +189,7 @@ describe("contract: real pi 1.4.0 session selector", () => {
         firstMessage: "alpha first\nline", allMessagesText: "alpha first line",
       },
       {
-        path: BETA, id: "beta", cwd: TMP, name: "命名会话",
+        path: BETA, id: "beta", cwd: TMP, name: "Named session",
         created: MODIFIED, modified: MODIFIED, messageCount: 9,
         firstMessage: "beta", allMessagesText: "beta",
       },
@@ -218,7 +218,7 @@ describe("contract: real pi 1.4.0 session selector", () => {
     expect(piSessionAdapter.detect(selector, ctx)).toBe(true);
     const model = expectSelect(piSessionAdapter.read(selector, ctx));
     expect(model.title).toBe("Resume session (this folder)");
-    expect(model.items.map((item) => item.label)).toEqual(["alpha first line · 4 msgs", "命名会话 · 9 msgs"]);
+    expect(model.items.map((item) => item.label)).toEqual(["alpha first line · 4 msgs", "Named session · 9 msgs"]);
     expect(model.items[1].current).toBe(true);
     expect(model.items[0].focused).toBe(true);
     expect(model.extraActions).toEqual([{ label: "Show all", key: "tab" }]);

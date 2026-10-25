@@ -158,7 +158,7 @@ describe("Telegram renderer turn routing", () => {
   it("sends Markdown tables as a Rich Message and keeps the HTML fallback alongside", async () => {
     const { emit, sent } = createRendererHarness();
     const turn: TelegramTurn = { chatId: 111, messageThreadId: 10, queuedAttachments: [] };
-    const table = "| 项目 | 状态 |\n| --- | --- |\n| dsh-im | 已安装 |";
+    const table = "| Project | Status |\n| --- | --- |\n| dsh-im | Installed |";
 
     await runWithTelegramTurn(turn, () => emit("message_end", { message: { role: "assistant", content: table } }));
 
@@ -166,7 +166,7 @@ describe("Telegram renderer turn routing", () => {
     expect(sent[0].richMarkdown).toBe(table);
     // The HTML rendering of the same content still travels with the send so the
     // transport can fall back to Telegram's HTML mode when Rich is rejected.
-    expect(sent[0].text).toContain("项目");
+    expect(sent[0].text).toContain("Project");
     expect(sent[0].text).not.toContain("| --- |");
   });
 

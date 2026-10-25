@@ -61,30 +61,30 @@ const pickerProps = {
 const prefsProps = {
   title: "Settings",
   pages: [
-    { id: "general", label: "通用" },
-    { id: "models", label: "模型" },
-    { id: "keys", label: "按键", disabled: "需要终端" },
+    { id: "general", label: "General" },
+    { id: "models", label: "Models" },
+    { id: "keys", label: "Keys", disabled: "Terminal required" },
   ],
   page: "models",
   sections: [
     {
       id: "s1",
-      title: "推理",
+      title: "Inference",
       rows: [
-        { id: "think", label: "思考", control: { k: "switch", on: true } },
-        { id: "off", label: "关闭项", disabled: "锁定", control: { k: "switch", on: false } },
+        { id: "think", label: "Thinking", control: { k: "switch", on: true } },
+        { id: "off", label: "Off item", disabled: "Locked", control: { k: "switch", on: false } },
       ],
     },
     {
       id: "s2",
-      title: "外观",
+      title: "Appearance",
       rows: [
         {
           id: "theme",
-          label: "主题",
-          control: { k: "choice", value: "dark", options: [{ value: "dark", label: "深色" }, { value: "light", label: "浅色" }] },
+          label: "Theme",
+          control: { k: "choice", value: "dark", options: [{ value: "dark", label: "Dark" }, { value: "light", label: "Light" }] },
         },
-        { id: "width", label: "宽度", control: { k: "number", value: 80 } },
+        { id: "width", label: "Width", control: { k: "number", value: 80 } },
       ],
     },
   ],
@@ -178,7 +178,7 @@ describe("tsp picker read", () => {
       title: "Models",
       items: [{ id: "m", label: "mock/mock-model" }],
       strip: {
-        label: "用途 mock/mock-model",
+        label: "Purpose mock/mock-model",
         items: [
           { id: "default", label: "default" },
           { id: "small", label: [{ t: "small " }, { t: "model" }], on: true },
@@ -188,7 +188,7 @@ describe("tsp picker read", () => {
       },
     };
     const model = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: props }), ctxFor()));
-    expect(model.title).toBe("用途 mock/mock-model");
+    expect(model.title).toBe("Purpose mock/mock-model");
     expect(model.total).toBe(3);
     expect(model.items).toEqual([
       { key: "strip:0", label: "default", current: false, focused: false },
@@ -203,7 +203,7 @@ describe("tsp picker read", () => {
     expect(model.title).toBe("Choose a role");
     expect(model.items[0]?.focused).toBe(false);
     // The name-entry strip has no chips: the list stays visible.
-    const nameStrip = { ...pickerProps, strip: { label: "名字", items: [] } };
+    const nameStrip = { ...pickerProps, strip: { label: "Name", items: [] } };
     const list = asSelect(tspPickerAdapter.read(makeComponent({ k: "picker", p: nameStrip }), ctxFor()));
     expect(list.title).toBe("Models");
     expect(list.items.map((item) => item.key)).toEqual(["a", "b"]);
@@ -324,10 +324,10 @@ describe("tsp prefs read", () => {
     expect(model.title).toBe("Settings");
     // The current page and every disabled page/row is left out.
     expect(model.items).toEqual([
-      { key: "page:general", label: "📄 通用", hasSubmenu: true },
-      { key: "think", label: "思考", value: "On", values: ["On", "Off"] },
-      { key: "theme", label: "主题", value: "深色", values: ["深色", "浅色"] },
-      { key: "width", label: "宽度", value: "(change it in the terminal)" },
+      { key: "page:general", label: "📄 General", hasSubmenu: true },
+      { key: "think", label: "Thinking", value: "On", values: ["On", "Off"] },
+      { key: "theme", label: "Theme", value: "Dark", values: ["Dark", "Light"] },
+      { key: "width", label: "Width", value: "(change it in the terminal)" },
     ]);
   });
 });
@@ -364,7 +364,7 @@ describe("tsp prefs act", () => {
 
   it("maps a choice label back onto its option value", () => {
     const component = makeComponent({ k: "prefs", p: prefsProps });
-    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "浅色" }, ctxFor())).toBe(true);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "Light" }, ctxFor())).toBe(true);
     expect(component.events).toEqual([{ type: "change", key: "", item: "theme", value: "light" }]);
   });
 
@@ -384,8 +384,8 @@ describe("tsp prefs act", () => {
     const component = makeComponent({ k: "prefs", p: prefsProps });
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "gone" }, ctxFor())).toBe(false);
     expect(tspPrefsAdapter.act(component, { type: "cycle", key: "width" }, ctxFor())).toBe(false);
-    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "也许" }, ctxFor())).toBe(false);
-    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "紫色" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "think", value: "Maybe" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "theme", value: "Purple" }, ctxFor())).toBe(false);
     expect(tspPrefsAdapter.act(component, { type: "submit", text: "x" }, ctxFor())).toBe(false);
     expect(component.events).toEqual([]);
   });

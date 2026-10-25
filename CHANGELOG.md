@@ -18,12 +18,12 @@ missing or mislabelled cannot be published.
 
 ### Changed
 
-- **`/copy`, `/hotkeys`, `/quit` and `/exit` are Telegram-friendly now.** `/copy` answers `没有可复制的内容。`
+- **`/copy`, `/hotkeys`, `/quit` and `/exit` are Telegram-friendly now.** `/copy` answers `Nothing to copy.`
   when the session has no reply yet, instead of an English line that looked like answer text. `/hotkeys` no
   longer lists terminal keys you cannot press in a chat: it explains what to do on Telegram instead (answer
   dialogs with their buttons, `/stop` cancels the turn and the open dialogs, `!`/`!!` run shell commands on
   the host, `/tg` manages bots and projects). `/exit` is now handled here as well, and both it and `/quit`
-  ask first - `退出 pi？` - so a stray tap no longer shuts pi down silently; declining does nothing.
+  ask first - `Quit pi?` - so a stray tap no longer shuts pi down silently; declining does nothing.
 - **An open dialog in Telegram now follows the host.** When the terminal fills a
   dialog in slowly - pi's `/resume` "show all" draws an empty list first and loads
   the sessions behind it - the Telegram copy refreshes within a second instead of
@@ -64,7 +64,7 @@ missing or mislabelled cannot be published.
   the other keyboard disappears.
 
 - **`/export` sends the file back.** A `/export` started in Telegram now receives the exported
-  session as a document (caption `会话导出`, replying to the message that asked for it) instead of
+  session as a document (caption `Session export`, replying to the message that asked for it) instead of
   only the host's `Session exported to: <path>` line, which points at a file the chat cannot
   reach. pi's `/export <name>.jsonl` takes the sibling JSONL method and is covered as well. The
   wrapper sits on the session class prototype, so a session object the host swaps later is still
@@ -74,8 +74,8 @@ missing or mislabelled cannot be published.
 ### Fixed
 
 - **Two notices still pointed at menu rows that no longer exist.** The bot list marks the default bot with
-  `⭐ 默认` (it said `★ default`), and enabling a project with no default bot now points at
-  `/tg → Bots → ⭐ 全局默认 Bot` instead of the removed "Bot list → Set as default" path.
+  `⭐ default` (it said `★ default`), and enabling a project with no default bot now points at
+  `/tg → Bots → ⭐ Default bot` instead of the removed "Bot list → Set as default" path.
 - **Secrets are now hidden everywhere they can come back.** A key you typed into a Telegram prompt was
   masked only in some places: dialog buttons could print it, and so could the assistant's own reply, which
   often quotes the value back at you. Masking now runs before the text is turned into Telegram formatting,

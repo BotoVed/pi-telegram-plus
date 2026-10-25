@@ -3,10 +3,10 @@ import { hasGfmTable } from "../markdown.ts";
 import { escapeRichMarkdown, richMarkdownForTables, TELEGRAM_RICH_TEXT_LIMIT } from "../rich-message.ts";
 
 const TABLE = [
-  "| 项目 | 状态 | 数量 |",
+  "| Project | Status | Count |",
   "| --- | :---: | ---: |",
-  "| dsh-im 插件 | 已安装 | 1 |",
-  "| 当前分支 | master | 1 |",
+  "| dsh-im plugin | Installed | 1 |",
+  "| Current branch | master | 1 |",
 ].join("\n");
 
 describe("hasGfmTable", () => {
@@ -64,7 +64,7 @@ describe("richMarkdownForTables", () => {
   });
 
   it("falls back to HTML when the answer exceeds one Rich Message", () => {
-    const huge = `${TABLE}\n\n${"中".repeat(TELEGRAM_RICH_TEXT_LIMIT)}`;
+    const huge = `${TABLE}\n\n${"x".repeat(TELEGRAM_RICH_TEXT_LIMIT)}`;
     expect(richMarkdownForTables(huge)).toBeUndefined();
     expect(richMarkdownForTables(huge.slice(0, TELEGRAM_RICH_TEXT_LIMIT - 100))).toBeDefined();
   });

@@ -62,7 +62,7 @@ describe("assistant replies redact secrets (§4.7.4)", () => {
   it("redacts the final answer in both the HTML and the Rich Markdown payload", async () => {
     const { emit, sent } = createHarness({ secrets: storeWithSecret() });
     const turn: TelegramTurn = { chatId: CHAT, queuedAttachments: [] };
-    const body = `密钥是 ${SECRET}\n\n| 名称 | 值 |\n| --- | --- |\n| key | ${SECRET} |`;
+    const body = `The key is ${SECRET}\n\n| Name | Value |\n| --- | --- |\n| key | ${SECRET} |`;
 
     await runWithTelegramTurn(turn, () => emit("message_end", { message: { role: "assistant", content: body } }));
 
@@ -117,7 +117,7 @@ describe("assistant replies redact secrets (§4.7.4)", () => {
     const turn: TelegramTurn = { chatId: CHAT, queuedAttachments: [] };
 
     await runWithTelegramTurn(turn, () => emit("message_end", {
-      message: { role: "assistant", content: `短值 ${short} 保持原样` },
+      message: { role: "assistant", content: `short value ${short} stays as is` },
     }));
 
     expect(sent).toHaveLength(1);
@@ -130,7 +130,7 @@ describe("assistant replies redact secrets (§4.7.4)", () => {
     const turn: TelegramTurn = { chatId: CHAT, queuedAttachments: [] };
 
     await runWithTelegramTurn(turn, () => emit("message_end", {
-      message: { role: "assistant", content: `密钥是 ${SECRET}` },
+      message: { role: "assistant", content: `The key is ${SECRET}` },
     }));
 
     expect(sent).toHaveLength(1);

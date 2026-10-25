@@ -184,19 +184,19 @@ main.conclusions = {
     candidates: editorCandidates,
     field: HOST === "omp" ? "mode.editor" : "mode.defaultEditor",
     note: HOST === "omp"
-      ? "mode.editor 在捕获时 onSubmit 还是 undefined, 初始化后才赋值; 实例 hook 必须由每秒 tick 安装 (已在探测中记录 editor-submit 事件)。OMP 没有 defaultEditor。"
-      : "mode.defaultEditor 与 mode.editor 是同一对象, onSubmit 在 setupEditorSubmitHandler 后存在。",
+      ? "mode.editor still has onSubmit === undefined at capture time; it is assigned only after init, so the instance hook must be installed by the per-second tick (editor-submit events were recorded during the probe). OMP has no defaultEditor."
+      : "mode.defaultEditor and mode.editor are the same object; onSubmit exists after setupEditorSubmitHandler.",
   },
   focusRead: {
     pi: focusRead.hasGetFocused === false
-      ? "无 getFocused/getFocus; ui.focusedComponent 是数据字段, 在 setFocus 之后读取会滞后一次, 只能用于校验; 焦点事件本身是权威。"
+      ? "No getFocused/getFocus; ui.focusedComponent is a data field that lags one read behind setFocus, so it is only usable for validation; the focus event itself is authoritative."
       : undefined,
-    omp: focusRead.hasGetFocused ? "ui.getFocused() 存在并返回当前焦点 (编辑器或对话框)。" : undefined,
+    omp: focusRead.hasGetFocused ? "ui.getFocused() exists and returns the current focus (editor or dialog)." : undefined,
     focusedComponent: focusRead.focusedComponent,
     overlayWrapper,
     note: HOST === "omp"
-      ? "OMP 的 setFocus 直接收到组件, 未观察到 {component, overlayFocusRestore} 包装。"
-      : "overlay 的 setFocusInternal 收到 {component, overlayFocusRestore} 包装; 分类前要取 .component。",
+      ? "OMP's setFocus receives the component directly; no {component, overlayFocusRestore} wrapper was observed."
+      : "the overlay's setFocusInternal receives a {component, overlayFocusRestore} wrapper; take .component before classifying.",
   },
   dialogFrames,
   mainLoop: HOST === "omp"
@@ -206,13 +206,13 @@ main.conclusions = {
         composer: modeKeys.includes("composer"),
         sessionKeys,
         sessionAccessors,
-        note: "OMP 18.12.5 没有 mode.pendingUserInputs; session 有 isStreaming/isCompacting accessor。quietSince 用这两个 accessor + onInputCallback, 读不到时退回 60 秒上限。",
+        note: "OMP 18.12.5 has no mode.pendingUserInputs; session has isStreaming/isCompacting accessors. quietSince uses those two accessors + onInputCallback, falling back to the 60-second cap when unreadable.",
       }
     : {
         pendingUserInputs: modeKeys.includes("pendingUserInputs"),
         onInputCallback: modeKeys.includes("onInputCallback"),
         sessionKeys,
-        note: "pi 0.81.1 的 quietSince 三个字段都存在。",
+        note: "pi 0.81.1 has all three quietSince fields.",
       },
   entryMethods: entryNames,
   toolUiMethods: uiMethods,

@@ -200,7 +200,7 @@ describe("createTelegramTransport — Rich Messages (native Markdown tables)", (
   let originalFetch: FetchImpl;
   let warnSpy: ReturnType<typeof vi.spyOn>;
   let logDir: string;
-  const table = "| 项目 | 状态 |\n| --- | --- |\n| dsh-im | 已安装 |";
+  const table = "| Project | Status |\n| --- | --- |\n| dsh-im | Installed |";
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
@@ -228,7 +228,7 @@ describe("createTelegramTransport — Rich Messages (native Markdown tables)", (
     globalThis.fetch = stub as unknown as FetchImpl;
 
     const { transport } = makeTransport();
-    const sent = await transport.sendText(123, "<b>项目</b>", 456, 789, table);
+    const sent = await transport.sendText(123, "<b>Project</b>", 456, 789, table);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("/sendRichMessage");
@@ -253,11 +253,11 @@ describe("createTelegramTransport — Rich Messages (native Markdown tables)", (
     globalThis.fetch = stub as unknown as FetchImpl;
 
     const { transport } = makeTransport();
-    const sent = await transport.sendText(1, "<b>项目</b>", undefined, undefined, table);
+    const sent = await transport.sendText(1, "<b>Project</b>", undefined, undefined, table);
 
     expect(sent).toEqual([{ message_id: 7 }]);
     expect(calls.map((call) => call.url.split("/").pop())).toEqual(["sendRichMessage", "sendMessage"]);
-    expect(calls[1].body).toMatchObject({ parse_mode: "HTML", text: "<b>项目</b>" });
+    expect(calls[1].body).toMatchObject({ parse_mode: "HTML", text: "<b>Project</b>" });
     const logText = await readTodayLog(logDir);
     expect(logText).toMatch(/Rich Message rejected/);
   });
@@ -293,7 +293,7 @@ describe("createTelegramTransport — Rich Messages (native Markdown tables)", (
     globalThis.fetch = stub as unknown as FetchImpl;
 
     const { transport } = makeTransport();
-    await transport.editText(1, 10, "<b>项目</b>", table);
+    await transport.editText(1, 10, "<b>Project</b>", table);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain("/editMessageText");
@@ -315,9 +315,9 @@ describe("createTelegramTransport — Rich Messages (native Markdown tables)", (
     globalThis.fetch = stub as unknown as FetchImpl;
 
     const { transport } = makeTransport();
-    await transport.editText(1, 10, "<b>项目</b>", table);
+    await transport.editText(1, 10, "<b>Project</b>", table);
 
     expect(calls.map((call) => call.url.split("/").pop())).toEqual(["editMessageText", "editMessageText"]);
-    expect(calls[1].body).toMatchObject({ parse_mode: "HTML", text: "<b>项目</b>" });
+    expect(calls[1].body).toMatchObject({ parse_mode: "HTML", text: "<b>Project</b>" });
   });
 });

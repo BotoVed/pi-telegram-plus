@@ -48,7 +48,7 @@ export type TelegramController = {
 
 /**
  * The notice for a message that arrived while a terminal dialog owns the keyboard
- * (§4.2, 决定 54): the `!` shell route and plain text must say the same thing, so the
+ * (§4.2, decision 54): the `!` shell route and plain text must say the same thing, so the
  * wording lives here once - with the dialog's title when the model has one.
  */
 function dialogBusyNotice(session: DialogSession): string {
@@ -648,7 +648,7 @@ async function holdThroughEnqueuedTurns(ctx: unknown, wasIdle: boolean): Promise
 
 const TUI_SCREEN_WIDTH = 100;
 
-// Host-control and terminal-only mappings (§9 决定 21/22, §4.8): these run the
+// Host-control and terminal-only mappings (§9 decisions 21/22, §4.8): these run the
 // plugin's native handler instead of submitting to the host editor - editor
 // submission reloads the extension runtime outside pi's withSession sequencing.
 // copy/hotkeys/quit/exit are terminal-only mappings (stage 4 revisits them).
@@ -657,7 +657,7 @@ const NATIVE_HANDLER_COMMANDS: Record<string, true> = {
   copy: true, hotkeys: true, quit: true, exit: true,
 };
 
-/** Plugin-owned bot-management commands: reachable even when the host bridge is down (v6 决定 48). */
+/** Plugin-owned bot-management commands: reachable even when the host bridge is down (v6 decision 48). */
 const PLUGIN_LOCAL_COMMANDS: Record<string, true> = {
   tg: true, stop: true, cwd: true, cd: true, status: true, debug: true, pair: true, more: true,
 };
@@ -853,7 +853,7 @@ export function createTelegramController(deps: {
     activeChatId: () => deps.getConfig?.().activeChatId,
     activeTurns: () => deps.getActiveTurns?.() ?? [],
     writeText: (text) => bridge.write(text),
-    // One switch for both (§9 决定 27): the broker may only track a host whose
+    // One switch for both (§9 decision 27): the broker may only track a host whose
     // dialogs it can actually read. A host without a usable bridge has no focus to
     // track anyway, and OMP's components render in an overlay without focus, so
     // there it must stay completely inert - see hostOwnsPrompts.
@@ -908,7 +908,7 @@ export function createTelegramController(deps: {
       }
     }
 
-    // D3b (决定 51): the host editor executes. The raw `!`/`!!` text is
+    // D3b (decision 51): the host editor executes. The raw `!`/`!!` text is
     // submitted through the gateway exactly like a host slash command; the
     // host's own user_bash pipeline decides context inclusion and runs the
     // command, and OutputCapture returns the BashExecutionComponent's final
@@ -1305,7 +1305,7 @@ export function createTelegramController(deps: {
     messageThreadId?: number,
     sourceMessageId?: number,
   ): Promise<boolean> => {
-    // v6 (决定 48): no bridge, no path to the host. Host-facing commands answer
+    // v6 (decision 48): no bridge, no path to the host. Host-facing commands answer
     // with the fixed outage notice instead of silently falling back; plugin-owned
     // bot management stays available.
     if (!bridge.isAvailable() && !PLUGIN_LOCAL_COMMANDS[name]) {
@@ -1348,7 +1348,7 @@ export function createTelegramController(deps: {
       ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
 
     // Plugin-owned commands stay plugin-local even when the host catalog also
-    // lists the name (v6 决定 48).
+    // lists the name (v6 decision 48).
     if (PLUGIN_LOCAL_COMMANDS[name] && handler) {
       ctrlLog.debug("command route", { name, route: "plugin-local" });
       recordCommandUsage(name);
@@ -1356,7 +1356,7 @@ export function createTelegramController(deps: {
       return true;
     }
 
-    // Host control and terminal-only mappings (§9 决定 21/22, §4.8). pi's /new
+    // Host control and terminal-only mappings (§9 decisions 21/22, §4.8). pi's /new
     // is the exception the gateway still owns: it calls the host's
     // ctx.newSession() control API (runNewSession) instead of editor submission.
     if (NATIVE_HANDLER_COMMANDS[name] && handler) {
@@ -1677,7 +1677,7 @@ export function createTelegramController(deps: {
         // retired the session because the dialog already left the screen - and then
         // the text is an ordinary prompt again. Ask which one it was. While a dialog
         // still holds the focus, the same message typed in the terminal could not
-        // reach the prompt either (决定 54), so queueing a prompt behind it would only
+        // reach the prompt either (decision 54), so queueing a prompt behind it would only
         // bury the next six messages under a dialog nobody answered.
         if (dialogBroker.sessionFor(chatId, messageThreadId) !== undefined) {
           await deps.transport.sendText(chatId, dialogBusyNotice(dialogSession), messageThreadId, sourceMessageId)

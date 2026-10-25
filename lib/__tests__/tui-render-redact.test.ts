@@ -18,10 +18,10 @@ function ctx(store: SecretStore): RenderContext {
 
 const selectModel: DialogModel = {
   kind: "select",
-  title: `选择要使用的密钥（${SECRET}）`,
+  title: `Choose the key to use (${SECRET})`,
   items: [
-    { key: `key-${SECRET}`, label: `使用 ${SECRET}`, description: `已保存 ${SECRET}` },
-    { key: "other", label: "不使用" },
+    { key: `key-${SECRET}`, label: `Use ${SECRET}`, description: `Saved ${SECRET}` },
+    { key: "other", label: "Do not use" },
   ],
   total: 2,
 };
@@ -58,8 +58,8 @@ describe("dialog rendering redacts secrets before HTML (§4.7.4)", () => {
   it("redacts an input placeholder before it is escaped", () => {
     const model: DialogModel = {
       kind: "input",
-      title: "输入 API key",
-      placeholder: `当前值：${SECRET}`,
+      title: "Enter API key",
+      placeholder: `Current value: ${SECRET}`,
       secret: true,
     };
 
@@ -83,7 +83,7 @@ describe("dialog rendering redacts secrets before HTML (§4.7.4)", () => {
     const short = "sk-&<>b";
     const store = new SecretStore();
     store.remember(CHAT, "flow-2", short);
-    const model: DialogModel = { kind: "info", text: `值是 ${short}`, closable: true };
+    const model: DialogModel = { kind: "info", text: `Value: ${short}`, closable: true };
 
     const rendered = renderDialog(model, ctx(store));
 

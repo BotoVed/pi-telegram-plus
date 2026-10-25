@@ -37,6 +37,10 @@ const OMP_CLI = argValue("--omp", process.env.OMP_CLI || "omp");
 const PI_CLI = resolve(REPO, argValue("--pi-bin", "node_modules/.bin/pi"));
 const ROOT = process.env.PITG_E2E_COMMANDS_ROOT || "/tmp/pitg-e2e-commands";
 
+// Commands that reach an external service or upload the test session (share links,
+// collaboration sessions, self-update). The suite never runs them.
+const NETWORK_COMMANDS = new Set(["/share", "/collab", "/join", "/leave", "/update", "/upgrade"]);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
 const tmux = (...args) => sh("tmux", args);
@@ -584,8 +588,13 @@ async function runHost(host, label, phase = "main") {
 
   // ── Every advertised command ──────────────────────────────────────────
   const terminating = new Set(["/quit", "/exit"]);
+  // Network commands are advertised but never sent; see NETWORK_COMMANDS.
   for (const command of menuCommands) {
     if (terminating.has(command)) continue; // covered by their own phases
+    if (NETWORK_COMMANDS.has(command)) {
+      record(`command ${command}`, true, "skipped: network command, not run in tests");
+      continue;
+    }
     try {
       const call = await dispatch(command);
       const text = String(call.body?.text ?? "").replace(/\s+/g, " ").slice(0, 80);

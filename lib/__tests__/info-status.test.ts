@@ -284,7 +284,7 @@ describe("registerInfoCommands /status handler", () => {
 
 describe("registerInfoCommands /copy handler", () => {
   it("sends the last assistant text verbatim when a reply exists", async () => {
-    const session = makeSession({ lastAssistantText: "这是上一条回复。\n第二行" });
+    const session = makeSession({ lastAssistantText: "This is the previous reply.\nSecond line" });
     const { registry, handlers } = makeRegistry();
     const { ui, notify } = makeUi();
     registerInfoCommands(registry, { getSession: () => session });
@@ -294,7 +294,7 @@ describe("registerInfoCommands /copy handler", () => {
     await copy!.handler("", { ui });
 
     expect(notify).toHaveBeenCalledTimes(1);
-    expect(notify).toHaveBeenCalledWith("这是上一条回复。\n第二行", "info");
+    expect(notify).toHaveBeenCalledWith("This is the previous reply.\nSecond line", "info");
   });
 
   it("shows the empty notice when there is no reply", async () => {

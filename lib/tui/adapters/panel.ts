@@ -9,7 +9,7 @@
  * the Telegram message says plainly that the dialog needs the terminal, and
  * Escape is the only key that ever goes in. We never mirror the screen —
  * arrow keys over an unparsed frame guess at what the dialog meant (§4.6.5 #13,
- * 决定 47).
+ * decision 47).
  */
 import type { DialogAdapter, DialogModel } from "../model.ts";
 import { isReadOnlyPanel } from "../find-shape.ts";

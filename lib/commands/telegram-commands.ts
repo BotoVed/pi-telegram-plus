@@ -156,8 +156,8 @@ export async function clearBotDefaultFlow(
     ui.notify("No default bot is set.", "info");
     return false;
   }
-  // 没有 botId 的绑定 = 跟随全局默认 Bot（包括 disableProjectFlow 写下的
-  // `{ enabled: false }` 断开记录）——不能把它误当成"已绑定"。
+  // A binding without botId = follows the global default bot (including the
+  // `{ enabled: false }` disconnect record written by disableProjectFlow) — never mistake it for "bound".
   const binding = await readProjectBinding(cwd);
   const followsDefault = !binding?.binding.botId;
   ui.notify(
@@ -416,7 +416,7 @@ export async function disableProjectFlow(
   // Notify BEFORE the disconnect: once reconcile below releases the active
   // role, the active transport suppresses outbound sends, so this is the last
   // message Telegram will deliver for this project. Reconnect is terminal-only
-  // from here on (/tg → Project → 连接).
+  // from here on (/tg → Project → Connect).
   ui.notify("Telegram disconnected for this folder. It will stop responding; reconnect from the terminal with /tg.", "info");
   if (project) {
     await updateProjectBindingLocked(project.path, (b) => ({ ...b, enabled: false }));

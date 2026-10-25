@@ -184,7 +184,7 @@ describe("dialog callback dispatch", () => {
 });
 
 describe("chat text while a host dialog holds the focus", () => {
-  // 决定 54: a dialog that is still on screen but takes no text owns the terminal's
+  // decision 54: a dialog that is still on screen but takes no text owns the terminal's
   // input, and a message typed in the terminal cannot reach the prompt either. The
   // broker reports that case as `handled: false` with the session still live (see
   // tui-broker.test.ts); the chat then gets a notice instead of a prompt that would

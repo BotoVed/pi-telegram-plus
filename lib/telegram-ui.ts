@@ -242,7 +242,7 @@ export function createTelegramUiRuntime(deps: {
         },
         closeMenu: async () => { releaseMenu(); },
         // custom: opaque host components are drawn by the host and presented to
-        // this chat by the DialogBroker (§0.1 #4, 决定 48). The plugin no longer
+        // this chat by the DialogBroker (§0.1 #4, decision 48). The plugin no longer
         // re-implements them as Telegram buttons (the old custom-dialogs bridge
         // parsed rendered text, violating plan §2 principle 2).
         custom: ((...args: unknown[]) =>

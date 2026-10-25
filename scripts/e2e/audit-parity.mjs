@@ -25,6 +25,10 @@ const OMP_CLI = process.env.OMP_CLI || "omp";
 const PI_CLI = resolve(REPO, "node_modules/.bin/pi");
 const HOST_ARG = (process.argv.includes("--host") ? process.argv[process.argv.indexOf("--host") + 1] : "both");
 
+// Commands that reach an external service or upload the test session (share links,
+// collaboration sessions, self-update). The audit never runs them.
+const NETWORK_COMMANDS = new Set(["/share", "/collab", "/join", "/leave", "/update", "/upgrade"]);
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sh = (cmd, args, opts = {}) => spawnSync(cmd, args, { encoding: "utf8", ...opts });
 const tmux = (...args) => sh("tmux", args);
@@ -253,7 +257,9 @@ async function runHost(host, outFile) {
     killSession(catalog.session);
   }
   const skip = new Set(["/quit", "/exit"]);
-  const order = only.length > 0 ? only : advertised.filter((c) => !skip.has(c));
+  const order = only.length > 0 ? only : advertised.filter((c) => !skip.has(c) && !NETWORK_COMMANDS.has(c));
+  const skippedNetwork = only.length === 0 ? advertised.filter((c) => NETWORK_COMMANDS.has(c)) : [];
+  if (skippedNetwork.length > 0) console.log(`# ${host}: skipping ${skippedNetwork.join(", ")} (network commands, not run in tests)`);
   console.log(`# ${host}: auditing ${order.length} commands (fresh host per command)`);
   for (const command of order) {
     try {

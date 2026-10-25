@@ -160,17 +160,17 @@ describe("markdownToTelegramHtml", () => {
 
   it("card-style for 3-column table (default strategy)", () => {
     const result = markdownToTelegramHtml(
-      "| 命令 | 说明 | 备注 |\n| --- | --- | --- |\n| ls | 列目录 | 常用 |\n| ps | 进程 | 调试 |",
+      "| Command | Description | Notes |\n| --- | --- | --- |\n| ls | List files | Common |\n| ps | Processes | Debug |",
     );
     // No <pre> (card wraps naturally); header bold, first column bold
     expect(result).not.toContain("<pre>");
-    expect(result).toContain("<b>命令</b>");
+    expect(result).toContain("<b>Command</b>");
     expect(result).toContain("<b>ls</b>");
     expect(result).toContain("<b>ps</b>");
     // Header / row separator
     expect(result).toContain("──");
-    expect(result).toContain("列目录");
-    expect(result).toContain("进程");
+    expect(result).toContain("List files");
+    expect(result).toContain("Processes");
   });
 
   it("card-style bolds header even for plain ASCII 3-col table", () => {
