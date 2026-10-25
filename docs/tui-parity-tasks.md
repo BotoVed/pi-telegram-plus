@@ -64,7 +64,8 @@
 | D3b | `!`/`!!` 命令改由宿主执行，保留 `bashConfirm` 确认（决定 51） | D3 | ☑ | `e9a4d89`；bash 输出按构造器名 `BashExecutionComponent` 截获，OMP 编译产物若改名则截不到，3E 用 E2E 核对 |
 | D4 | `SnapshotAdapter` 改为 `UnsupportedAdapter`（明确告知 + 取消） | D2 | ☑ | `5fc9d8b`；3A-2、3A-3 检查点完成 |
 | A1 | 开发依赖升级到 pi `1.4.0`；按 1.4.0 源码核对剩余代码依赖的宿主接口，输出"需要改"清单 | D1–D4 | ☑（核对部分由主控完成；升级依赖并入 A2） | 4 处需要改：捕获补丁点 `initHooksAndCustomTools` 已改名；入口改挂 `pushExtensionDialog`/`removeExtensionDialog`；命令目录只用 `autocompleteProvider`；内置命令新增 `/bug`、`/thinking`、`/trust` |
-| A2 | 按 A1 清单修正 pi 侧代码（入口改用 1.4.0 的对话框栈 `pushExtensionDialog`/`removeExtensionDialog` 等）；更新方案中的 0.81.1 引用；删除多版本测试矩阵 | A1 | ☐ | |
+| A2 | 按 A1 清单修正 pi 侧代码（入口改用 1.4.0 的对话框栈 `pushExtensionDialog`/`removeExtensionDialog` 等）；更新方案中的 0.81.1 引用；删除多版本测试矩阵 | A1 | ☑ | `cecf115`；矩阵工具与 E2E 多版本循环拆到 A3 |
+| A3 | 删除多版本兼容矩阵工具（`gen-compat-matrix.mjs`、`compat:*`、发布流程检查）；E2E 只测 `node_modules` 里的 pi 1.4.0 | A2 | ☐ | |
 
 每个任务的完成标准：`npm run typecheck`、`npm test` 全绿；E2E 只允许"待迁移"清单内的步骤失败；删除的代码相关测试同步删除或改写。每个任务由主控拆成单独的任务书派发。
 
