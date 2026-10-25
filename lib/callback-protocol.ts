@@ -1,6 +1,4 @@
 export const UI_CALLBACK_PREFIX = "tgplus:ui:";
-export const TUI_CALLBACK_PREFIX = "tgplus:tui:";
-
 
 export const DIALOG_CALLBACK_PREFIX = "tgplus:dlg:";
 
@@ -50,14 +48,6 @@ export function encodeUiCallback(value: string): string {
 
 export function decodeUiCallback(data: string): string | undefined {
   return data.startsWith(UI_CALLBACK_PREFIX) ? data.slice(UI_CALLBACK_PREFIX.length) : undefined;
-}
-
-export function encodeTuiCallback(action: string): string {
-  return `${TUI_CALLBACK_PREFIX}${action}`;
-}
-
-export function decodeTuiCallback(data: string): string | undefined {
-  return data.startsWith(TUI_CALLBACK_PREFIX) ? data.slice(TUI_CALLBACK_PREFIX.length) : undefined;
 }
 
 export function encodeMoreCallback(page: number): string {

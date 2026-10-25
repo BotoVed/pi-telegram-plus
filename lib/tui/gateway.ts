@@ -1,10 +1,9 @@
 /**
- * CommandGateway (stage 1): commands whose only observable effect is host
- * output are submitted to the host editor instead of being re-implemented in
- * Telegram. The host executes them; OutputCapture returns the result.
- *
- * Only the static whitelist below enters this path. Everything else keeps the
- * existing native handler or `runTuiCommand` mirror until stage 5.
+ * CommandGateway: every host command is executed by the host itself. The
+ * gateway submits the command to the host editor (or calls the host control
+ * API for pi's /new), OutputCapture returns the output, and the DialogBroker
+ * owns any dialog the command raises. The old screen mirror is gone (§0.1 #4):
+ * there is no second path for host commands.
  */
 import { escapeHtml } from "../html.ts";
 import { log } from "../logger.ts";
@@ -18,38 +17,6 @@ import { currentHostName, currentHostState, installHostCapture, readEditorText, 
 import type { TuiHost } from "../tui-bridge.ts";
 
 const gatewayLog = log.child("tui-gateway");
-
-/**
- * pi 0.81.1 commands classified as "output only" in Appendix A. `/model` is
- * deliberately absent: its dialog behaviour depends on the argument, so it
- * stays on the old path until the Broker exists. `/new` is a special case:
- * it calls the host's `ctx.newSession()` (the same control API the native
- * handler uses) instead of submitting `/new` to the editor. Editor submission
- * goes through `runtimeHost.newSession()` and reloads the extension runtime
- * outside pi's `withSession` sequencing; the Telegram polling singleton then
- * rejects the replacement instance. `/reload`, `/fork`, `/clone` and `/import`
- * also stay on their native handlers for the same lifecycle reason.
- */
-const PI_OUTPUT_ONLY = new Set([
-  "name", "session", "changelog", "debug",
-  "export", "share", "compact", "new",
-  "arminsayshi", "dementedelves",
-]);
-
-/**
- * OMP output/report commands, grown one at a time as each is verified end to
- * end (T3.2). `/mcp` draws a titled report on the main screen
- * (`showCommandReport`), which OutputCapture returns as command output (T3.1).
- * `/agents` opens a dashboard that takes focus after its entry call returns; the
- * FocusTracker hands it the panel entry and the Broker sends its text (T3.1).
- */
-const OMP_OUTPUT_ONLY = new Set<string>(["mcp", "agents"]);
-
-export function isOutputOnlyCommand(host: TuiHost, name: string): boolean {
-  if (host === "pi") return PI_OUTPUT_ONLY.has(name);
-  if (host === "omp") return OMP_OUTPUT_ONLY.has(name);
-  return false;
-}
 
 export type GatewayRequest = {
   name: string;
@@ -102,18 +69,10 @@ export class CommandGateway {
     this.sessionWatch.unref?.();
   }
 
-  handles(name: string): boolean {
-    if (!this.deps.isEnabled()) return false;
-    const host = this.deps.hostName?.() ?? currentHostName();
-    if (host === "pi") return PI_OUTPUT_ONLY.has(name);
-    if (host === "omp") return OMP_OUTPUT_ONLY.has(name);
-    return false;
-  }
-
-  /** True when either host could claim this name; lets dispatch avoid waiting
-   * for the bridge on every unrelated command. */
-  couldHandle(name: string): boolean {
-    return isOutputOnlyCommand("pi", name) || isOutputOnlyCommand("omp", name);
+  /** All host commands go through the gateway (§0.1 #4); whether a name is a
+   * host command is decided by the controller against the host catalog. */
+  handles(_name: string): boolean {
+    return this.deps.isEnabled();
   }
 
   /** Returns true when the command was claimed (success or a reported error). */

@@ -1,5 +1,5 @@
 import type { ExtensionCommandContext, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { DIALOG_CALLBACK_PREFIX, decodeDialogCallback, decodeMoreCallback, decodeRunCallback, decodeTuiCallback, decodeUiCallback, encodeMoreCallback, encodeRunCallback, encodeTuiCallback } from "./callback-protocol.ts";
+import { DIALOG_CALLBACK_PREFIX, decodeDialogCallback, decodeMoreCallback, decodeRunCallback, decodeUiCallback, encodeMoreCallback, encodeRunCallback } from "./callback-protocol.ts";
 import { parseLeadingCommand, normalizeLeadingCommand } from "./command-parser.ts";
 import type {
   CapturedAgentSession,
@@ -14,16 +14,14 @@ import type {
   TelegramTurn,
 } from "./types.ts";
 import type { TelegramUiRuntime } from "./telegram-ui.ts";
-import type { TuiBridgeAdapter, TuiSnapshot } from "./tui-bridge.ts";
+import type { TuiBridgeAdapter } from "./tui-bridge.ts";
 import { tuiBridge as defaultTuiBridge, hostOwnsPrompts } from "./tui-bridge.ts";
-import type { SelectorState } from "./tui-selector.ts";
-import { parseSelectorText, readDialogTitle, selectorNavigateKeys } from "./tui-selector.ts";
 import { escapeHtml } from "./html.ts";
 import { stripAnsi } from "./custom-dialogs.ts";
 import { recordCommandUsage } from "./command-usage.ts";
 import { getTelegramMenuOverflow } from "./menu-commands.ts";
 import { log } from "./logger.ts";
-import { commandErrorMessage, getRunnerMode, hasNativeAuthApi, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
+import { commandErrorMessage, getRunnerMode, restoreRunnerUiContext, setRunnerUiContext, TELEGRAM_EXTENSION_MODE } from "./pi-compat.ts";
 import { isOmpHost } from "./session-capture.ts";
 import { getCurrentTelegramTurn, runWithTelegramTurn } from "./turn-context.ts";
 import { OriginTracker } from "./tui/origin.ts";
@@ -35,6 +33,10 @@ import { SecretStore } from "./tui/secrets.ts";
 import { readEditorText as readHostEditorText, writeEditorText as writeHostEditorText } from "./tui/host.ts";
 
 const ctrlLog = log.child("controller");
+
+/** Callbacks from the removed screen-mirror keyboards: answered as expired and
+ * never injected (§0.1 #4). Exported so the regression test shares one source. */
+export const EXPIRED_TUI_CALLBACK_PREFIX = "tgplus:tui:";
 
 export type TelegramController = {
   handleMessage(message: TelegramMessage): Promise<void>;
@@ -454,18 +456,12 @@ function installToolUiRouting(session: CapturedAgentSession): void {
 
 /**
  * §4.9 host-prompt UI. Instead of answering prompts itself, it delegates every
- * call to the host UI (so the terminal draws the dialog) and only reports the
- * prompt methods, which lets the mirror attach to the overlay the host is about
- * to render. Answers travel back as injected keys, so Telegram and the terminal
- * drive one implementation; once the DialogBroker can attribute the dialog to a
- * chat it takes over and the mirror stands down.
+ * call to the host UI (so the terminal draws the dialog) and keeps the plugin's
+ * notify and plugin-only affordances pointed at this chat. Answers travel back
+ * through the DialogBroker, which owns the keys once it can attribute the
+ * dialog to a chat.
  */
-function createHostPromptUi(baseUi: unknown, telegramUi: ExtensionUIContext, onPrompt?: () => void): ExtensionUIContext {
-  // Host-specific prompt entry points count too: OMP's `ask` tool goes through
-  // ui.askDialog(), and approvals through ui.approve().
-  const promptMethods = new Set([
-    "select", "confirm", "input", "inputSecret", "editor", "custom", "askDialog", "approve",
-  ]);
+function createHostPromptUi(baseUi: unknown, telegramUi: ExtensionUIContext): ExtensionUIContext {
   // Whether the UI underneath already delivers notifications to the Telegram chat.
   const baseReachesChat = (baseUi as Record<string, unknown> | undefined)?.__piTelegramPlusRoutedUi === true;
   return new Proxy({}, {
@@ -504,15 +500,7 @@ function createHostPromptUi(baseUi: unknown, telegramUi: ExtensionUIContext, onP
           return result;
         };
       }
-      if (!promptMethods.has(name)) return value.bind(target);
-      return (...args: unknown[]) => {
-        try {
-          onPrompt?.();
-        } catch {
-          // Observation must never break the host prompt.
-        }
-        return (value as (...promptArgs: unknown[]) => unknown).apply(target, args);
-      };
+      return value.bind(target);
     },
     has(_target, prop) {
       const target = baseUi ?? {};
@@ -585,14 +573,12 @@ async function runWithTelegramUi<T>(deps: {
   /**
    * Who answers the prompts raised inside `run` (§4.2.6 item 2):
    * - `"host"`: the host UI draws them, so the terminal can answer and the
-   *   DialogBroker or the mirror presents them here. Used whenever the broker
-   *   is live, which is what keeps both ends able to answer one dialog.
+   *   DialogBroker presents them here. Used whenever the broker is live, which
+   *   is what keeps both ends able to answer one dialog.
    * - `"telegram-native"` (default): the plugin answers them in Telegram, which
-   *   is what `off` mode and the plugin's own flows need.
+   *   is what the plugin's own flows need.
    */
   uiMode?: "telegram-native" | "host";
-  /** Attached to a host-rendered prompt to bring the mirror up on the overlay. */
-  observePrompts?: () => void;
 }): Promise<T> {
   // Tool contexts (ask / eval preludes) resolve `ui` from a private store that
   // does not follow the runner's setUIContext on every host, so install the
@@ -600,12 +586,11 @@ async function runWithTelegramUi<T>(deps: {
   // turn is active.
   installToolUiRouting(deps.session);
   const hostPrompts = deps.uiMode === "host";
-  const observe = deps.observePrompts;
   const restore = pushTelegramUiContext(
     deps.session.extensionRunner,
     deps.ui,
     deps.turn,
-    hostPrompts ? (baseUi) => createHostPromptUi(baseUi, deps.ui, observe) : undefined,
+    hostPrompts ? (baseUi) => createHostPromptUi(baseUi, deps.ui) : undefined,
   );
   try {
     return await deps.run();
@@ -653,53 +638,19 @@ async function holdThroughEnqueuedTurns(ctx: unknown, wasIdle: boolean): Promise
 const BASH_TIMEOUT_MS = 120_000;
 const BASH_STREAM_DEBOUNCE_MS = 700;
 const TUI_SCREEN_WIDTH = 100;
-const TUI_POLL_INTERVAL_MS = 80;
-const TUI_POLL_ATTEMPTS = 40;
-// Host-rendered prompts: poll the overlay until the host takes it back.
-const TUI_PROMPT_POLL_MS = 150;
-const TUI_PROMPT_EDIT_MS = 1500;
-// A prompt stays mirrored for as long as it is on screen: the loop exits when
-// the dialog closes, the turn ends or the host stops rendering. An OAuth wait
-// can easily outlive a fixed six-minute budget.
 
-// A command's overlay can draw a frame or two after dispatch; treat a screen as
-// final only after it has been stable this long.
-const TUI_MIRROR_IDLE_MS = 3_000;
-const TUI_NATIVE_SELECTOR_COMMANDS = new Set(["settings"]);
-
-// Mirror-first: these open host dialogs, and the Telegram-native
-// re-implementation cannot stay faithful to the terminal (labels, ordering,
-// status markers, paging). With the bridge in `full` mode the host owns the
-// interaction and Telegram mirrors it; native handlers remain the fallback
-// when the bridge cannot serve the command.
-const MIRROR_FIRST_COMMANDS = new Set(["login", "logout"]);
-
-// Commands whose Telegram-native handlers depend on host APIs that differ
-// between pi and OMP. When the capability is missing the command is routed to
-// the host's own TUI through the bridge (the host serves it there), or refused
-// with an actionable message — never left to crash inside the handler.
-const HOST_CAPABILITY_COMMANDS = new Set(["login", "logout", "fork", "clone"]);
+// Host-control and terminal-only mappings (§9 决定 21/22, §4.8): these run the
+// plugin's native handler instead of submitting to the host editor - editor
+// submission reloads the extension runtime outside pi's withSession sequencing.
+// copy/hotkeys/quit/exit are terminal-only mappings (stage 4 revisits them).
+const NATIVE_HANDLER_COMMANDS: Record<string, true> = {
+  new: true, reload: true, fork: true, clone: true, import: true,
+  copy: true, hotkeys: true, quit: true, exit: true,
+};
 
 /** Plugin-owned bot-management commands: reachable even when the host bridge is down (v6 决定 48). */
 const PLUGIN_LOCAL_COMMANDS: Record<string, true> = {
   tg: true, stop: true, cwd: true, cd: true, status: true, debug: true, pair: true, more: true,
-};
-
-const nativeHandlerAvailable = (
-  name: string,
-  session: CapturedAgentSession,
-  hostIsOmp: boolean,
-): boolean => {
-  if (name === "login" || name === "logout") return hasNativeAuthApi(session);
-  if (name === "fork" || name === "clone") return !hostIsOmp;
-  return true;
-};
-
-const hostCommandUnavailableNotice = (name: string): string => {
-  if (name === "login" || name === "logout") {
-    return `This host does not expose a programmatic auth API to Telegram and its TUI does not serve /${name}. Run /${name} in the terminal.`;
-  }
-  return `This host does not expose /${name} to Telegram. Run it in the terminal instead.`;
 };
 
 // /more overflow keyboard: 30 command buttons per page, three per row.
@@ -813,258 +764,6 @@ export function clipScreen(text: string, maxBytes: number): string {
   return [...head, "…", ...tail].join("\n");
 }
 
-// URLs inside <pre> are not linkified by Telegram; repeat them as plain text
-// so OAuth/authorization screens offer a tappable link from the mirror.
-// The host hard-wraps a URL that is wider than the render column, so the tail
-// of an authorization URL lands on the following line as an unbroken token;
-// joining it back is the difference between a usable link and a dead one.
-export function snapshotLinks(body: string): string {
-  const lines = body.split("\n");
-  const found: string[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = /https?:\/\/[^\s<>"'`]+/.exec(line);
-    if (!match) continue;
-    let url = match[0];
-    // `trimEnd().length >= 80` means the token actually runs to the render
-    // edge; a short URL that merely ends its line is complete already.
-    const atEdge = line.trimEnd().endsWith(url) && line.trimEnd().length >= 90;
-    if (atEdge) {
-      for (let next = index + 1; next < lines.length; next += 1) {
-        const continuation = lines[next].trim();
-        // A wrapped token has no spaces of its own; anything with whitespace
-        // is the next line of prose, not a URL tail.
-        if (!continuation || /\s/.test(continuation)) break;
-        if (!/^[\w%&=+:/?#@!$'()*,;\[\].~-]/.test(continuation)) break;
-        url += continuation;
-        index = next;
-        if (lines[next].length < 80) break;
-      }
-    }
-    found.push(url.replace(/[).,;:]+$/, ""));
-  }
-  // Keep the longest form of each link: the wrapped first copy is a prefix.
-  const urls = found
-    .filter((url) => !found.some((other) => other.length > url.length && other.startsWith(url)))
-    .filter((url, i, all) => all.indexOf(url) === i)
-    .slice(0, 3);
-  return urls.length > 0 ? `\n\n${urls.map((url) => `🔗 ${escapeHtml(url)}`).join("\n")}` : "";
-}
-
-// Overlays that wait for typed input render a bare prompt row (">" / "> ▌").
-// The mirror cannot host a native field, so it advertises the Type → send →
-// Enter path instead of leaving the user with arrow keys only.
-function hasInputPrompt(body: string): boolean {
-  return body.split("\n").some((line) => {
-    const stripped = line.replace(/^[\s│┃|]*/, "").replace(/[\s│┃|]+$/, "");
-    if (/^>[\s\u2580-\u259F]*$/.test(stripped)) return true;
-    // Other hosts draw the caret at the end of a labelled field ("Path: ▌").
-    return /[▌▏]$/.test(stripped) && !/^[\s\u2580-\u259F]+$/.test(stripped);
-  });
-}
-
-// A finished screen ends with the editor chrome: an optional title border plus
-// the prompt row. That is not dialog output (it made a logout result look like
-// it ended with an unrelated session title), so trim it from mirrored results.
-export function trimScreenChrome(text: string): string {
-  const lines = text.split("\n");
-  let end = lines.length;
-  while (end > 0 && lines[end - 1].trim() === "") end -= 1;
-  const trimmed = lines.slice(0, end);
-  const isPromptRow = (line: string): boolean => /^\s*(?:[❯>]|π\s*[>❯])\s*$/.test(line);
-  let cut = trimmed.length;
-  for (let i = trimmed.length - 1; i >= Math.max(0, trimmed.length - 6); i -= 1) {
-    if (!isPromptRow(trimmed[i])) continue;
-    cut = i;
-    // The editor's top border carries the session title: ─── TITLE ───
-    const above = (trimmed[i - 1] ?? "").trim();
-    if (/^[─━]+\s+\S.*[─━]+$/.test(above) && (above.match(/[─━]/g) ?? []).length >= 8) cut = i - 1;
-    break;
-  }
-  const keep = trimmed.slice(0, cut);
-  while (keep.length > 0 && keep[keep.length - 1].trim() === "") keep.pop();
-  return keep.join("\n");
-}
-
-function formatTuiSnapshot(snapshot: TuiSnapshot, title: string, selector?: SelectorState): string {
-  const shownTitle = selector?.title ?? title;
-  const rawBody = selector ? selector.block : snapshot.text || "(empty screen)";
-  const body = selector ? rawBody : trimScreenChrome(rawBody);
-  return `<b>${escapeHtml(shownTitle)}</b>\n${preformatted(clipScreen(body, TUI_SNAPSHOT_MAX_BYTES))}${selector ? "" : snapshotLinks(body)}`;
-}
-
-// The host prints its own key legend at the bottom of every dialog ("⌃R reload
-// · PgUp/PgDn scroll"). Anything it advertises that a Telegram keyboard lacks is
-// an unreachable action, so the legend is parsed and turned into buttons. Keys
-// without a meaningful Telegram-side effect (⌃G opens $EDITOR, ⌃Z suspends) are
-// deliberately absent from the table.
-const LEGEND_KEYS: Array<[RegExp, string, string]> = [
-  [/⌃C|ctrl\+c/i, "Ctrl+C", "ctrl-c"],
-  [/⌃R|ctrl\+r/i, "⌃R", "ctrl-r"],
-  [/⌃O|ctrl\+o/i, "⌃O", "ctrl-o"],
-  [/⌃Q|ctrl\+q/i, "⌃Q", "ctrl-q"],
-  [/⌃L|ctrl\+l/i, "⌃L", "ctrl-l"],
-  [/PgUp|page ?up/i, "PgUp", "pageup"],
-  [/PgDn|page ?down/i, "PgDn", "pagedown"],
-  [/⇧⇥|shift\+tab/i, "⇧Tab", "shift-tab"],
-  [/\bHome\b/, "Home", "home"],
-  [/\bEnd\b/, "End", "end"],
-];
-
-/** Keys advertised by the dialog's own footer, in render order. */
-export function advertisedKeys(text: string): Array<{ text: string; action: string }> {
-  const lines = text.split("\n").map((line) => line.trim()).filter(Boolean);
-  // Legends live at the bottom; scanning the whole screen would also match
-  // prose that happens to mention a key.
-  const legend = lines.slice(-4).join("\n");
-  const found: Array<{ text: string; action: string; at: number }> = [];
-  for (const [pattern, label, action] of LEGEND_KEYS) {
-    const match = pattern.exec(legend);
-    if (!match) continue;
-    found.push({ text: label, action, at: match.index });
-  }
-  return found.sort((a, b) => a.at - b.at).slice(0, 6).map(({ text: label, action }) => ({ text: label, action }));
-}
-
-function tuiKeyRows(screenText = ""): Array<Array<{ text: string; value: string }>> {
-  const button = (text: string, action: string) => ({ text, value: encodeTuiCallback(action) });
-  const base = new Set(["up", "down", "left", "right", "enter", "esc", "space", "tab", "shift-tab", "ctrl-c"]);
-  const extra = advertisedKeys(screenText).filter((key) => !base.has(key.action));
-  const legendRows: TelegramButton[][] = [];
-  for (let i = 0; i < extra.length; i += 3) {
-    legendRows.push(extra.slice(i, i + 3).map((key) => button(key.text, key.action)));
-  }
-  return [
-    [button("↑", "up"), button("↓", "down")],
-    [button("←", "left"), button("→", "right")],
-    [button("Enter", "enter"), button("Esc", "esc")],
-    [button("Space", "space"), button("Tab", "tab")],
-    [button("⇧Tab", "shift-tab"), button("Ctrl+C", "ctrl-c")],
-    ...legendRows,
-    [button("⌨️ Type", "type"), button("Refresh", "refresh"), button("Close", "close")],
-  ];
-}
-
-// Selector keyboards follow /model's select layout: one option per row and a
-// Prev/Next row. The host renders only a window of its list (OMP: up to 10
-// rows) and scrolls that window as the cursor moves, so paging drives the
-// host itself with PageDown/PageUp and rebuilds from the new window instead
-// of slicing the parsed rows. Tapping an option moves the host cursor and
-// presses Enter (see selectorNavigateKeys); ▸ marks the live cursor.
-const SELECTOR_PAGE_SIZE = 10;
-const SELECTOR_LABEL_MAX = 45;
-// Telegram rejects keyboards over 100 buttons; leave room for the nav and
-// function rows when a host renders a complete (unwindowed) list.
-const SELECTOR_MAX_BUTTONS = 90;
-
-type SelectorPaging = {
-  /** Net host pages moved away from the window the dialog opened on. */
-  page: number;
-  /** False once a forward page produced no movement (end of the list). */
-  hasNext: boolean;
-};
-
-type SelectorKeyboard = {
-  rows: TelegramButton[][];
-};
-
-// OMP renders a scrollbar (thumb U+2588) only when the list overflows the
-// window, so it is a second "rows follow" signal for short terminals where
-// the window is smaller than SELECTOR_PAGE_SIZE.
-function selectorOverflows(selector: SelectorState): boolean {
-  return selector.block.split("\n").some((line) => /\u2588\s*[│|]?\s*$/.test(line));
-}
-
-function buildSelectorKeyboard(selector: SelectorState, paging: SelectorPaging, screenText = ""): SelectorKeyboard | undefined {
-  if (!selector.options.some((option) => option.selected)) return undefined;
-  // Windowed hosts (OMP) show one page of their scrolling window; complete
-  // lists (pi) render everything, capped only by Telegram's button budget.
-  const window = selector.windowed === false
-    ? selector.options.slice(0, SELECTOR_MAX_BUTTONS)
-    : selector.options.slice(0, SELECTOR_PAGE_SIZE);
-  const rows: TelegramButton[][] = window.map((option, index) => {
-    const label = option.label.length > SELECTOR_LABEL_MAX
-      ? `${option.label.slice(0, SELECTOR_LABEL_MAX - 1)}…`
-      : option.label;
-    // Checkbox questions keep their state visible: ☑/☐ plus the cursor marker.
-    const check = selector.multiSelect ? `${option.checked ? "☑ " : "☐ "}` : "";
-    return [{
-      text: `${option.selected ? "▸ " : ""}${check}${label}`,
-      value: encodeTuiCallback(`pick:${index}`),
-    }];
-  });
-  const hasPrev = (paging.page > 0 || selector.moreAbove === true) && window.length > 0;
-  // A full window cannot tell whether rows follow; the first Next tap does.
-  // The scrollbar covers short terminals whose window is below the page size;
-  // pi's provider selector reports the remainder explicitly.
-  const moreBelow = selector.moreBelow
-    ?? (window.length >= SELECTOR_PAGE_SIZE || selectorOverflows(selector));
-  const hasNext = paging.hasNext && selector.windowed !== false && moreBelow;
-  if (hasPrev || hasNext) {
-    const nav: TelegramButton[] = [];
-    if (hasPrev) nav.push({ text: "◀ Prev", value: encodeTuiCallback("page:prev") });
-    if (hasNext) nav.push({ text: "Next ▶", value: encodeTuiCallback("page:next") });
-    rows.push(nav);
-  }
-  // Multi-question dialogs (OMP ask) switch questions with ⇥/←/→; Telegram
-  // needs explicit buttons since arrow keys move inside the option list.
-  if (selector.multiQuestion) {
-    rows.push([
-      { text: "◀ Question", value: encodeTuiCallback("q:prev") },
-      { text: "Question ▶", value: encodeTuiCallback("q:next") },
-    ]);
-  }
-  // Selector dialogs advertise extra actions in the same footer legend.
-  const selectorBase = new Set([
-    "up", "down", "left", "right", "enter", "esc", "space", "tab", "shift-tab", "ctrl-c",
-  ]);
-  const legend = advertisedKeys(screenText || selector.block).filter((key) => !selectorBase.has(key.action));
-  for (let i = 0; i < legend.length; i += 3) {
-    rows.push(legend.slice(i, i + 3).map((key) => ({ text: key.text, value: encodeTuiCallback(key.action) })));
-  }
-  const footer: TelegramButton[] = [];
-  // Checkbox questions need an explicit submit: Enter confirms the question,
-  // which is a different action from toggling an item.
-  if (selector.multiSelect) footer.push({ text: "⏎ Submit", value: encodeTuiCallback("enter") });
-  footer.push(
-    { text: "Esc", value: encodeTuiCallback("esc") },
-    { text: "Ctrl+C", value: encodeTuiCallback("ctrl-c") },
-    { text: "⌨️ Type", value: encodeTuiCallback("type") },
-    { text: "Refresh", value: encodeTuiCallback("refresh") },
-    { text: "Close", value: encodeTuiCallback("close") },
-  );
-  rows.push(footer);
-  return { rows };
-}
-
-// The selector message mirrors /model's select: title only. The host owns the
-// window (and never reports its total), so no page counter is invented; the
-// buttons carry the options.
-function formatSelectorMessage(selector: SelectorState): string {
-  return `<b>${escapeHtml(selector.title ?? "TUI selector")}</b>`;
-}
-
-function keyboardSignature(rows: TelegramButton[][]): string {
-  return rows.map((row) => row.map((button) => `${button.text}\u0000${button.value}`).join(",")).join("\n");
-}
-
-type TuiMirror = {
-  chatId: number;
-  messageThreadId?: number;
-  messageId: number;
-  lastText?: string;
-  lastCanControl?: boolean;
-  pendingText?: boolean;
-  /** Selector parsed from the most recent mirror refresh, if any. */
-  selector?: SelectorState;
-  /** Title of the parsed selector; a new dialog resets paging. */
-  selectorTitle?: string;
-  /** Paging state for the current selector; the host owns the underlying window. */
-  selectorPaging?: SelectorPaging;
-  /** Keyboard layout signature; lets the refresh skip unchanged edits. */
-  lastKeyboard?: string;
-};
-
 /** Text that must not be swallowed by a dialog: shell input and slash commands. */
 function isDialogExemptText(text: string): boolean {
   const trimmed = text.trim();
@@ -1097,7 +796,6 @@ export function createTelegramController(deps: {
   const targetKey = (chatId: number, messageThreadId?: number) => `${chatId}:${messageThreadId ?? "main"}`;
   const bridge = deps.tuiBridge ?? defaultTuiBridge;
   const hostIsOmp = deps.isOmpHost ?? isOmpHost;
-  const tuiMirrors = new Map<string, TuiMirror>();
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
   const focusTracker = new FocusTracker();
@@ -1166,297 +864,15 @@ export function createTelegramController(deps: {
   });
   dialogBroker.start();
 
-  const refreshTuiMirror = async (mirror: TuiMirror): Promise<void> => {
-    let snapshot: TuiSnapshot | undefined;
-    try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch {}
-    if (!snapshot) {
-      for (let i = 0; i < 8; i += 1) {
-        await sleep(30);
-        try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch {}
-        if (snapshot) break;
-      }
-    }
-    if (!snapshot) {
-      await deps.transport.editText(mirror.chatId, mirror.messageId, "TUI bridge is no longer available.").catch(ctrlLog.swallow("debug", "editText TUI unavailable failed", { chatId: mirror.chatId }));
-      await deps.transport.removeInlineKeyboard(mirror.chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI unavailable failed", { chatId: mirror.chatId }));
-      tuiMirrors.delete(targetKey(mirror.chatId, mirror.messageThreadId));
-      return;
-    }
-
-    const selector = snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
-    mirror.selector = selector;
-    const selectorTitle = selector?.title ?? "";
-    if (selector && mirror.selectorTitle !== selectorTitle) {
-      mirror.selectorTitle = selectorTitle;
-      mirror.selectorPaging = { page: 0, hasNext: true };
-    }
-    // While the Broker draws a dialog this chat can see, that message owns the keys: the
-    // mirror keeps streaming the screen but must not offer a second way to answer the same
-    // question, and its arrow keys would land on the mirror instead of the dialog (§4.5).
-    // A session the terminal owns draws nothing here, so it must not take the keys away.
-    // On the very message the Broker draws, the mirror stays out entirely.
-    const brokerSession = dialogBroker.sessionFor(mirror.chatId, mirror.messageThreadId);
-    const brokerOwnsDialog = dialogBroker.mirrorsFor(mirror.chatId, mirror.messageThreadId);
-    if (brokerSession?.telegram?.messageId === mirror.messageId) return;
-    const canControl = snapshot.interactive && !mirror.pendingText && !brokerOwnsDialog;
-    const selectorKeyboard = canControl && selector
-      ? buildSelectorKeyboard(selector, mirror.selectorPaging ?? { page: 0, hasNext: true }, snapshot.text ?? "")
-      : undefined;
-    // Panels drawn into the transcript (not focusable overlays) still carry a
-    // boxed title; show it instead of the generic "TUI"/"TUI screen" label.
-    const dialogTitle = !selector ? readDialogTitle(snapshot.text ?? "") : undefined;
-    const title = mirror.pendingText
-      ? "TUI · send the next Telegram message as input"
-      : snapshot.interactive
-        ? (selector?.title ?? dialogTitle ?? (selector ? "TUI selector" : "TUI screen"))
-        : (dialogTitle ?? "TUI");
-    const inputHint = snapshot.interactive && !selector && hasInputPrompt(snapshot.text ?? "")
-      ? "\n\n<i>⌨️ This dialog expects typed input: tap ⌨️ Type, send the text as the next message, then tap ⏎ Enter.</i>"
-      : "";
-    const text = selectorKeyboard && selector
-      ? formatSelectorMessage(selector)
-      : `${formatTuiSnapshot(snapshot, title, selector)}${inputHint}`;
-    const rows: TelegramButton[][] | undefined = mirror.pendingText
-      ? [[{ text: "Cancel", value: encodeTuiCallback("cancel-type") }]]
-      : canControl
-        ? (selectorKeyboard?.rows ?? tuiKeyRows(snapshot.text ?? ""))
-        : undefined;
-    const keyboardSig = rows ? keyboardSignature(rows) : "none";
-    if (text === mirror.lastText && mirror.lastCanControl === canControl && keyboardSig === mirror.lastKeyboard && !mirror.pendingText) return;
-    mirror.lastText = text;
-    mirror.lastCanControl = canControl;
-    mirror.lastKeyboard = keyboardSig;
-
-    if (rows) {
-      await deps.transport.editButtons(mirror.chatId, mirror.messageId, text, rows).catch(ctrlLog.swallow("debug", "editButtons failed", { chatId: mirror.chatId }));
-    } else {
-      await deps.transport.editText(mirror.chatId, mirror.messageId, text).catch(ctrlLog.swallow("debug", "editText failed", { chatId: mirror.chatId }));
-      await deps.transport.removeInlineKeyboard(mirror.chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI mirror failed", { chatId: mirror.chatId }));
-      if (!snapshot.interactive) tuiMirrors.delete(targetKey(mirror.chatId, mirror.messageThreadId));
-    }
-  };
-
-  /**
-   * Attach a mirror to a prompt the host is about to render. Prompts are modal
-   * (one owns the terminal at a time) and belong to the turn that raised them,
-   * so the requesting chat gets the mirror and answers with injected keys —
-   * exactly what someone at the terminal would do.
-   */
-  const startPromptMirror = (turn: TelegramTurn): void => {
-    const chatId = turn.chatId;
-    const messageThreadId = turn.messageThreadId;
-    const key = targetKey(chatId, messageThreadId);
-    const existing = tuiMirrors.get(key);
-    if (existing) {
-      void refreshTuiMirror(existing);
-      return;
-    }
-    void (async () => {
-      // The observer fires before the host renders; wait for the overlay.
-      let snapshot: TuiSnapshot | undefined;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        await sleep(30);
-        try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { snapshot = undefined; }
-        if (snapshot?.interactive) break;
-      }
-      if (!snapshot?.interactive) return;
-      if (tuiMirrors.has(key)) return;
-      const sent = await deps.transport
-        .sendText(chatId, "<b>TUI prompt</b>", messageThreadId, turn.sourceMessageId)
-        .catch(ctrlLog.swallow("warn", "sendText prompt mirror failed", { chatId }));
-      const messageId = sent?.[0]?.message_id;
-      if (messageId === undefined) return;
-      const mirror: TuiMirror = { chatId, messageThreadId, messageId };
-      tuiMirrors.set(key, mirror);
-      await refreshTuiMirror(mirror);
-      let lastEditAt = Date.now();
-      for (;;) {
-        await sleep(TUI_PROMPT_POLL_MS);
-        if (tuiMirrors.get(key) !== mirror) return;
-        if (!deps.getActiveTurn(chatId, messageThreadId)) return;
-        let live: TuiSnapshot | undefined;
-        try { live = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { live = undefined; }
-        if (!live) return;
-        // Selector prompts render as a title plus buttons (stable text); other
-        // overlays carry spinners, so their whole-screen mirror is throttled to
-        // stay clear of Telegram's per-chat edit rate.
-        const parsed = live.interactive ? parseSelectorText(live.text ?? "") : undefined;
-        const now = Date.now();
-        if (!parsed && now - lastEditAt < TUI_PROMPT_EDIT_MS) {
-          if (!live.interactive) return;
-          continue;
-        }
-        await refreshTuiMirror(mirror);
-        lastEditAt = now;
-        if (!live.interactive) return;
-      }
-      tuiMirrors.delete(key);
-    })();
-  };
-
-  const promptMirrorHook = (turn: TelegramTurn): (() => void) | undefined => {
-    // The Broker mirrors a dialog from its real component, and the mirror defers on the
-    // message the Broker draws (see refreshTuiMirror) rather than standing down for the
-    // whole chat (§4.4): a dialog left open by an earlier step must not silence every
-    // command that comes after it.
-    if (!bridge.isAvailable()) return undefined;
-    return () => startPromptMirror(turn);
-  };
-
   /**
    * §4.2.6 item 2: while the DialogBroker is live, prompts raised by work this
-   * chat started belong to the host UI — a terminal user can answer them and
-   * Telegram mirrors them, so neither end is locked out. Everywhere else - and on
-   * hosts whose dialogs the broker cannot read yet - the plugin keeps answering
-   * them in Telegram. See hostOwnsPrompts for the full condition.
+   * chat started belong to the host UI - a terminal user can answer them and
+   * the Broker presents them here, so neither end is locked out. Everywhere
+   * else - and on hosts whose dialogs the broker cannot read yet - the plugin
+   * keeps answering them in Telegram. See hostOwnsPrompts for the full condition.
    */
   const promptUiMode = (): "telegram-native" | "host" =>
     (hostOwnsPrompts(bridge) ? "host" : "telegram-native");
-
-  const runTuiCommand = async (
-    name: string,
-    args: string,
-    chatId: number,
-    messageThreadId?: number,
-    sourceMessageId?: number,
-  ): Promise<void> => {
-    try {
-      await runTuiCommandInner(name, args, chatId, messageThreadId, sourceMessageId);
-    } catch (err) {
-      ctrlLog.error("runTuiCommand failed", { err, name });
-    }
-  };
-
-  const runTuiCommandInner = async (
-    name: string,
-    args: string,
-    chatId: number,
-    messageThreadId?: number,
-    sourceMessageId?: number,
-  ): Promise<void> => {
-    await bridge.ready().catch(ctrlLog.swallow("debug", "TUI bridge readiness failed"));
-    if (!bridge.isAvailable()) {
-      await deps.transport.sendText(
-        chatId,
-        "TUI bridge is unavailable on this host; the command was not sent.",
-        messageThreadId,
-        sourceMessageId,
-      ).catch(ctrlLog.swallow("warn", "sendText TUI unavailable failed", { chatId }));
-      return;
-    }
-
-    const commandText = `/${name}${args.trim() ? ` ${args.trim()}` : ""}`;
-    const status = await deps.transport.sendText(
-      chatId,
-      `<b>▶️ TUI command</b>\n${preformatted(commandText)}`,
-      messageThreadId,
-      sourceMessageId,
-    ).catch(ctrlLog.swallow("warn", "sendText TUI command status failed", { chatId }));
-    const messageId = status?.[0]?.message_id;
-    ctrlLog.debug("TUI command ack", { name, messageId, status });
-    if (messageId === undefined) return;
-
-    const startedAt = Date.now();
-    const submitted = bridge.submit(commandText);
-    ctrlLog.debug("TUI command submitted", { name, submitted });
-    if (!submitted) {
-      await deps.transport.editText(chatId, messageId, "TUI bridge could not submit the command.").catch(ctrlLog.swallow("debug", "editText TUI submit failure failed", { chatId }));
-      return;
-    }
-
-    let snapshot: TuiSnapshot | undefined;
-    for (let attempt = 0; attempt < TUI_POLL_ATTEMPTS; attempt += 1) {
-      await sleep(TUI_POLL_INTERVAL_MS);
-      try {
-        snapshot = bridge.snapshot(TUI_SCREEN_WIDTH);
-      } catch (err) {
-        ctrlLog.debug("TUI snapshot poll failed", { err, attempt });
-      }
-      if (snapshot?.interactive) break;
-    }
-
-    ctrlLog.debug("TUI snapshot after command", { name, interactive: snapshot?.interactive, len: snapshot?.text?.length });
-    if (!snapshot) {
-      await deps.transport.editText(chatId, messageId, "Command sent to TUI; this host did not expose a renderable screen.").catch(ctrlLog.swallow("debug", "editText TUI no snapshot failed", { chatId }));
-      return;
-    }
-
-    if (snapshot.interactive) {
-      // Give the broker a beat: a dialog this command opened belongs to it, and two
-      // mirrors of one dialog would fight over the same keystrokes.
-      await sleep(TUI_PROMPT_POLL_MS * 2);
-      // Only a dialog this command opened *and drew in this chat* belongs to the Broker: a
-      // session the terminal owns, or one an earlier step left open, must not silence this
-      // command's own output.
-      const brokerSession = dialogBroker.sessionFor(chatId, messageThreadId);
-      if (brokerSession !== undefined
-        && brokerSession.openedAt >= startedAt
-        && dialogBroker.mirrorsFor(chatId, messageThreadId)) {
-        await deps.transport
-          .editText(chatId, messageId, `<b>▶️ ${escapeHtml(commandText)}</b>\n\n<i>选择器已在上面的消息里，也可以直接在终端操作。</i>`)
-          .catch(ctrlLog.swallow("debug", "editText broker-owned ack failed", { chatId }));
-        return;
-      }
-      const key = targetKey(chatId, messageThreadId);
-      const mirror: TuiMirror = { chatId, messageThreadId, messageId };
-      tuiMirrors.set(key, mirror);
-      await refreshTuiMirror(mirror);
-      // Authorization flows (OAuth wait screens) change without user action:
-      // keep the mirror current until the overlay closes or is replaced.
-      void (async () => {
-        let lastEditAt = Date.now();
-        let lastText = snapshot?.text ?? "";
-        let idleSince = Date.now();
-        for (;;) {
-          await sleep(TUI_PROMPT_POLL_MS);
-          if (tuiMirrors.get(key) !== mirror) return;
-          let live: TuiSnapshot | undefined;
-          try { live = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { live = undefined; }
-          if (!live) return;
-          const text = live.text ?? "";
-          const changed = text !== lastText;
-          const now = Date.now();
-          if (changed) idleSince = now;
-          // Never treat the first non-interactive frame as "closed": right after
-          // dispatch the host still shows the old screen (/settings froze on the
-          // pre-panel frame that way). Stop only once the screen stays put.
-          if (!changed) {
-            if (!live.interactive && now - idleSince >= TUI_MIRROR_IDLE_MS) return;
-            continue;
-          }
-          // Spinner-bearing screens change every frame; keep them off the
-          // Telegram edit limit, but let selector updates through immediately.
-          const parsed = live.interactive ? parseSelectorText(text) : undefined;
-          if (!parsed && now - lastEditAt < TUI_PROMPT_EDIT_MS) continue;
-          await refreshTuiMirror(mirror);
-          lastEditAt = now;
-          lastText = text;
-        }
-      })();
-    } else {
-      const selector = snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
-      const hint = snapshot.interactive
-        ? "\n\n<i>Interactive mirror is off. Set TUI bridge to full in /tg → Config to control this selector.</i>"
-        : "";
-      const panelTitle = selector ? undefined : readDialogTitle(snapshot.text ?? "");
-      const label = snapshot.interactive
-        ? (selector ? "TUI selector" : (panelTitle ?? "TUI screen"))
-        : (panelTitle ?? "TUI");
-      const body = `${formatTuiSnapshot(snapshot, label, selector)}${hint}`;
-      // Static panels (e.g. /mcp, /context) close with Esc in the terminal. Give
-      // the mirror the same escape hatch instead of a dead-end screen.
-      const closable = !snapshot.interactive && panelTitle !== undefined
-        && /(?:\besc\b|⎋|\bclose\b|\bcancel\b)/i.test(snapshot.text ?? "");
-      if (closable) {
-        tuiMirrors.set(targetKey(chatId, messageThreadId), { chatId, messageThreadId, messageId });
-        await deps.transport.editButtons(chatId, messageId, body, [[{ text: "⎋ Close", value: encodeTuiCallback("esc") }]])
-          .catch(ctrlLog.swallow("debug", "editButtons TUI panel failed", { chatId }));
-      } else {
-        await deps.transport.editText(chatId, messageId, body)
-          .catch(ctrlLog.swallow("debug", "editText TUI snapshot failed", { chatId }));
-      }
-    }
-  };
 
   const runTelegramBash = async (
     command: string,
@@ -1570,140 +986,6 @@ export function createTelegramController(deps: {
     });
   };
 
-  const handleTuiCallback = async (
-    action: string,
-    chatId: number,
-    messageThreadId: number | undefined,
-  ): Promise<void> => {
-    await bridge.ready().catch(ctrlLog.swallow("debug", "TUI callback bridge readiness failed"));
-    const key = targetKey(chatId, messageThreadId);
-    const mirror = tuiMirrors.get(key);
-    if (!mirror) {
-      await deps.transport.sendText(chatId, "This TUI prompt is no longer active.", messageThreadId);
-      return;
-    }
-    if (action === "close") {
-      bridge.key("esc");
-      tuiMirrors.delete(key);
-      await deps.transport.editText(chatId, mirror.messageId, "TUI mirror closed.").catch(ctrlLog.swallow("debug", "editText TUI close failed", { chatId }));
-      await deps.transport.removeInlineKeyboard(chatId, mirror.messageId).catch(ctrlLog.swallow("debug", "removeInlineKeyboard TUI close failed", { chatId }));
-      return;
-    }
-    if (action === "type") {
-      mirror.pendingText = true;
-      mirror.lastText = undefined;
-      await refreshTuiMirror(mirror);
-      return;
-    }
-    if (action === "cancel-type") {
-      mirror.pendingText = false;
-      mirror.lastText = undefined;
-      await refreshTuiMirror(mirror);
-      return;
-    }
-    if (action === "page:next" || action === "page:prev") {
-      const forward = action === "page:next";
-      const before = mirror.selector?.options.map((option) => option.label).join("\u0000") ?? "";
-      // The host renders on its own frame; poll until the window moves (or the
-      // list ends, which is the only way to learn there is nothing more).
-      const windowMoved = async (): Promise<boolean> => {
-        for (let attempt = 0; attempt < 12; attempt += 1) {
-          await sleep(40);
-          let snapshot: TuiSnapshot | undefined;
-          try { snapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { snapshot = undefined; }
-          const parsed = snapshot?.interactive ? parseSelectorText(snapshot.text ?? "") : undefined;
-          const after = parsed?.options.map((option) => option.label).join("\u0000") ?? "";
-          if (after.length > 0 && after !== before) return true;
-        }
-        return false;
-      };
-      let moved = false;
-      if (bridge.key(forward ? "pageDown" : "pageUp")) moved = await windowMoved();
-      // pi's selectors do not implement page keys; when their scroll indicator
-      // proves rows remain, page by walking one window of arrow steps.
-      if (!moved && mirror.selector?.moreBelow === true) {
-        const steps = Math.max(1, mirror.selector.options.length);
-        for (let i = 0; i < steps; i += 1) {
-          if (!bridge.key(forward ? "down" : "up")) break;
-        }
-        moved = await windowMoved();
-      }
-      const paging = mirror.selectorPaging ?? { page: 0, hasNext: true };
-      mirror.selectorPaging = forward
-        ? { page: paging.page + (moved ? 1 : 0), hasNext: moved }
-        : { page: Math.max(0, paging.page - (moved ? 1 : 0)), hasNext: paging.hasNext || moved };
-      mirror.lastText = undefined;
-      mirror.lastKeyboard = undefined;
-      await refreshTuiMirror(mirror);
-      return;
-    }
-    if (action.startsWith("pick:")) {
-      mirror.pendingText = false;
-      const index = Number.parseInt(action.slice("pick:".length), 10);
-      const target = mirror.selector?.options[index];
-      let liveSnapshot: TuiSnapshot | undefined;
-      try { liveSnapshot = bridge.snapshot(TUI_SCREEN_WIDTH); } catch { liveSnapshot = undefined; }
-      const live = liveSnapshot?.interactive ? parseSelectorText(liveSnapshot.text ?? "") : undefined;
-      if (!target || !live) {
-        mirror.lastText = undefined;
-        await deps.transport.sendText(chatId, "That selector changed; tap an item on the refreshed keyboard.", messageThreadId);
-        await refreshTuiMirror(mirror);
-        return;
-      }
-      const liveIndex = live.options.findIndex((option) => option.label === target.label);
-      if (liveIndex === -1) {
-        mirror.lastText = undefined;
-        await deps.transport.sendText(chatId, `"${target.label}" is no longer in this list; tap an item on the refreshed keyboard.`, messageThreadId);
-        await refreshTuiMirror(mirror);
-        return;
-      }
-      const navKeys = selectorNavigateKeys(live, liveIndex);
-      // Checkbox questions toggle: Enter would submit the question (and an
-      // empty submit cancels it). Move onto the row, then press Space.
-      const keys = navKeys && live.multiSelect ? [...navKeys.slice(0, -1), "space"] : navKeys;
-      if (!keys) {
-        mirror.lastText = undefined;
-        await deps.transport.sendText(chatId, "Cannot locate the current item in this dialog; use the arrow keys instead.", messageThreadId);
-        await refreshTuiMirror(mirror);
-        return;
-      }
-      for (const press of keys) {
-        if (!bridge.key(press)) {
-          await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId);
-          tuiMirrors.delete(key);
-          return;
-        }
-      }
-      await sleep(TUI_POLL_INTERVAL_MS * 2);
-      mirror.lastText = undefined;
-      mirror.lastKeyboard = undefined;
-      await refreshTuiMirror(mirror);
-      return;
-    }
-    if (action === "q:prev" || action === "q:next") {
-      if (!bridge.key(action === "q:prev" ? "shift-tab" : "tab")) {
-        await deps.transport.sendText(chatId, "The TUI dialog no longer accepts input.", messageThreadId);
-        tuiMirrors.delete(key);
-        return;
-      }
-      await sleep(TUI_POLL_INTERVAL_MS * 2);
-      mirror.lastText = undefined;
-      mirror.lastKeyboard = undefined;
-      await refreshTuiMirror(mirror);
-      return;
-    }
-    if (action !== "refresh") {
-      if (!bridge.key(action)) {
-        await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId);
-        tuiMirrors.delete(key);
-        return;
-      }
-      await sleep(TUI_POLL_INTERVAL_MS);
-    }
-    mirror.lastText = undefined;
-    await refreshTuiMirror(mirror);
-  };
-
   const unsubscribeLocalTui = bridge.onLocalSubmit((text) => {
     if (deps.isTelegramActive?.() === false) return;
     const command = text.trim();
@@ -1717,7 +999,7 @@ export function createTelegramController(deps: {
       await sleep(450);
       const snapshot = bridge.snapshot(TUI_SCREEN_WIDTH);
       if (!snapshot) return;
-      await deps.transport.sendText(chatId, formatTuiSnapshot(snapshot, snapshot.interactive ? "TUI selector (local)" : "TUI result", snapshot.interactive ? parseSelectorText(snapshot.text ?? "") : undefined))
+      await deps.transport.sendText(chatId, preformatted(clipScreen(snapshot.text ?? "(empty screen)", TUI_SNAPSHOT_MAX_BYTES)))
         .catch(ctrlLog.swallow("warn", "sendText local TUI snapshot failed", { chatId }));
     })();
   });
@@ -1840,7 +1122,6 @@ export function createTelegramController(deps: {
         ui: telegramUi,
         turn,
         uiMode: promptUiMode(),
-        observePrompts: promptMirrorHook(turn),
         run: () => deliverToMainThread(text, chatId, messageThreadId, sourceMessageId),
       }));
     } finally {
@@ -1899,7 +1180,6 @@ export function createTelegramController(deps: {
             ui: telegramUi,
             turn,
             uiMode: promptUiMode(),
-            observePrompts: promptMirrorHook(turn),
             run: async () => {
               // Goal auto-continuations can be streaming without owning an
               // active TelegramTurn. Keep the delivery behavior tied to the
@@ -1918,7 +1198,6 @@ export function createTelegramController(deps: {
         ui: telegramUi,
         turn: existingTurn,
         uiMode: promptUiMode(),
-        observePrompts: promptMirrorHook(existingTurn),
         run: () => session.prompt(text, { source: "interactive", streamingBehavior: "steer" as const }),
       }));
       return;
@@ -2082,10 +1361,11 @@ export function createTelegramController(deps: {
     }
 
     // The flat /tg-* commands were removed; /tg is the only management entry.
-    // Answer unknown tg-* commands here instead of forwarding them to the host
-    // as prompt text. A plugin handler or host-served command that still owns
-    // a tg- name wins over the notice.
-    if (name.startsWith("tg-") && !deps.telegramCommands.has(name)) {
+    // Telegram rewrites '-' to '_' in command names, so both prefixes are the
+    // same command. Answer unknown tg commands here instead of forwarding them
+    // to the host as prompt text. A plugin handler or host-served command that
+    // still owns a tg- name wins over the notice.
+    if ((name.startsWith("tg-") || name.startsWith("tg_")) && !deps.telegramCommands.has(name)) {
       const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
       const catalog = await bridge.getCommands().catch(() => []);
       const served = catalog.some((command) => candidates.has(command.name)
@@ -2108,10 +1388,25 @@ export function createTelegramController(deps: {
       return true;
     }
 
-    // Stage 1 gateway: output-only commands go straight to the host editor.
-    // Native handlers and the screen mirror must not also run for these.
-    if (bridge.isAvailable() && commandGateway.couldHandle(name)) {
-      if (commandGateway.handles(name)) {
+    const handler =
+      deps.telegramCommands.get(name)
+      ?? deps.telegramCommands.get(name.replace(/_/g, "-"))
+      ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
+
+    // Plugin-owned commands stay plugin-local even when the host catalog also
+    // lists the name (v6 决定 48).
+    if (PLUGIN_LOCAL_COMMANDS[name] && handler) {
+      ctrlLog.debug("command route", { name, route: "plugin-local" });
+      recordCommandUsage(name);
+      await runCommandHandler(handler, args, session, chatId, messageThreadId, sourceMessageId, name);
+      return true;
+    }
+
+    // Host control and terminal-only mappings (§9 决定 21/22, §4.8). pi's /new
+    // is the exception the gateway still owns: it calls the host's
+    // ctx.newSession() control API (runNewSession) instead of editor submission.
+    if (NATIVE_HANDLER_COMMANDS[name] && handler) {
+      if (name === "new" && !hostIsOmp()) {
         const handled = await commandGateway.run({
           name,
           args,
@@ -2119,69 +1414,17 @@ export function createTelegramController(deps: {
           transport: deps.transport,
         });
         if (handled) {
-          ctrlLog.debug("command route", { name, route: "gateway" });
+          ctrlLog.debug("command route", { name, route: "gateway-new" });
           recordCommandUsage(name);
           return true;
         }
       }
-    }
-
-    // These commands deliberately use the host selector/confirmation UI when
-    // the bridge is enabled. Telegram-native handlers remain the fallback when
-    // the host catalog does not expose the command.
-    if (TUI_NATIVE_SELECTOR_COMMANDS.has(name)) {
-      const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
-      const catalog = await bridge.getCommands().catch(() => []);
-      const known = catalog.some((command) => candidates.has(command.name)
-        || (command.aliases ?? []).some((alias) => candidates.has(alias)));
-      if (known) {
-        ctrlLog.debug("command route", { name, route: "host-selector" });
-        recordCommandUsage(name);
-        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
-        return true;
-      }
-    }
-
-    const handler =
-      deps.telegramCommands.get(name)
-      ?? deps.telegramCommands.get(name.replace(/_/g, "-"))
-      ?? deps.telegramCommands.get(name.replace(/-/g, "_"));
-
-    // Mirror-first dialogs: with interactive control available, the host's own
-    // UI is the source of truth, so Telegram mirrors it instead of running a
-    // native re-implementation (labels, ordering, status markers and paging
-    // stay identical to the terminal). Applies to every host that serves the
-    // command; the branches below remain as the fallback.
-    if (MIRROR_FIRST_COMMANDS.has(name)) {
-      const mirrorCandidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
-      const mirrorCatalog = await bridge.getCommands().catch(() => []);
-      const served = mirrorCatalog.some((command) => mirrorCandidates.has(command.name)
-        || (command.aliases ?? []).some((alias) => mirrorCandidates.has(alias)));
-      if (served) {
-        ctrlLog.debug("command route", { name, route: "mirror-first" });
-        recordCommandUsage(name);
-        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
-        return true;
-      }
-    }
-
-    if (handler && HOST_CAPABILITY_COMMANDS.has(name) && !nativeHandlerAvailable(name, session, hostIsOmp())) {
-      ctrlLog.debug("command route", { name, route: "capability-missing", hostPrompts: promptUiMode() === "host" });
-      recordCommandUsage(name);
-      const catalog = await bridge.getCommands().catch(() => []);
-      if (catalog.some((command) => command.name === name || (command.aliases ?? []).includes(name))) {
-        void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
-        return true;
-      }
-      await deps.transport.sendText(chatId, hostCommandUnavailableNotice(name), messageThreadId, sourceMessageId);
-      return true;
-    }
-    if (handler) {
-      ctrlLog.debug("command route", { name, route: "telegram-handler", hostPrompts: promptUiMode() === "host" });
+      ctrlLog.debug("command route", { name, route: "telegram-handler" });
       recordCommandUsage(name);
       await runCommandHandler(handler, args, session, chatId, messageThreadId, sourceMessageId, name);
       return true;
     }
+
     const externalCommand =
       session.extensionRunner.getCommand(name)
       ?? session.extensionRunner.getCommand(name.replace(/_/g, "-"))
@@ -2193,15 +1436,25 @@ export function createTelegramController(deps: {
       return true;
     }
 
+    // Every other command the host serves goes to the gateway (§0.1 #4): the
+    // host executes it, OutputCapture returns the output and the Broker owns
+    // any dialog it raises.
     const candidates = new Set([name, name.replace(/_/g, "-"), name.replace(/-/g, "_")]);
     const catalog = await bridge.getCommands().catch(() => []);
     const known = catalog.some((command) => candidates.has(command.name)
       || (command.aliases ?? []).some((alias) => candidates.has(alias)));
     if (known) {
-      ctrlLog.debug("command route", { name, route: "host-catalog" });
-      recordCommandUsage(name);
-      void runTuiCommand(name, args, chatId, messageThreadId, sourceMessageId);
-      return true;
+      const handled = await commandGateway.run({
+        name,
+        args,
+        origin: { chatId, messageThreadId, sourceMessageId },
+        transport: deps.transport,
+      });
+      if (handled) {
+        ctrlLog.debug("command route", { name, route: "gateway" });
+        recordCommandUsage(name);
+        return true;
+      }
     }
     return false;
   };
@@ -2243,6 +1496,18 @@ export function createTelegramController(deps: {
         if (result.clear && pageMessageId !== undefined) {
           await deps.transport.removeInlineKeyboard(chatId, pageMessageId)
             .catch(ctrlLog.swallow("debug", "removeInlineKeyboard dialog keyboard failed", { chatId }));
+        }
+        return;
+      }
+      // The old screen mirror is gone (§0.1 #4): a stale mirror keyboard must
+      // never inject keys - the button only gets the expiry notice.
+      if (data.startsWith(EXPIRED_TUI_CALLBACK_PREFIX)) {
+        await deps.transport.answerCallbackQuery(query.id, "此按钮已过期")
+          .catch(ctrlLog.swallow("debug", "answerCallbackQuery expired-tui failed", { queryId: query.id }));
+        const expiredMessageId = query.message?.message_id;
+        if (expiredMessageId !== undefined) {
+          await deps.transport.removeInlineKeyboard(chatId, expiredMessageId)
+            .catch(ctrlLog.swallow("debug", "removeInlineKeyboard expired-tui failed", { chatId }));
         }
         return;
       }
@@ -2291,12 +1556,6 @@ export function createTelegramController(deps: {
         return;
       }
 
-      const tuiAction = decodeTuiCallback(data);
-      if (tuiAction !== undefined) {
-        await handleTuiCallback(tuiAction, chatId, messageThreadId);
-        return;
-      }
-
       if (data) {
         const messageId = query.message?.message_id;
         await submitText(data, chatId, messageId, messageThreadId, sourceMessageId);
@@ -2325,29 +1584,13 @@ export function createTelegramController(deps: {
         return;
       }
 
-      const pendingTuiMirror = tuiMirrors.get(targetKey(chatId, messageThreadId));
-      if (pendingTuiMirror?.pendingText && message.text !== undefined) {
-        pendingTuiMirror.pendingText = false;
-        pendingTuiMirror.lastText = undefined;
-        // A dialog field is a key sequence, not a document: newlines from a
-        // pasted Telegram message would submit before the text is complete.
-        if (!bridge.write(message.text.replace(/\r?\n/g, " "))) {
-          await deps.transport.sendText(chatId, "The TUI selector no longer accepts input.", messageThreadId, sourceMessageId);
-          tuiMirrors.delete(targetKey(chatId, messageThreadId));
-          return;
-        }
-        await sleep(TUI_POLL_INTERVAL_MS);
-        await refreshTuiMirror(pendingTuiMirror);
-        return;
-      }
-
       const text = normalizeLeadingCommand(rawText, deps.getBotUsername());
       const trimmed = text.trim();
       const replyToInput = message.reply_to_message?.message_id;
       if (trimmed.startsWith("!")) {
         const excludeFromContext = trimmed.startsWith("!!");
         const command = trimmed.slice(excludeFromContext ? 2 : 1).trim();
-        if (dialogBroker.mirrorsFor(chatId, messageThreadId)) {
+        if (dialogBroker.sessionFor(chatId, messageThreadId) !== undefined) {
           // §4.2: the dialog owns the keyboard, so the shell command has nowhere
           // to land; say so instead of queueing it behind the dialog.
           await deps.transport.sendText(chatId, "⚠️ 终端里有对话框正在等待输入：先回答它，或发送 /stop 关闭。", messageThreadId, sourceMessageId)
@@ -2507,7 +1750,6 @@ export function createTelegramController(deps: {
     dispose() {
       dialogBroker.stop();
       unsubscribeLocalTui();
-      tuiMirrors.clear();
       commandGateway.dispose();
     },
   };

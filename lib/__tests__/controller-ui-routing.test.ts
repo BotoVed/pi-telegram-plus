@@ -87,12 +87,12 @@ describe("Telegram controller UI routing", () => {
     const a = defer();
     const b = defer();
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
-      ["a", async (_args, ctx) => {
+      ["status", async (_args, ctx) => {
         await ctx.ui.notify("A start");
         await a.promise;
         await ctx.ui.notify("A end");
       }],
-      ["b", async (_args, ctx) => {
+      ["cwd", async (_args, ctx) => {
         await ctx.ui.notify("B start");
         await b.promise;
         await ctx.ui.notify("B end");
@@ -112,8 +112,8 @@ describe("Telegram controller UI routing", () => {
       tuiBridge: availableBridge(),
     });
 
-    await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/a" });
-    await controller.handleMessage({ message_id: 2, chat: { id: 222 }, from: { id: 1 }, text: "/b" });
+    await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/status" });
+    await controller.handleMessage({ message_id: 2, chat: { id: 222 }, from: { id: 1 }, text: "/cwd" });
     await new Promise((r) => setTimeout(r, 0));
     a.resolve();
     await new Promise((r) => setTimeout(r, 0));
@@ -153,7 +153,7 @@ describe("Telegram controller UI routing", () => {
     const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
     const hold = defer();
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
-      ["a", async (_args, ctx) => {
+      ["status", async (_args, ctx) => {
         await ctx.ui.notify("A running");
         await hold.promise;
       }],
@@ -172,7 +172,7 @@ describe("Telegram controller UI routing", () => {
       tuiBridge: availableBridge(),
     });
 
-    await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/a" });
+    await controller.handleMessage({ message_id: 1, chat: { id: 111 }, from: { id: 1 }, text: "/status" });
     await vi.waitFor(() => expect(currentUi).not.toBe(tuiUi));
 
     // A local terminal call while the command holds the UI: no Telegram turn is
@@ -205,12 +205,12 @@ describe("Telegram controller UI routing", () => {
     const a = defer();
     const b = defer();
     const commands = new Map<string, (args: string, ctx: any) => Promise<void>>([
-      ["n1", async (_args, ctx) => {
+      ["status", async (_args, ctx) => {
         await ctx.ui.notify("n1 start");
         await a.promise;
         await ctx.ui.notify("n1 end");
       }],
-      ["n2", async (_args, ctx) => {
+      ["cwd", async (_args, ctx) => {
         await ctx.ui.notify("n2 start");
         await b.promise;
         await ctx.ui.notify("n2 end");
@@ -230,8 +230,8 @@ describe("Telegram controller UI routing", () => {
       tuiBridge: availableBridge(),
     });
 
-    await controller.handleMessage({ message_id: 1, chat: { id: 555 }, from: { id: 1 }, text: "/n1" });
-    await controller.handleMessage({ message_id: 2, chat: { id: 555 }, from: { id: 1 }, text: "/n2" });
+    await controller.handleMessage({ message_id: 1, chat: { id: 555 }, from: { id: 1 }, text: "/status" });
+    await controller.handleMessage({ message_id: 2, chat: { id: 555 }, from: { id: 1 }, text: "/cwd" });
     await new Promise((r) => setTimeout(r, 0));
     a.resolve();
     await new Promise((r) => setTimeout(r, 0));

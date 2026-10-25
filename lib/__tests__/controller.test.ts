@@ -955,11 +955,11 @@ describe("createTelegramController media message behavior", () => {
     } as any;
 
     const command = new Map<string, (args: string, _ctx: any) => Promise<void>>();
-    command.set("first", async () => {
+    command.set("status", async () => {
       firstStarted.value = true;
       await firstGate;
     });
-    command.set("second", async () => {
+    command.set("cwd", async () => {
       secondStarted.value = true;
     });
 
@@ -998,14 +998,14 @@ describe("createTelegramController media message behavior", () => {
     await controller.handleMessage({
       message_id: 1,
       chat: { id: 999 },
-      text: "/first",
+      text: "/status",
     });
 
     const timeoutRace = await Promise.race([
       controller.handleMessage({
         message_id: 2,
         chat: { id: 999 },
-        text: "/second",
+        text: "/cwd",
       }),
       new Promise<"timeout">((resolve) => {
         setTimeout(() => resolve("timeout"), 50);
@@ -1031,7 +1031,7 @@ describe("createTelegramController media message behavior", () => {
     } as any;
 
     const command = new Map<string, (args: string, _ctx: any) => Promise<void>>();
-    command.set("fail", async () => {
+    command.set("debug", async () => {
       throw new Error("command boom");
     });
 
@@ -1072,7 +1072,7 @@ describe("createTelegramController media message behavior", () => {
     await expect(controller.handleMessage({
       message_id: 1,
       chat: { id: 999 },
-      text: "/fail",
+      text: "/debug",
     })).resolves.toBeUndefined();
 
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1102,7 +1102,7 @@ describe("createTelegramController media message behavior", () => {
     } as any;
 
     const command = new Map<string, (args: string, ctx: any) => Promise<void>>();
-    command.set("mode", async (_args, ctx) => {
+    command.set("cd", async (_args, ctx) => {
       observedMode = ctx.mode;
     });
 
@@ -1139,7 +1139,7 @@ describe("createTelegramController media message behavior", () => {
     await controller.handleMessage({
       message_id: 1,
       chat: { id: 999 },
-      text: "/mode",
+      text: "/cd",
     });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -1179,7 +1179,7 @@ describe("createTelegramController media message behavior", () => {
     });
 
     const command = new Map<string, (args: string, _ctx: any) => Promise<void>>();
-    command.set("ask", async () => {
+    command.set("pair", async () => {
       const ui = uiRuntime.create(321);
       commandPrompted.confirmed = await ui.confirm("Proceed?", "Are you sure?");
       if (commandPrompted.confirmed) {
@@ -1204,7 +1204,7 @@ describe("createTelegramController media message behavior", () => {
       controller.handleMessage({
         message_id: 1,
         chat: { id: 321 },
-        text: "/ask",
+        text: "/pair",
       }),
       new Promise<"timeout">((resolve) => {
         setTimeout(() => resolve("timeout"), 50);
@@ -1258,7 +1258,7 @@ describe("createTelegramController media message behavior", () => {
 
     let handlerRan = false;
     const command = new Map<string, (args: string, _ctx: any) => Promise<void>>();
-    command.set("enqueue", async () => {
+    command.set("status", async () => {
       handlerRan = true;
       // The command returns immediately, but the enqueued turn keeps the agent busy.
       idle = false;
@@ -1277,7 +1277,7 @@ describe("createTelegramController media message behavior", () => {
       endTelegramTurn: () => undefined,
     });
 
-    await controller.handleMessage({ message_id: 1, chat: { id: 555 }, text: "/enqueue" });
+    await controller.handleMessage({ message_id: 1, chat: { id: 555 }, text: "/status" });
     await new Promise((r) => setTimeout(r, 10));
     expect(handlerRan).toBe(true);
 
@@ -1324,7 +1324,7 @@ describe("createTelegramController media message behavior", () => {
     };
     const uiRuntime = createTelegramUiRuntime({ getSession: () => session, transport });
     const command = new Map<string, (args: string, _ctx: any) => Promise<void>>();
-    command.set("busy", async () => { handlerRan = true; });
+    command.set("status", async () => { handlerRan = true; });
     const controller = createTelegramController({
       getSession: () => session, transport, ui: uiRuntime,
       authorizeUser: async () => true, setActiveChatId: async () => undefined,
@@ -1333,7 +1333,7 @@ describe("createTelegramController media message behavior", () => {
       beginTelegramTurn: () => ({ chatId: 1, queuedAttachments: [], replaceMessageId: undefined }),
       endTelegramTurn: () => undefined,
     });
-    await controller.handleMessage({ message_id: 1, chat: { id: 1 }, text: "/busy" });
+    await controller.handleMessage({ message_id: 1, chat: { id: 1 }, text: "/status" });
     await new Promise((r) => setTimeout(r, 20));
     expect(handlerRan).toBe(true);
     // Agent was not idle at command start → swap restored immediately after handler.

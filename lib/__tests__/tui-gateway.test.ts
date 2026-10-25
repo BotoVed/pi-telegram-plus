@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CommandGateway, isOutputOnlyCommand } from "../tui/gateway.ts";
+import { CommandGateway, type GatewayDeps } from "../tui/gateway.ts";
 import { OriginTracker, IDLE_MS } from "../tui/origin.ts";
 import { OutputCapture, renderComponent } from "../tui/output.ts";
 import { FocusTracker } from "../tui/focus.ts";
@@ -45,17 +45,7 @@ function fakeBridge(result: Promise<unknown>): TuiBridgeAdapter {
   };
 }
 
-describe("stage 1 output-only gateway", () => {
-  it("keeps pi and OMP whitelists host-specific", () => {
-    expect(isOutputOnlyCommand("pi", "session")).toBe(true);
-    expect(isOutputOnlyCommand("pi", "compact")).toBe(true);
-    expect(isOutputOnlyCommand("pi", "settings")).toBe(false);
-    expect(isOutputOnlyCommand("omp", "status")).toBe(false);
-    expect(isOutputOnlyCommand("omp", "settings")).toBe(false);
-    expect(isOutputOnlyCommand("omp", "mcp")).toBe(true);
-    expect(isOutputOnlyCommand("unknown", "session")).toBe(false);
-  });
-
+describe("command gateway", () => {
   it("renders text, markdown and arbitrary components", () => {
     expect(renderComponent({ text: "plain" })).toBe("plain");
     expect(renderComponent({ text: "a\nb" })).toBe("<pre>a\nb</pre>");
@@ -102,7 +92,7 @@ describe("stage 1 output-only gateway", () => {
     expect(writes).toEqual([]);
   });
 
-  it("submits a whitelisted command, captures output and reports completion", async () => {
+  it("submits a host command, captures output and reports completion", async () => {
     vi.useFakeTimers();
     const transport = fakeTransport();
     let draft = "draft text";
@@ -168,21 +158,26 @@ describe("stage 1 output-only gateway", () => {
     origin.end(scope, "idle");
   });
 
-  it("does not claim a non-whitelisted command", async () => {
+  it("claims every command while enabled, none when disabled", async () => {
     const transport = fakeTransport();
     const origin = new OriginTracker({ isEditorFocused: () => true, readDraft: () => "", writeDraft: () => true });
-    const gateway = new CommandGateway({
+    const deps: Omit<GatewayDeps, "isEnabled"> = {
       bridge: fakeBridge(Promise.resolve()),
       origin,
       output: new OutputCapture(transport, origin),
       focus: new FocusTracker(),
-      isEnabled: () => true,
-      hostName: () => "pi",
+      hostName: () => "pi" as const,
       hostState: () => ({ host: "pi", mode: {}, editor: {} }),
-    });
-    expect(gateway.handles("settings")).toBe(false);
-    expect(await gateway.run({ name: "settings", args: "", origin: { chatId: 1 }, transport })).toBe(false);
-    expect(transport.sends).toEqual([]);
+    };
+    const gateway = new CommandGateway({ ...deps, isEnabled: () => true });
+    expect(gateway.handles("settings")).toBe(true);
+    expect(await gateway.run({ name: "settings", args: "", origin: { chatId: 1 }, transport })).toBe(true);
+    expect(transport.sends).toHaveLength(1);
+
+    const disabled = new CommandGateway({ ...deps, isEnabled: () => false });
+    expect(disabled.handles("settings")).toBe(false);
+    expect(await disabled.run({ name: "settings", args: "", origin: { chatId: 1 }, transport })).toBe(false);
+    expect(transport.sends).toHaveLength(1);
   });
 });
 

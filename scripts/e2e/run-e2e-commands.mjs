@@ -152,12 +152,12 @@ function startHost(host, projectDir, agentDir, paneLog, session) {
 
 const rowsOf = (call) => call?.body?.reply_markup?.inline_keyboard;
 const buttonsOf = (call) => (rowsOf(call) ?? []).flat();
-const hasTui = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:tui:"));
-// Full bridge mode brokers dialogs: the keyboard carries `tgplus:dlg:` buttons
-// whose `c/t/v/m` ops are list rows and whose `x` op cancels.
+// Brokered dialogs carry `tgplus:dlg:` keyboards whose `c/t/v/m` ops are list
+// rows, `k` a key name and `x` cancel. The old screen-mirror keyboard
+// (`tgplus:tui:`) was removed (D2): a stale copy only gets the expiry notice.
 const DIALOG_CANCEL = /^tgplus:dlg:[^:]+:\d+:x$/;
 const hasDialog = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:"));
-const isControllable = (call) => hasTui(call) || hasDialog(call);
+const isControllable = (call) => hasDialog(call);
 const hasUi = (call) => buttonsOf(call).some((b) => String(b.callback_data ?? "").startsWith("tgplus:ui:"));
 const lastKeyboardCall = (state, since = 0) => state.calls.slice(since).findLast((c) => Array.isArray(rowsOf(c)));
 const signature = (call) => `${String(call?.body?.text ?? "").slice(0, 200)}|${buttonsOf(call).map((b) => `${b.text}:${b.callback_data}`).join(",")}`;
@@ -287,12 +287,6 @@ async function runHost(host, label, phase = "main") {
         const cancel = buttonsOf(call).find((b) => DIALOG_CANCEL.test(String(b.callback_data ?? "")));
         if (!cancel) return;
         await click(cancel, target).catch(() => undefined);
-        continue;
-      }
-      if (hasTui(call)) {
-        const close = findButton(call, /^(Close|✖|❌|Esc)$/);
-        if (!close) return;
-        await click(close, target).catch(() => undefined);
         continue;
       }
       const back = findButton(call, /^(⬅️ Back|❌ Close|Cancel)$/);
@@ -487,7 +481,7 @@ async function runHost(host, label, phase = "main") {
           state.calls.slice(pickSince).findLast((c) => c.method === "sendMessage" && /MOCK_OK/i.test(String(c.body?.text ?? ""))) ?? false,
           30_000).catch(() => undefined);
         record("ask answered from Telegram", Boolean(reply),
-          `${isControllable(mirror) ? (hasDialog(mirror) ? "broker" : "mirror") : "native"} · ${reply ? "turn completed" : "no follow-up reply"}`);
+          `${hasDialog(mirror) ? "broker" : "native"} · ${reply ? "turn completed" : "no follow-up reply"}`);
       }
     }
     await settle();
@@ -774,11 +768,10 @@ async function runHost(host, label, phase = "main") {
   // ── Login / logout / settings ─────────────────────────────────────────
   try {
     const call = await dispatch("/login");
-    const isTui = hasTui(call);
     const isDialog = hasDialog(call);
     const isNative = hasUi(call);
-    record("menu /login opens", isTui || isDialog || isNative || /login|provider/i.test(String(call.body?.text ?? "")),
-      `${isTui ? "tui" : isDialog ? "dialog" : isNative ? "native" : "text"} · ${buttonsOf(call).map((b) => b.text).join(" / ").slice(0, 90)}`);
+    record("menu /login opens", isDialog || isNative || /login|provider/i.test(String(call.body?.text ?? "")),
+      `${isDialog ? "dialog" : isNative ? "native" : "text"} · ${buttonsOf(call).map((b) => b.text).join(" / ").slice(0, 90)}`);
     await settle();
   } catch (error) {
     record("menu /login opens", false, String(error.message).slice(0, 200));
@@ -796,37 +789,28 @@ async function runHost(host, label, phase = "main") {
   try {
     const since = await cursor();
     const first = await dispatch("/settings");
-    // The command first acknowledges itself ("TUI command"); the interactive
-    // mirror then arrives as an edit carrying tgplus:tui: controls.
-    const mirror = isControllable(first) ? first : await waitFor("settings mirror", (state) => {
+    // The gateway acks the command ("▶️ /settings"); the dialog itself arrives
+    // as the brokered `tgplus:dlg:` keyboard (§0.1 #4: the host executes, the
+    // Broker presents the dialog it raises).
+    const mirror = isControllable(first) ? first : await waitFor("settings dialog", (state) => {
       const hit = state.calls.slice(since).findLast((entry) => Array.isArray(rowsOf(entry)) && isControllable(entry));
       return hit ?? false;
     }, 15_000).catch(() => undefined);
     const native = buttonsOf(first).length > 0;
     record("menu /settings opens", (Boolean(mirror) && isControllable(mirror)) || native,
-      mirror ? `tui mirror · ${buttonsOf(mirror).slice(0, 4).map((b) => b.text).join(" / ")}` : String(first.body?.text ?? "").replace(/<[^>]+>/g, "").slice(0, 60));
-    // Cross-check the mirror against the host's real terminal, so this step
-    // cannot pass on a fabricated screen.
+      mirror ? `dialog · ${buttonsOf(mirror).slice(0, 4).map((b) => b.text).join(" / ")}` : String(first.body?.text ?? "").replace(/<[^>]+>/g, "").slice(0, 60));
+    // Cross-check the brokered dialog against the host's real terminal, so this
+    // step cannot pass on a fabricated screen: the Broker builds its buttons
+    // from the host component's own labels, so every label has to exist
+    // verbatim in the terminal.
     if (mirror && hasDialog(mirror)) {
-      // A brokered dialog is built from the host component's own labels, so every
-      // button label has to exist verbatim in the terminal - a fabricated mirror
-      // cannot pass.
       const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
       const words = [...new Set(buttonsOf(mirror)
         .map((b) => String(b.text ?? "").replace(/^[^A-Za-z]+/, "").slice(0, 12))
         .filter((word) => word.length >= 5))];
       const hits = words.filter((word) => pane.includes(word));
-      record("settings mirror matches the host screen", hits.length >= 3,
+      record("settings dialog matches the host screen", hits.length >= 3,
         `${hits.length}/${words.length} dialog labels found in pane · ${hits.slice(0, 3).join(" / ")}`);
-    } else if (mirror && hasTui(mirror)) {
-      const pane = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
-      const plain = String(mirror.body?.text ?? "").replace(/<[^>]+>/g, " ");
-      const phrases = (plain.match(/[A-Za-z][A-Za-z0-9 ._-]{7,30}/g) ?? [])
-        .map((phrase) => phrase.trim())
-        .filter((phrase) => phrase.split(/\s+/).length >= 2);
-      const hits = [...new Set(phrases)].filter((phrase) => pane.includes(phrase));
-      record("settings mirror matches the host screen", hits.length >= 3,
-        `${hits.length} phrases found in pane · ${hits.slice(0, 3).join(" / ")}`);
     }
     await settle();
   } catch (error) {

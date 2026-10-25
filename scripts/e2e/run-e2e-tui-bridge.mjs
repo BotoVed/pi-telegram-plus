@@ -8,8 +8,8 @@
  *
  *   1. BotMenu includes commands discovered from the live host catalog.
  *   2. A local TUI command is mirrored to Telegram without opening a selector.
- *   3. Telegram `/settings` opens the real dialog with either keyboard dialect:
- *      `tgplus:tui:` raw keys (mirror) or `tgplus:dlg:` semantic rows (broker).
+ *   3. Telegram `/settings` opens the real dialog brokered by the plugin:
+ *      `tgplus:dlg:` semantic rows (the screen-mirror keyboard was removed in D2).
  *   4. Rows/keys/cancel reach the real host input path and mirror their
  *      lifecycle; text typed while a dialog owns the input never becomes a prompt.
  *   5. `!cmd` streams output and exit status; dangerous commands can be rejected.
@@ -197,16 +197,15 @@ function messages(state) {
   return state.calls.filter((call) => call.method === "sendMessage" || call.method === "editMessageText");
 }
 
-// Keyboard dialects. `commands` mode mirrors the terminal screen and forwards
-// raw keys (`tgplus:tui:`); `full` mode brokers the dialog itself
+// Keyboard dialect: dialogs are brokered by the plugin
 // (`tgplus:dlg:<session>:<generation>:<op>[:<arg>]`), where `c/t/v/m` are rows,
-// `k` is a key name and `x` is cancel.
+// `k` is a key name and `x` is cancel. The raw-key screen-mirror keyboard
+// (`tgplus:tui:`) was removed in D2 - stale copies only get the expiry notice.
 const DIALOG_PREFIX = "tgplus:dlg:";
 const DIALOG_ROW = /^tgplus:dlg:[^:]+:\d+:(?:[ctvm])(?::|$)/;
 const DIALOG_KEY = /^tgplus:dlg:[^:]+:\d+:k:/;
 const DIALOG_CANCEL = /^tgplus:dlg:[^:]+:\d+:x$/;
-const isControllable = (data) => String(data ?? "").startsWith("tgplus:tui:")
-  || String(data ?? "").startsWith(DIALOG_PREFIX);
+const isControllable = (data) => String(data ?? "").startsWith(DIALOG_PREFIX);
 
 function seedEnvironment(host, runDir) {
   const agentDir = join(runDir, "agent");
@@ -431,54 +430,13 @@ async function runHost(host, piCli, label) {
       entry.method === "answerCallbackQuery" && entry.body?.callback_query_id === callbackId));
   };
 
-  // Legacy keyboard (`tuiBridge: "commands"`): raw keys replayed into the mirror.
-  const runRawKeyExercise = async () => {
-    const exerciseCallback = async (action) => {
-      const before = await controlGet("/_control/log");
-      const editsBefore = before.calls.filter((call) =>
-        call.method === "editMessageText" && call.body?.message_id === mirrorMessageId).length;
-      const callbackId = await injectCallback(`tgplus:tui:${action}`, mirrorMessageId);
-      await waitFor(`${action} callback reaches selector`, (state) => {
-        const answered = state.calls.some((call) =>
-          call.method === "answerCallbackQuery" && call.body?.callback_query_id === callbackId);
-        const edits = state.calls.filter((call) =>
-          call.method === "editMessageText" && call.body?.message_id === mirrorMessageId).length;
-        return answered && edits > editsBefore;
-      });
-    };
-
-    for (const action of ["up", "down", "left", "right", "space", "tab", "refresh"]) {
-      await exerciseCallback(action);
-    }
-    await exerciseCallback("type");
-    await exerciseCallback("cancel-type");
-    await exerciseCallback("type");
-    const beforeText = await controlGet("/_control/log");
-    const textEditsBefore = beforeText.calls.filter((call) =>
-      call.method === "editMessageText" && call.body?.message_id === mirrorMessageId).length;
-    await injectMessage("theme", 7202);
-    await waitFor("typed selector text is mirrored", (state) =>
-      state.calls.filter((call) =>
-        call.method === "editMessageText" && call.body?.message_id === mirrorMessageId).length > textEditsBefore);
-    await exerciseCallback("enter");
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await exerciseCallback("esc");
-      const state = await controlGet("/_control/log");
-      if (state.calls.some((call) =>
-        call.method === "editMessageReplyMarkup" && call.body?.message_id === mirrorMessageId)) break;
-    }
-    await waitFor("Esc callback releases the selector", (state) => state.calls.some((call) =>
-      call.method === "editMessageReplyMarkup" && call.body?.message_id === mirrorMessageId));
-  };
-
   try {
-    if (mirrorMessageId === undefined) throw new Error("no mirror message");
+    if (mirrorMessageId === undefined) throw new Error("no dialog message");
     const buttons = await keyboardOf();
     if (!buttons.some((button) => String(button.callback_data ?? "").startsWith(DIALOG_PREFIX))) {
-      await runRawKeyExercise();
-      record("all TUI key/type/refresh callbacks reach the selector", true);
-    } else {
+      throw new Error("settings dialog is not brokered: no tgplus:dlg: keyboard (unadapted dialog, D4)");
+    }
+    {
       // `full` mode: the keyboard carries semantic buttons resolved against the
       // live component, so the proof is that the terminal reacts to them. The
       // keyboard is re-read before each tap because a brokered action republishes
@@ -521,7 +479,7 @@ async function runHost(host, piCli, label) {
     await injectMessage("/settings", 7203);
     const findClose = (buttons) => buttons.find((button) => {
       const data = String(button.callback_data ?? "");
-      return data === "tgplus:tui:close" || DIALOG_CANCEL.test(data);
+      return DIALOG_CANCEL.test(data);
     });
     const reopened = await waitFor("selector reopened for close callback", (state) => {
       const call = state.calls.slice(callOffset).find((entry) => {
@@ -532,15 +490,15 @@ async function runHost(host, piCli, label) {
     });
     const reopenedMessageId = reopened.body?.message_id ?? reopened.message_id;
     const closeButton = findClose(reopened.body.reply_markup.inline_keyboard.flat());
-    // The invariant shared by both keyboard dialects: cancelling retires the
+    // The invariant of the brokered dialog: cancelling retires the
     // dialog and strips the keyboard, so a stale menu can never be tapped again.
     await injectCallback(String(closeButton.callback_data), reopenedMessageId);
     await waitFor("close callback removes the keyboard", (state) =>
       state.calls.some((call) =>
         call.method === "editMessageReplyMarkup" && call.body?.message_id === reopenedMessageId));
-    record("TUI close callback closes the mirror", true, String(closeButton.callback_data));
+    record("cancel callback retires the dialog keyboard", true, String(closeButton.callback_data));
   } catch (error) {
-    record("TUI close callback closes the mirror", false, String(error.message).slice(0, 400));
+    record("cancel callback retires the dialog keyboard", false, String(error.message).slice(0, 400));
   }
 
   // ── Telegram !bash ─────────────────────────────────────────────────────
@@ -629,17 +587,17 @@ async function runHost(host, piCli, label) {
           .some((button) => isControllable(button.callback_data))) ?? false);
     const loginMirrorMessageId = loginMirror.body?.message_id ?? loginMirror.message_id;
     const loginButtons = (loginMirror.body?.reply_markup?.inline_keyboard ?? []).flat();
-    // Selector keyboards carry per-item buttons: a raw pick in mirror mode, a
-    // `c`/`t` row when the dialog is brokered. Prefer a non-selected item (that
-    // proves the pick path), else fall back to an advertised key.
+    // Selector keyboards carry per-item buttons: the brokered dialog's `c`/`t`
+    // rows. Prefer a non-selected item (that proves the pick path), else fall
+    // back to an advertised key.
     const probeButton = loginButtons.find((button) => {
       const data = String(button.callback_data ?? "");
-      return (data.startsWith("tgplus:tui:pick:") || DIALOG_ROW.test(data))
+      return DIALOG_ROW.test(data)
         && !String(button.text ?? "").startsWith("▸");
     });
     const fallbackButton = probeButton ? undefined : loginButtons.find((button) => {
       const data = String(button.callback_data ?? "");
-      return data === "tgplus:tui:down" || DIALOG_KEY.test(data);
+      return DIALOG_KEY.test(data);
     });
     const probeData = probeButton ? String(probeButton.callback_data)
       : fallbackButton ? String(fallbackButton.callback_data) : undefined;

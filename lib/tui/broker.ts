@@ -13,9 +13,9 @@
  *   style argument; before anything is executed the live component is read
  *   again and the item is looked up by key. A stale button fails, it never acts
  *   on a different row (§4.5 rule 3).
- * - Nothing is invented. If no adapter can read the dialog, the snapshot
- *   adapter mirrors it; if no adapter can perform the action, the button
- *   reports failure rather than guessing at a key sequence.
+ * - Nothing is invented. A screen no adapter can model is not sent at all
+ *   (D4 replaces the silence with an explicit notice); if no adapter can
+ *   perform the action, the button reports failure rather than guessing at a key sequence.
  */
 import { log } from "../logger.ts";
 import type { DialogCallback } from "../callback-protocol.ts";
@@ -215,17 +215,6 @@ export class DialogBroker {
     return session.pendingInput !== undefined || textPurpose(session.model) !== undefined;
   }
 
-  /**
-   * True when a dialog is actually *drawn* in this chat. The mirror fallbacks
-   * gate on this rather than on `hasActive()`: a session can be open with no
-   * Telegram message at all (§4.3 rule 3, a dialog the terminal owns), and
-   * suppressing the mirror for that leaves the chat with no keyboard and no
-   * explanation.
-   */
-  mirrorsFor(chatId: number, messageThreadId?: number): boolean {
-    return this.sessionFor(chatId, messageThreadId) !== undefined;
-  }
-
   // --- focus transitions -----------------------------------------------------
 
   /**
@@ -322,10 +311,11 @@ export class DialogBroker {
     // actions on it (§4.6.1, a dialog is only ever handed to one adapter).
     const adapter = pickAdapterSafely(component, ctx) ?? snapshotAdapter;
     if (adapter === snapshotAdapter) {
-      // A screen no adapter can model belongs to the screen mirror (§4.4): a snapshot
-      // message can show the frame but cannot answer the question, and claiming the
-      // message would silence the mirror - which can still drive it with real keys.
-      brokerLog.debug("screen left to the mirror", { ctor: ctorName(component) });
+      // A screen no adapter can model is not sent to Telegram at all: a
+      // snapshot message can show the frame but cannot answer the question.
+      // D4 replaces this silence with the explicit unsupported-dialog notice
+      // (决定 47).
+      brokerLog.debug("screen not sent: no adapter can model it", { ctor: ctorName(component) });
       return;
     }
     const owner = this.owner();

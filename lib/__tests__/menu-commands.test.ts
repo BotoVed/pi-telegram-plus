@@ -278,6 +278,7 @@ describe("/more overflow keyboard", () => {
     expect(overflow.length).toBeGreaterThan(0);
 
     const handler = vi.fn(async () => undefined);
+    let extensionCommandName = "";
     const telegramCommands = new Map<string, any>();
     const transport = {
       sendButtons: vi.fn(async () => ({ message_id: 5 })),
@@ -290,7 +291,7 @@ describe("/more overflow keyboard", () => {
       extensionRunner: {
         getUIContext: () => currentUi,
         setUIContext: (ui: unknown) => { currentUi = ui; },
-        getCommand: () => undefined,
+        getCommand: (name: string) => (name === extensionCommandName ? { handler } : undefined),
         createCommandContext: () => ({}),
       },
     } as any;
@@ -323,7 +324,7 @@ describe("/more overflow keyboard", () => {
     const runName = target.value.slice("tgplus:run:".length);
     expect(target.text).toBe(`/${runName}`);
 
-    telegramCommands.set(runName, handler);
+    extensionCommandName = runName;
     await controller.handleCallbackQuery({
       id: "q1",
       from: { id: 7 },

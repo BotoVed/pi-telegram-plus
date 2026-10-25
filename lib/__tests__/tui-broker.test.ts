@@ -140,9 +140,9 @@ describe("dialog broker", () => {
     const session = broker.current();
     expect(session?.adapter?.id).toBe("ext-select");
     expect(session?.telegram).toEqual({ chatId: 42, messageThreadId: undefined, messageId: 101 });
-    // The mirror fallback stands down only for the chat that can see the dialog.
-    expect(broker.mirrorsFor(42)).toBe(true);
-    expect(broker.mirrorsFor(7)).toBe(false);
+    // Only the chat that can see the dialog routes its text to the session.
+    expect(broker.sessionFor(42)).toBeDefined();
+    expect(broker.sessionFor(7)).toBeUndefined();
     expect(session?.keyMap.get(0)?.get("0.1")).toBe("1:beta");
   });
 
@@ -154,10 +154,8 @@ describe("dialog broker", () => {
 
     expect(transport.sent).toHaveLength(0);
     expect(broker.hasActive()).toBe(true);
-    // No chat owns it, so no Telegram message may claim it - and the mirror
-    // fallback must keep working, or the chat gets no keyboard at all.
+    // No chat owns it, so no Telegram message may claim it.
     expect(broker.sessionFor(42)).toBeUndefined();
-    expect(broker.mirrorsFor(42)).toBe(false);
   });
 
   it("walks the host key path on a row tap and retires the message", async () => {
@@ -377,11 +375,11 @@ describe("dialog broker", () => {
     expect(transport.edits[0]?.chatId).toBe(7);
     expect(transport.edits[0]?.messageId).toBe(555);
     // The scope wins over the chat the user last touched.
-    expect(broker.mirrorsFor(7, 3)).toBe(true);
-    expect(broker.mirrorsFor(42)).toBe(false);
+    expect(broker.sessionFor(7, 3)).toBeDefined();
+    expect(broker.sessionFor(42)).toBeUndefined();
   });
 
-  it("leaves a progress panel to the screen mirror", async () => {
+  it("does not open a session for a progress panel", async () => {
     const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
     // A spinner takes the keyboard only so Esc can interrupt: drawing a keyboard for
     // it would put a message in the chat before the real dialog has even opened, and
@@ -391,7 +389,7 @@ describe("dialog broker", () => {
 
     expect(transport.sent).toHaveLength(0);
     expect(broker.hasActive()).toBe(false);
-    expect(broker.mirrorsFor(42)).toBe(false);
+    expect(broker.sessionFor(42)).toBeUndefined();
   });
 
   it("keeps a dialog answerable while a progress panel holds the keyboard", async () => {
