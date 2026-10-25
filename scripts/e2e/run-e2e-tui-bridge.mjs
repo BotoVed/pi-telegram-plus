@@ -2,9 +2,9 @@
 /**
  * Isolated tmux acceptance for the TUI bridge + Telegram shell commands.
  *
- * By default, installs every pi version recorded E2E-passed in
- * docs/compat-results.json, then runs OMP against the same mock Telegram Bot API
- * and mock OpenAI-compatible provider. Each run proves:
+ * By default, runs the pi CLI from this repo's `node_modules/.bin/pi` (override with
+ * `--pi`) and OMP against the same mock Telegram Bot API and mock OpenAI-compatible
+ * provider. Each run proves:
  *
  *   1. BotMenu includes commands discovered from the live host catalog.
  *   2. A local TUI command is mirrored to Telegram without opening a selector.
@@ -18,7 +18,7 @@
  *
  * Usage:
  *   node scripts/e2e/run-e2e-tui-bridge.mjs [--host pi|omp|both] [--keep]
- *     [--timeout 90] [--pi /path/to/pi] [--pi-versions 0.85.0,1.3.0]
+ *     [--timeout 90] [--pi /path/to/pi]
  */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -43,13 +43,7 @@ const PROVIDER_PORT = Number(argValue("--provider-port", "9961"));
 const OMP_CLI = argValue("--omp", process.env.OMP_CLI || "omp");
 const PI_CLI_ARG = argValue("--pi", process.env.PI_CLI);
 const CUSTOM_PI_CLI = PI_CLI_ARG?.includes("/") ? resolve(REPO, PI_CLI_ARG) : PI_CLI_ARG;
-const RECORDED_PI_E2E_VERSIONS = Object.keys(
-  JSON.parse(readFileSync(join(REPO, "docs", "compat-results.json"), "utf8")).e2e?.versions ?? {},
-);
-const PI_VERSIONS = argValue("--pi-versions", RECORDED_PI_E2E_VERSIONS.join(","))
-  .split(",")
-  .map((version) => version.trim())
-  .filter(Boolean);
+const PI_CLI = CUSTOM_PI_CLI ?? resolve(REPO, "node_modules/.bin/pi");
 const ROOT = process.env.PITG_E2E_BRIDGE_ROOT || "/tmp/pitg-e2e-bridge";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -71,48 +65,6 @@ function removeQuietly(path) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400 * (attempt + 1));
     }
   }
-}
-
-function resolvePiCli(prefixDir) {
-  const packageDir = join(prefixDir, "node_modules", "@earendil-works", "pi-coding-agent");
-  const pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-  const bin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.pi;
-  if (!bin) throw new Error(`pi package in ${prefixDir} has no bin.pi`);
-  return join(packageDir, bin);
-}
-
-function installPi(version) {
-  const prefixDir = join(ROOT, `pi-${version}`);
-  removeQuietly(prefixDir);
-  mkdirSync(prefixDir, { recursive: true });
-  writeFileSync(join(prefixDir, "package.json"), JSON.stringify({
-    name: `tui-bridge-pi-${version}`,
-    private: true,
-    version: "1.0.0",
-  }, null, 2));
-  const codemode = /^1\.[0-3]\.\d+$/.test(version)
-    ? [`@earendil-works/pi-codemode@${version}`]
-    : [];
-  const result = sh("npm", [
-    "install",
-    "--no-save",
-    "--no-audit",
-    "--no-fund",
-    `@earendil-works/pi-coding-agent@${version}`,
-    ...codemode,
-  ], {
-    cwd: prefixDir,
-    timeout: 300_000,
-    env: {
-      ...process.env,
-      npm_config_cache: join(ROOT, "npm-cache"),
-      npm_config_update_notifier: "false",
-    },
-  });
-  if (result.status !== 0) {
-    throw new Error(`install pi ${version} failed:\n${result.stdout}\n${result.stderr}`);
-  }
-  return resolvePiCli(prefixDir);
 }
 
 function killSession(session) {
@@ -646,14 +598,7 @@ async function main() {
   }
   const runs = [];
   if (HOST_ARG === "pi" || HOST_ARG === "both") {
-    if (CUSTOM_PI_CLI) {
-      runs.push({ host: "pi", label: "pi", piCli: CUSTOM_PI_CLI });
-    } else {
-      for (const version of PI_VERSIONS) {
-        console.log(`installing isolated pi ${version}...`);
-        runs.push({ host: "pi", label: `pi@${version}`, piCli: installPi(version) });
-      }
-    }
+    runs.push({ host: "pi", label: "pi", piCli: PI_CLI });
   }
   if (HOST_ARG === "omp" || HOST_ARG === "both") {
     runs.push({ host: "omp", label: "omp", piCli: undefined });

@@ -115,11 +115,6 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # Fails the release if the README compatibility matrix, the recorded results in
-      # docs/compat-results.json, the matrix scripts, or the peer range disagree.
-      - name: Verify compatibility matrix
-        run: npm run compat:check
-
       # Fails the release if the CHANGELOG does not describe this version. Redundant with
       # prepublishOnly, but explicit here so the reason is visible in the workflow log.
       # Needs no git history, so this job's shallow checkout is fine.

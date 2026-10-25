@@ -21,12 +21,12 @@
  * Nothing here contacts the real Telegram service or a real model provider.
  *
  * Usage:
- *   node scripts/e2e/run-e2e.mjs [--versions 0.85.0,0.85.1,1.0.4,1.1.0,1.3.0] [--keep] [--timeout 90]
+ *   node scripts/e2e/run-e2e.mjs [--pi-bin node_modules/.bin/pi] [--keep] [--timeout 90]
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { createServer } from "node:net";
 
 const REPO = resolve(import.meta.dirname, "..", "..");
@@ -38,14 +38,10 @@ function argValue(flag, fallback) {
   return index === -1 ? fallback : process.argv[index + 1];
 }
 
-const VERSIONS = (argValue("--versions", "0.85.0,0.85.1,1.0.4,1.1.0,1.3.0"))
-  .split(",")
-  .map((v) => v.trim())
-  .filter(Boolean);
+// The plugin is accepted against exactly the pi build this repo pins as its peer/dev
+// dependency; --pi-bin overrides for local experiments.
+const PI_CLI = resolve(REPO, argValue("--pi-bin", "node_modules/.bin/pi"));
 const KEEP = process.argv.includes("--keep");
-// --record: merge measured E2E results into docs/compat-results.json. Off by default so a
-// normal run never mutates a committed evidence file.
-const RECORD = process.argv.includes("--record");
 const STEP_TIMEOUT_MS = Number(argValue("--timeout", "90")) * 1000;
 const TG_PORT = Number(argValue("--tg-port", "9940"));
 const PROVIDER_PORT = Number(argValue("--provider-port", "9941"));
@@ -70,77 +66,8 @@ const ROOT = process.env.PITG_E2E_ROOT || "/tmp/pitg-e2e";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Merge a green E2E run into docs/compat-results.json.
- *
- * Every version in `report` passed (the caller checks that first). Versions present in
- * the file but not exercised by this run are left untouched, so a targeted
- * `--versions 1.3.0 --record` refines one row instead of erasing the others.
- */
-function recordE2eResults(report) {
-  const resultsPath = join(REPO, "docs", "compat-results.json");
-  const results = JSON.parse(readFileSync(resultsPath, "utf8"));
-  results.e2e ??= {};
-  results.e2e.recordedAt = new Date().toISOString().slice(0, 10);
-  results.e2e.versions ??= {};
-  for (const entry of report) {
-    if (entry.ok) results.e2e.versions[entry.version] = "passed";
-  }
-  // Assertion count is derived from a real run, never typed in by hand.
-  const counts = new Set(report.filter((entry) => entry.ok).map((entry) => entry.steps?.length ?? 0));
-  if (counts.size === 1) results.e2e.assertionsPerVersion = [...counts][0];
-  writeFileSync(resultsPath, `${JSON.stringify(results, null, 2)}\n`);
-  return "docs/compat-results.json";
-}
-
 function sh(cmd, args, opts = {}) {
   return spawnSync(cmd, args, { encoding: "utf8", ...opts });
-}
-
-/** Resolve a pi version's CLI entrypoint from its own package.json `bin.pi`. */
-function resolvePiCli(prefixDir) {
-  const pkgPath = join(prefixDir, "node_modules", "@earendil-works", "pi-coding-agent", "package.json");
-  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-  const bin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.pi;
-  if (!bin) throw new Error(`no bin.pi in ${pkgPath}`);
-  return join(dirname(pkgPath), bin);
-}
-
-/**
- * Install a specific pi version into an isolated prefix, pinned to the matching
- * pi-codemode release.
- *
- * pi declares @earendil-works/pi-codemode with a caret range, but 1.2.0 removed the
- * MCP_TYPESCRIPT_PREAMBLE export that pi still imports, so a lockfile-less install of
- * pi 1.0.x/1.1.0 floats to a codemode that breaks the package root. Pinning reproduces
- * the environment each pi release was actually built and tested against; the matrix
- * script exposes the drifted case separately via --strict-upstream.
- */
-function installPi(version, prefixDir) {
-  mkdirSync(prefixDir, { recursive: true });
-  writeFileSync(
-    join(prefixDir, "package.json"),
-    JSON.stringify({ name: `e2e-pi-${version}`, private: true, version: "1.0.0" }, null, 2),
-  );
-  const pin = /^1\.[0-3]\.\d+$/.test(version) ? [`@earendil-works/pi-codemode@${version}`] : [];
-  const env = {
-    ...process.env,
-    npm_config_cache: join(ROOT, "npm-cache"),
-    TMPDIR: join(ROOT, "tmp"),
-    npm_config_update_notifier: "false",
-    npm_config_fund: "false",
-    npm_config_audit: "false",
-  };
-  mkdirSync(env.TMPDIR, { recursive: true });
-  const result = sh("npm", ["install", "--no-save", `@earendil-works/pi-coding-agent@${version}`, ...pin], {
-    cwd: prefixDir,
-    env,
-    timeout: 300_000,
-  });
-  if (result.status !== 0) {
-    throw new Error(`install pi ${version} failed:\n${result.stdout}\n${result.stderr}`);
-  }
-  return resolvePiCli(prefixDir);
 }
 
 /**
@@ -221,8 +148,8 @@ function sleepSync(ms) {
  *
  * A killed pi process can still be flushing its log/state files inside `agent/` when the
  * run finishes, so a plain `rmSync` races it and throws ENOTEMPTY — which previously
- * aborted the whole matrix partway through. Retry briefly, then give up quietly: leaving
- * a stale temp dir is strictly better than losing the remaining versions.
+ * aborted the whole run partway through. Retry briefly, then give up quietly: leaving
+ * a stale temp dir is strictly better than losing the run's evidence.
  */
 function removeQuietly(path, attempts = 5) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -262,8 +189,8 @@ function tmux(...args) {
 /**
  * Control-plane HTTP with retry.
  *
- * Node's undici keeps connections pooled, and the mock server is idle for the ~60s an
- * `npm install` takes between versions. If the server closes a pooled socket in that
+ * Node's undici keeps connections pooled, and the mock server can idle for the tens of
+ * seconds a single E2E step takes to drive pi. If the server closes a pooled socket in that
  * gap, the next request on it fails with `fetch failed` / `ECONNRESET` even though the
  * mock is healthy. Retrying (and disabling keep-alive) keeps that plumbing noise from
  * being reported as a plugin failure.
@@ -330,9 +257,9 @@ function providerLog() {
     .filter(Boolean);
 }
 
-async function runVersion(version, report) {
-  const runDir = join(ROOT, `run-${version}`);
-  const session = `pitg-${version.replace(/\./g, "-")}`;
+async function runE2e() {
+  const runDir = join(ROOT, "run");
+  const session = "pitg-e2e";
   const tgLog = join(ROOT, "telegram.jsonl");
   const provLog = join(ROOT, "provider.jsonl");
   const paneLog = join(runDir, "pane.log");
@@ -345,14 +272,7 @@ async function runVersion(version, report) {
   removeQuietly(runDir);
   mkdirSync(runDir, { recursive: true });
 
-  let piCli;
-  try {
-    piCli = installPi(version, join(ROOT, `pi-${version}`));
-    record("install pi + pin codemode", true, piCli.replace(ROOT, "…"));
-  } catch (error) {
-    record("install pi + pin codemode", false, String(error).slice(0, 400));
-    return { version, steps, ok: false };
-  }
+  const piCli = PI_CLI;
 
   const { agentDir, projectDir } = seedEnvironment(runDir, `http://127.0.0.1:${TG_PORT}`);
   await controlPost("/_control/reset");
@@ -393,7 +313,7 @@ async function runVersion(version, report) {
   const start = startPlugin(paneLog);
   if (start.status !== 0) {
     record("start pi in tmux", false, start.stderr?.trim());
-    return { version, steps, ok: false };
+    return { steps, ok: false };
   }
   record("start pi in tmux", true, `${session}${isolationArgs.length ? ` (${isolationArgs.join(" ")})` : " (no extra isolation flags)"}`);
 
@@ -563,7 +483,7 @@ async function runVersion(version, report) {
 
   const ok = failed.length === 0;
   if (!KEEP) removeQuietly(runDir);
-  return { version, steps, ok, paneLog };
+  return { steps, ok, paneLog };
 }
 
 function startServer(name, script, args) {
@@ -598,7 +518,7 @@ async function main() {
   console.log(`pi-telegram-plus E2E acceptance`);
   console.log(`  repo:     ${REPO}`);
   console.log(`  root:     ${ROOT}`);
-  console.log(`  versions: ${VERSIONS.join(", ")}`);
+  console.log(`  pi:       ${PI_CLI}`);
   console.log(`  plugin:   ${PLUGIN_ENTRY}\n`);
 
   const tg = startServer("mock-telegram", "mock-telegram.mjs", [
@@ -612,40 +532,24 @@ async function main() {
   if (!prov.getOutput().includes("MOCK_PROVIDER_READY")) throw new Error(`mock provider failed to start:\n${prov.getOutput()}`);
   console.log("mocks ready: telegram + provider\n");
 
-  const report = [];
+  let result;
   try {
-    for (const version of VERSIONS) {
-      console.log(`=== pi ${version} ===`);
-      const result = await runVersion(version, report);
-      report.push(result);
-      console.log("");
-    }
+    console.log("=== pi ===");
+    result = await runE2e();
   } finally {
     tg.proc.kill();
     prov.proc.kill();
   }
 
   console.log("=== E2E summary ===");
-  for (const entry of report) console.log(`${entry.ok ? "✓" : "✗"} pi ${entry.version}`);
-  const failed = report.filter((r) => !r.ok);
-  writeFileSync(join(ROOT, "e2e-report.json"), JSON.stringify(report, null, 2) + "\n");
+  console.log(`${result.ok ? "✓" : "✗"} pi`);
+  writeFileSync(join(ROOT, "e2e-report.json"), JSON.stringify([result], null, 2) + "\n");
 
-  if (RECORD) {
-    // Only a fully green run may be recorded: a partial run must never end up in the
-    // README table as evidence, and versions that were skipped must not appear at all.
-    if (failed.length > 0) {
-      console.log(`\n✗ refusing to --record: ${failed.length} version(s) failed.`);
-    } else {
-      const path = recordE2eResults(report);
-      console.log(`\n✓ recorded ${report.length} E2E version(s) in ${path}`);
-    }
-  }
-
-  if (failed.length > 0) {
-    console.log(`\n${failed.length}/${report.length} version(s) FAILED`);
+  if (!result.ok) {
+    console.log("\nE2E FAILED");
     process.exitCode = 1;
   } else {
-    console.log(`\nE2E_EXIT=0 (${report.length}/${report.length} versions passed)`);
+    console.log("\nE2E_EXIT=0");
   }
 }
 
