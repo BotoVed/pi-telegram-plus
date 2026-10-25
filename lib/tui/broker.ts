@@ -146,14 +146,18 @@ function sameList(previous: DialogModel | undefined, next: DialogModel): boolean
 }
 
 /** Where free text belongs, if it belongs to the dialog at all (§4.5.1). */
-function textPurpose(model: DialogModel): TextPurpose | undefined {
+export function textPurpose(model: DialogModel): TextPurpose | undefined {
   switch (model.kind) {
     case "input":
       return "input";
     case "editor":
       return "editor";
     case "select":
+      return model.search ? "search" : undefined;
     case "settings":
+      // A plugin-side submenu may itself be a text input or a multi-select;
+      // typed text belongs to whatever the submenu shows.
+      if (model.submenu) return textPurpose(model.submenu.model);
       return model.search ? "search" : undefined;
     case "questionnaire":
       return activeQuestion(model)?.allowCustom ? "input" : undefined;

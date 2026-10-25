@@ -8,10 +8,10 @@
  * the message once somebody has answered.
  */
 import { describe, expect, it, vi } from "vitest";
-import { DialogBroker, REFRESH_MS } from "../tui/broker.ts";
+import { DialogBroker, REFRESH_MS, textPurpose } from "../tui/broker.ts";
 import type { BrokerDeps } from "../tui/broker.ts";
 import type { FocusInfo } from "../tui/focus.ts";
-import type { EntryInfo } from "../tui/model.ts";
+import type { DialogModel, EntryInfo } from "../tui/model.ts";
 import type { TelegramTurn } from "../types.ts";
 import type { CommandScope } from "../tui/origin.ts";
 
@@ -744,5 +744,29 @@ describe("page reset when a dialog swaps in a different list", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("textPurpose for settings submenus", () => {
+  const settings = (extra: Partial<Extract<DialogModel, { kind: "settings" }>> = {}): DialogModel => ({
+    kind: "settings",
+    title: "Settings",
+    items: [],
+    ...extra,
+  });
+  const inputModel: DialogModel = { kind: "input", title: "Name", secret: false };
+  const multiModel: DialogModel = { kind: "select", title: "Languages", items: [], total: 0, multi: true };
+
+  it("routes typed text to a submenu input", () => {
+    expect(textPurpose(settings({ submenu: { itemKey: "name", model: inputModel } }))).toBe("input");
+  });
+
+  it("lets the open submenu override the search box: a multi-select takes no text", () => {
+    expect(textPurpose(settings({ search: { query: "the" }, submenu: { itemKey: "langs", model: multiModel } }))).toBeUndefined();
+  });
+
+  it("keeps search the purpose while no submenu is open, and plain settings take no text", () => {
+    expect(textPurpose(settings({ search: { query: "" } }))).toBe("search");
+    expect(textPurpose(settings())).toBeUndefined();
   });
 });

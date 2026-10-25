@@ -20,7 +20,7 @@
  * the list; a strip without chips (name entry) stays with the terminal.
  * Multi-select is T3.2f.
  */
-import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
+import type { AdapterContext, DialogAction, DialogAdapter, DialogItem, DialogModel } from "../model.ts";
 import { setInputValue } from "../keys.ts";
 
 /** What a component may consult while describing itself (§4.11.3); never a clock. */
@@ -84,6 +84,8 @@ type PrefsProps = {
   page?: unknown;
   sections?: readonly PrefsSectionLike[];
   focus?: unknown;
+  /** The program's search text; a string switches the page to search results. */
+  query?: unknown;
 };
 
 type PrefsPageLike = { id?: unknown; label?: unknown; disabled?: unknown };
@@ -458,8 +460,48 @@ function choiceOptions(control: HostRecord): { value: string; label: string }[] 
   return usable;
 }
 
-/** One prefs row as a settings item; controls we cannot edit stay read-only. */
-function prefsRowItem(row: PrefsRowLike): DialogItem & { values?: string[] } {
+/** How many steps a number control may enumerate as buttons before the input opens instead. */
+const MAX_NUMBER_STEPS = 12;
+
+/** How a number control shows `value`: its label when mapped, else the number with its unit. */
+function numberDisplay(control: HostRecord, value: number): string {
+  const named = isObject(control.labels) ? (control.labels as HostRecord)[String(value)] : undefined;
+  if (typeof named === "string") return named;
+  return `${value}${typeof control.unit === "string" ? control.unit : ""}`;
+}
+
+/** The values a number control can cycle between with their display text; undefined when they do not fit. */
+function numberSteps(control: HostRecord): { values: number[]; labels: string[] } | undefined {
+  const { min, max } = control;
+  if (typeof min !== "number" || typeof max !== "number" || !Number.isFinite(min) || !Number.isFinite(max) || max < min) return undefined;
+  const step = typeof control.step === "number" && Number.isFinite(control.step) && control.step > 0 ? control.step : 1;
+  const count = (max - min) / step + 1;
+  if (!Number.isInteger(count) || count > MAX_NUMBER_STEPS) return undefined;
+  const values: number[] = [];
+  const labels: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const value = min + index * step;
+    values.push(value);
+    labels.push(numberDisplay(control, value));
+  }
+  return { values, labels };
+}
+
+/** The values a multi control has on, as plain strings. */
+function multiSelected(control: HostRecord): string[] {
+  return Array.isArray(control.values)
+    ? (control.values as readonly unknown[]).filter((value): value is string => typeof value === "string")
+    : [];
+}
+
+/** The row kinds whose editor this adapter keeps on the Telegram side. */
+type PrefsSubmenuKind = "text" | "number" | "multi";
+
+/** The submenu open on the plugin side, per prefs component: the row it edits and its kind. */
+const prefsSubmenus = new WeakMap<object, { rowId: string; kind: PrefsSubmenuKind }>();
+
+/** One prefs row as a settings item; controls Telegram cannot edit stay read-only. */
+function prefsRowItem(row: PrefsRowLike): DialogItem & { values?: string[]; hasSubmenu?: boolean } {
   const key = row.id as string;
   const label = tspText(row.label);
   const control = isObject(row.control) ? row.control : undefined;
@@ -475,6 +517,25 @@ function prefsRowItem(row: PrefsRowLike): DialogItem & { values?: string[] } {
       value: current ? current.label : typeof control.value === "string" ? control.value : "",
       values: options.map((option) => option.label),
     };
+  }
+  if (control?.k === "number" && typeof control.value === "number") {
+    const steps = numberSteps(control);
+    if (steps) return { key, label, value: numberDisplay(control, control.value), values: steps.labels };
+    return { key, label, value: numberDisplay(control, control.value), hasSubmenu: true };
+  }
+  if (control?.k === "text") {
+    const value = control.secret === true ? "•••" : typeof control.value === "string" ? control.value : "";
+    return { key, label, value, hasSubmenu: true };
+  }
+  if (control?.k === "multi") {
+    const options = choiceOptions(control);
+    const value = multiSelected(control)
+      .map((selected) => options.find((option) => option.value === selected)?.label ?? selected)
+      .join(", ");
+    return { key, label, value, hasSubmenu: true };
+  }
+  if (control?.k === "action") {
+    return { key, label: typeof control.label === "string" && control.label ? control.label : label, value: "", hasSubmenu: true };
   }
   return { key, label, value: "(change it in the terminal)" };
 }
@@ -504,7 +565,117 @@ function prefsChangeEvent(keypath: string, props: PrefsProps, rowKey: string, wa
     const current = options.findIndex((option) => option.value === control.value);
     return { type: "change", key: keypath, item: rowKey, value: options[(current + 1) % options.length].value };
   }
+  if (control.k === "number") {
+    const steps = numberSteps(control);
+    if (!steps) return undefined;
+    if (wanted !== undefined) {
+      const index = steps.labels.indexOf(wanted);
+      if (index < 0) return undefined;
+      return { type: "change", key: keypath, item: rowKey, value: steps.values[index] };
+    }
+    const current = typeof control.value === "number" ? steps.values.indexOf(control.value) : -1;
+    return { type: "change", key: keypath, item: rowKey, value: steps.values[(current + 1) % steps.values.length] };
+  }
   return undefined;
+}
+
+/** The submenu model for the row this adapter has open; stale state is dropped. */
+function prefsSubmenuModel(owner: object, props: PrefsProps): { itemKey: string; model: DialogModel } | undefined {
+  const state = prefsSubmenus.get(owner);
+  if (!state) return undefined;
+  const row = prefsRows(props).find((candidate) => candidate.id === state.rowId);
+  const control = row && isObject(row.control) ? row.control : undefined;
+  if (!row || !control || control.k !== state.kind || row.disabled) {
+    prefsSubmenus.delete(owner);
+    return undefined;
+  }
+  const title = tspText(row.label);
+  if (state.kind === "multi") {
+    const selected = multiSelected(control);
+    const items = choiceOptions(control).map((option) => ({
+      key: option.value,
+      label: option.label,
+      checked: selected.includes(option.value),
+    }));
+    return { itemKey: state.rowId, model: { kind: "select", title, items, total: items.length, multi: true } };
+  }
+  const secret = state.kind === "text" && control.secret === true;
+  const current = typeof control.value === "string" ? control.value : "";
+  const named = typeof control.placeholder === "string" ? control.placeholder : undefined;
+  const placeholder = state.kind === "number"
+    ? typeof control.value === "number" ? numberDisplay(control, control.value) : undefined
+    : secret
+      ? named
+      : current || named;
+  return {
+    itemKey: state.rowId,
+    model: {
+      kind: "input",
+      title,
+      ...(placeholder ? { placeholder } : {}),
+      secret,
+    },
+  };
+}
+
+/** An action taken while this adapter's own submenu is open on row `state.rowId`. */
+function prefsSubmenuAct(
+  owner: object,
+  keypath: string,
+  props: PrefsProps,
+  state: { rowId: string; kind: PrefsSubmenuKind },
+  action: DialogAction,
+  ctx: AdapterContext,
+): boolean {
+  const row = prefsRows(props).find((candidate) => candidate.id === state.rowId);
+  const control = row && isObject(row.control) ? row.control : undefined;
+  if (!row || row.disabled || !control || control.k !== state.kind) {
+    prefsSubmenus.delete(owner);
+    return false;
+  }
+  const sendChange = (value: unknown): boolean => {
+    const handle = (owner as Partial<Describable>).handleNativeEvent;
+    if (typeof handle !== "function") return false;
+    try {
+      handle.call(owner, { type: "change", key: keypath, item: state.rowId, value });
+    } catch {
+      return false;
+    }
+    try {
+      ctx.requestRender();
+    } catch {
+      // A host without a live renderer has nothing to redraw; the change landed.
+    }
+    return true;
+  };
+  if (action.type === "cancel" || (action.type === "submit" && action.text === undefined)) {
+    // "↩ Back" and the multi-select's "⏎ Submit" leave the editor and nothing else.
+    prefsSubmenus.delete(owner);
+    return true;
+  }
+  if (action.type === "submit" && typeof action.text === "string") {
+    if (state.kind === "multi") return false;
+    let value: string | number = action.text;
+    if (state.kind === "number") {
+      const parsed = Number(action.text);
+      if (!Number.isFinite(parsed)) return false; // the editor stays up for a retry
+      value = parsed;
+    }
+    if (!sendChange(value)) return false;
+    prefsSubmenus.delete(owner);
+    return true;
+  }
+  if (action.type === "toggle" && state.kind === "multi") {
+    if (!choiceOptions(control).some((option) => option.value === action.key)) return false;
+    const selected = multiSelected(control);
+    const next = selected.includes(action.key)
+      ? selected.filter((value) => value !== action.key)
+      : [...selected, action.key];
+    // Every toggle applies on its own (the host's own editor is not open); the
+    // submenu stays up so more options can follow.
+    return sendChange(next);
+  }
+  return false;
 }
 
 export const tspPrefsAdapter: DialogAdapter = {
@@ -518,7 +689,7 @@ export const tspPrefsAdapter: DialogAdapter = {
   read(component, ctx): DialogModel {
     const found = findNode(component, "prefs");
     if (!found) return { kind: "unsupported", what: "OMP settings page closed or no longer a settings page" };
-    const { props } = found;
+    const { owner, props } = found;
     const currentPage = typeof props.page === "string" ? props.page : "";
     const items: (DialogItem & { values?: string[]; hasSubmenu?: boolean })[] = [];
     const pages = Array.isArray(props.pages) ? (props.pages as readonly PrefsPageLike[]) : [];
@@ -531,10 +702,14 @@ export const tspPrefsAdapter: DialogAdapter = {
       if (row.disabled) continue;
       items.push(prefsRowItem(row));
     }
+    const submenu = prefsSubmenuModel(owner, props);
+    const search = typeof props.query === "string" ? { query: props.query } : undefined;
     return {
       kind: "settings",
       title: typeof props.title === "string" ? props.title : "Settings",
       items,
+      ...(submenu ? { submenu } : {}),
+      ...(search && !submenu ? { search } : {}),
     };
   },
 
@@ -543,12 +718,41 @@ export const tspPrefsAdapter: DialogAdapter = {
     const found = findNode(component, "prefs");
     if (!found) return false;
     const { owner, keypath, props } = found;
+    if (action.type === "search") {
+      // The page filters through its own search field: replace its contents
+      // and let the host re-filter (the same path the picker's search takes).
+      if (!setInputValue(component, action.query)) return false;
+      try {
+        ctx.requestRender();
+      } catch {
+        // A host without a live renderer has nothing to redraw; the text landed.
+      }
+      return true;
+    }
+    const submenu = prefsSubmenus.get(owner);
+    if (submenu) return prefsSubmenuAct(owner, keypath, props, submenu, action, ctx);
     let target: unknown;
     if (action.type === "submenu" && action.key.startsWith("page:")) {
       const pageId = action.key.slice("page:".length);
       const pages = Array.isArray(props.pages) ? (props.pages as readonly PrefsPageLike[]) : [];
       if (!pages.some((page) => isObject(page) && page.id === pageId && !page.disabled)) return false;
       target = { type: "action", key: keypath, act: "page", value: pageId, mods: [] };
+    } else if (action.type === "submenu") {
+      const row = prefsRows(props).find((candidate) => candidate.id === action.key);
+      const control = row && isObject(row.control) ? row.control : undefined;
+      if (!row || row.disabled || !control) return false;
+      if (control.k === "action" && typeof control.act === "string") {
+        // An action control fires its own event with its row id as `value`
+        // (what the native backend sends when its button is pressed).
+        target = { type: "action", key: keypath, act: control.act, value: row.id, mods: [] };
+      } else if (control.k === "text" || control.k === "number" || control.k === "multi") {
+        // The host's editor is a terminal widget Telegram cannot type into
+        // later; keep the input on this side and remember the row it edits.
+        prefsSubmenus.set(owner, { rowId: row.id as string, kind: control.k });
+        return true;
+      } else {
+        return false;
+      }
     } else if (action.type === "cycle") {
       target = prefsChangeEvent(keypath, props, action.key, action.value);
       if (!target) return false;

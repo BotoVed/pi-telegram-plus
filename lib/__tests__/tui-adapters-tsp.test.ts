@@ -499,7 +499,7 @@ describe("tsp prefs read", () => {
       { key: "page:general", label: "📄 General", hasSubmenu: true },
       { key: "think", label: "Thinking", value: "On", values: ["On", "Off"] },
       { key: "theme", label: "Theme", value: "Dark", values: ["Dark", "Light"] },
-      { key: "width", label: "Width", value: "(change it in the terminal)" },
+      { key: "width", label: "Width", value: "80", hasSubmenu: true },
     ]);
   });
 });
@@ -578,5 +578,259 @@ describe("tsp prefs act", () => {
     expect(ctx.renders()).toBe(0);
     expect(tspPrefsAdapter.act(component, { type: "submenu", key: "page:general" }, ctx.ctx)).toBe(true);
     expect(ctx.renders()).toBe(1);
+  });
+});
+
+/** A page holding one row of each editable control kind, plus a read-only `keys` row. */
+function controlProps() {
+  return {
+    title: "Settings",
+    pages: [],
+    page: "general",
+    sections: [
+      {
+        id: "s",
+        title: "S",
+        rows: [
+          { id: "temp", label: "Temperature", control: { k: "number", value: 0.5, min: 0, max: 1, step: 0.25 } },
+          { id: "level", label: "Level", control: { k: "number", value: 2, min: 0, max: 10, step: 1, labels: { "0": "off", "2": "low" } } },
+          { id: "width", label: "Width", control: { k: "number", value: 80 } },
+          { id: "name", label: "Name", control: { k: "text", value: "opus", placeholder: "model name" } },
+          { id: "token", label: "Token", control: { k: "text", value: "s3cret", secret: true } },
+          {
+            id: "langs",
+            label: "Languages",
+            control: { k: "multi", values: ["ts"], options: [{ value: "ts", label: "TypeScript" }, { value: "py", label: "Python" }] },
+          },
+          { id: "limits", label: "Provider limits", control: { k: "action", label: "Edit…", act: "edit" } },
+          { id: "binds", label: "Binds", control: { k: "keys", keys: [["ctrl-a"]] } },
+        ],
+      },
+    ],
+  };
+}
+
+const asSubmenuInput = (model: DialogModel) => {
+  const sub = model.kind === "settings" ? model.submenu?.model : undefined;
+  return sub?.kind === "input" ? sub : expect.fail(`not an input submenu: ${sub?.kind ?? "none"}`);
+};
+
+describe("tsp prefs number controls", () => {
+  it("enumerates a range that fits as cycle values, with labels and unit honoured", () => {
+    const model = asSettings(tspPrefsAdapter.read(makeComponent({ k: "prefs", p: controlProps() }), ctxFor()));
+    const temp = model.items.find((item) => item.key === "temp");
+    expect(temp).toEqual({
+      key: "temp",
+      label: "Temperature",
+      value: "0.5",
+      values: ["0", "0.25", "0.5", "0.75", "1"],
+    });
+    const level = model.items.find((item) => item.key === "level");
+    expect(level?.value).toBe("low");
+    expect(level?.values?.[0]).toBe("off");
+  });
+
+  it("opens a plugin-side input for a number without a small range", () => {
+    const model = asSettings(tspPrefsAdapter.read(makeComponent({ k: "prefs", p: controlProps() }), ctxFor()));
+    expect(model.items.find((item) => item.key === "width")).toEqual({
+      key: "width",
+      label: "Width",
+      value: "80",
+      hasSubmenu: true,
+    });
+  });
+
+  it("cycles a small range to the wanted step or to the next one", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "temp", value: "0.75" }, ctxFor())).toBe(true);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "level" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([
+      { type: "change", key: "", item: "temp", value: 0.75 },
+      { type: "change", key: "", item: "level", value: 3 },
+    ]);
+  });
+
+  it("refuses a step label the range does not have and a number it cannot enumerate", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "temp", value: "9" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "cycle", key: "width" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([]);
+  });
+
+  it("submits a typed number as a change and keeps the input open on garbage", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "width" }, ctxFor())).toBe(true);
+    expect(asSubmenuInput(tspPrefsAdapter.read(component, ctxFor())).placeholder).toBe("80");
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "abc" }, ctxFor())).toBe(false);
+    expect(component.events).toEqual([]);
+    // The input stayed up for a retry.
+    expect(asSubmenuInput(tspPrefsAdapter.read(component, ctxFor())).title).toBe("Width");
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "42" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "width", value: 42 }]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+  });
+});
+
+describe("tsp prefs text controls", () => {
+  it("shows the current value and opens a plugin-side input", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.items.find((item) => item.key === "name")).toEqual({
+      key: "name",
+      label: "Name",
+      value: "opus",
+      hasSubmenu: true,
+    });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([]);
+    expect(tspPrefsAdapter.read(component, ctxFor())).toMatchObject({
+      submenu: { itemKey: "name", model: { kind: "input", title: "Name", placeholder: "opus", secret: false } },
+    });
+  });
+
+  it("submits the typed string and closes the input", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor());
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "sonnet" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "change", key: "", item: "name", value: "sonnet" }]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+  });
+
+  it("masks a secret value and never echoes it into the input", () => {
+    const model = asSettings(tspPrefsAdapter.read(makeComponent({ k: "prefs", p: controlProps() }), ctxFor()));
+    expect(model.items.find((item) => item.key === "token")?.value).toBe("•••");
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    tspPrefsAdapter.act(component, { type: "submenu", key: "token" }, ctxFor());
+    const input = asSubmenuInput(tspPrefsAdapter.read(component, ctxFor()));
+    expect(input.secret).toBe(true);
+    expect(input.placeholder).toBeUndefined();
+  });
+
+  it("closes on cancel without sending anything", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor());
+    expect(tspPrefsAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+  });
+});
+
+describe("tsp prefs multi controls", () => {
+  /** A page whose multi row applies every change locally, like the host does. */
+  function liveMulti() {
+    const rows = [
+      {
+        id: "langs",
+        label: "Languages",
+        control: { k: "multi", values: ["ts"] as unknown[], options: [{ value: "ts", label: "TypeScript" }, { value: "py", label: "Python" }] },
+      },
+    ];
+    const props = { title: "Settings", pages: [], page: "general", sections: [{ id: "s", title: "S", rows }] };
+    const events: unknown[] = [];
+    return {
+      events,
+      describe: () => ({ k: "prefs", p: props }),
+      handleNativeEvent: (event: unknown) => {
+        events.push(event);
+        const change = event as { type?: string; item?: string; value?: unknown };
+        if (change.type === "change" && change.item === "langs") rows[0]!.control.values = change.value as unknown[];
+      },
+    };
+  }
+
+  it("shows selected labels and a checked multi-select submenu", () => {
+    const model = asSettings(tspPrefsAdapter.read(liveMulti(), ctxFor()));
+    expect(model.items[0]).toEqual({ key: "langs", label: "Languages", value: "TypeScript", hasSubmenu: true });
+    const component = liveMulti();
+    tspPrefsAdapter.act(component, { type: "submenu", key: "langs" }, ctxFor());
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toEqual({
+      itemKey: "langs",
+      model: {
+        kind: "select",
+        title: "Languages",
+        multi: true,
+        total: 2,
+        items: [
+          { key: "ts", label: "TypeScript", checked: true },
+          { key: "py", label: "Python", checked: false },
+        ],
+      },
+    });
+  });
+
+  it("applies each toggle on its own and keeps the submenu open", () => {
+    const component = liveMulti();
+    tspPrefsAdapter.act(component, { type: "submenu", key: "langs" }, ctxFor());
+    expect(tspPrefsAdapter.act(component, { type: "toggle", key: "ts" }, ctxFor())).toBe(true);
+    expect(tspPrefsAdapter.act(component, { type: "toggle", key: "py" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([
+      { type: "change", key: "", item: "langs", value: [] },
+      { type: "change", key: "", item: "langs", value: ["py"] },
+    ]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu?.itemKey).toBe("langs");
+  });
+
+  it("closes on Submit without a new event and refuses unknown options", () => {
+    const component = liveMulti();
+    tspPrefsAdapter.act(component, { type: "submenu", key: "langs" }, ctxFor());
+    expect(tspPrefsAdapter.act(component, { type: "toggle", key: "rust" }, ctxFor())).toBe(false);
+    expect(tspPrefsAdapter.act(component, { type: "submit" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+  });
+});
+
+describe("tsp prefs action controls and search", () => {
+  it("fires an action control's own event instead of opening a submenu", () => {
+    const component = makeComponent({ k: "prefs", p: controlProps() });
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.items.find((item) => item.key === "limits")).toEqual({
+      key: "limits",
+      label: "Edit…",
+      value: "",
+      hasSubmenu: true,
+    });
+    expect(tspPrefsAdapter.act(component, { type: "submenu", key: "limits" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "edit", value: "limits", mods: [] }]);
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+  });
+
+  it("leaves key bindings read-only", () => {
+    const model = asSettings(tspPrefsAdapter.read(makeComponent({ k: "prefs", p: controlProps() }), ctxFor()));
+    expect(model.items.find((item) => item.key === "binds")?.value).toBe("(change it in the terminal)");
+  });
+
+  it("advertises the search box and types the query into the page's own input", () => {
+    const keys: string[] = [];
+    const props = { ...controlProps(), query: "the" };
+    const component = {
+      keys,
+      describe: () => ({ k: "prefs", p: props }),
+      handleNativeEvent: () => undefined,
+      handleInput: (data: string) => {
+        keys.push(data);
+      },
+    };
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.search).toEqual({ query: "the" });
+    expect(tspPrefsAdapter.act(component, { type: "search", query: "abc" }, ctxFor())).toBe(true);
+    expect(keys).toEqual(["\x15", "a", "b", "c"]);
+  });
+
+  it("hides the search box while a submenu is open", () => {
+    const component = makeComponent({ k: "prefs", p: { ...controlProps(), query: "the" } });
+    tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor());
+    const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
+    expect(model.search).toBeUndefined();
+    expect(model.submenu?.itemKey).toBe("name");
+  });
+
+  it("drops the submenu once its row is gone from the page", () => {
+    const props = controlProps();
+    const component = makeComponent({ k: "prefs", p: props });
+    tspPrefsAdapter.act(component, { type: "submenu", key: "name" }, ctxFor());
+    props.sections = [];
+    expect(asSettings(tspPrefsAdapter.read(component, ctxFor())).submenu).toBeUndefined();
+    expect(tspPrefsAdapter.act(component, { type: "submit", text: "x" }, ctxFor())).toBe(false);
   });
 });
