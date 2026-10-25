@@ -200,14 +200,28 @@ function findNodeVisited<K extends NodeKind>(component: object, kind: K, depth: 
 }
 
 /**
- * True when `component` describes itself as a picker or a settings page - i.e.
- * the TSP adapters below could drive it. Focus classification uses this to tell
- * an OMP dialog (model picker, settings page) from a spinner: OMP's dialogs
- * carry `signal`/`abortController` fields like a loader does. A `describe` that
- * throws describes nothing, so this is false.
+ * True when `component` is an OMP text prompt (login API keys): the root
+ * routes keystrokes through its own `handleNativeEvent` and its description
+ * tree holds an `input` node. Shared by {@link tspInputAdapter}, which drives
+ * such a prompt, and {@link describesDialog}, where focus classification uses
+ * it to tell an OMP login dialog from a spinner.
+ */
+export function describesTextInput(component: object): boolean {
+  if (typeof (component as Partial<Describable>).handleNativeEvent !== "function") return false;
+  return findNode(component, "input") !== undefined;
+}
+
+/**
+ * True when `component` describes itself as something the TSP dialog adapters
+ * below could drive - a picker, a settings page, or a plain text prompt (see
+ * {@link describesTextInput}). Focus classification uses this to tell an OMP
+ * dialog (model picker, settings page, login prompt) from a spinner: OMP's
+ * dialogs carry `signal`/`abortController` fields like a loader does. A
+ * `describe` that throws describes nothing, so this is false.
  */
 export function describesDialog(component: object): boolean {
-  return findNode(component, "picker") !== undefined || findNode(component, "prefs") !== undefined;
+  if (findNode(component, "picker") !== undefined || findNode(component, "prefs") !== undefined) return true;
+  return describesTextInput(component);
 }
 
 /** The catalogue id list, honouring `order` (string entries that exist) when present. */
@@ -930,11 +944,11 @@ export const tspInputAdapter: DialogAdapter = {
   detect(component, ctx) {
     if (ctx.entry?.race) return false; // §4.12: the race owns a raced extension dialog.
     if (ctx.host !== "omp") return false;
-    if (typeof (component as Partial<Describable>).handleNativeEvent !== "function") return false;
+    if (!describesTextInput(component)) return false;
     // A tree that also describes a picker or a settings page belongs to the
     // adapter that owns the dialog; this one only takes plain text prompts.
     if (findNode(component, "picker") !== undefined || findNode(component, "prefs") !== undefined) return false;
-    return findNode(component, "input") !== undefined;
+    return true;
   },
 
   read(component): DialogModel {

@@ -25,6 +25,20 @@ const PICKER_TREE = { k: "picker", p: { title: "Model", items: [{ id: "a", label
 const PREFS_TREE = { k: "prefs", p: { title: "Settings", sections: [{ id: "s", title: "General" }] } };
 const OTHER_TREE = { k: "text", p: { t: "working" }, c: [{ k: "text", p: { t: "..." } }] };
 
+/** OMP's login dialog: a `signal` like a loader's, a text field via TSP. */
+function loginLike(described: unknown, opts: { handleNativeEvent?: boolean } = {}) {
+  const component: Record<string, unknown> = {
+    signal: new AbortController().signal,
+    render: () => "",
+    handleInput: () => undefined,
+    describe: () => described,
+  };
+  if (opts.handleNativeEvent !== false) component.handleNativeEvent = () => undefined;
+  return component;
+}
+
+const INPUT_TREE = { k: "box", p: {}, c: [{ k: "label", p: { t: "Paste your API key" } }, { k: "input", p: { placeholder: "sk-..." } }] };
+
 /** A host UI the test drives directly, on the named host. */
 function fakeHost(host: "pi" | "omp") {
   const editor = { render: () => "", handleInput: () => undefined };
@@ -67,10 +81,40 @@ describe("an OMP component that describes a picker or prefs page is a dialog", (
   });
 });
 
+describe("an OMP component that describes a text field is a dialog", () => {
+  it("classifies the login dialog that carries a signal as a dialog", () => {
+    const { ui, kinds } = fakeHost("omp");
+    ui.setFocus(loginLike(INPUT_TREE));
+    expect(kinds.at(-1)).toBe("dialog");
+  });
+
+  it("keeps a signal-carrying component with no input node on progress", () => {
+    const { ui, kinds } = fakeHost("omp");
+    ui.setFocus(loginLike(OTHER_TREE));
+    expect(kinds.at(-1)).toBe("progress");
+  });
+
+  it("keeps an input description without handleNativeEvent on progress", () => {
+    const { ui, kinds } = fakeHost("omp");
+    ui.setFocus(loginLike(INPUT_TREE, { handleNativeEvent: false }));
+    expect(kinds.at(-1)).toBe("progress");
+  });
+
+  it("on the pi host a described input still means progress", () => {
+    const { ui, kinds } = fakeHost("pi");
+    ui.setFocus(loginLike(INPUT_TREE));
+    expect(kinds.at(-1)).toBe("progress");
+  });
+});
+
 describe("describesDialog", () => {
   it("finds the kind in a nested component's own description", () => {
     const inner = pickerLike(PREFS_TREE);
     expect(describesDialog({ describe: () => ({ k: "box", p: {}, c: [inner] }), handleNativeEvent: () => undefined })).toBe(true);
+  });
+
+  it("accepts a described text field whose root routes events", () => {
+    expect(describesDialog(loginLike(INPUT_TREE))).toBe(true);
   });
 
   it("is false for a describe that throws or a component that has none", () => {
