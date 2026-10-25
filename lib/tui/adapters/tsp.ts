@@ -13,8 +13,9 @@
  * joined with `/`. A child `Component` is a boundary: its nodes live in its
  * own namespace, so the keypath restarts at `""` and events go to the child.
  *
- * Scope: single-select pickers and settings pages. While an extension dialog
- * is racing the host (§4.12), both adapters decline - the race owns the entry.
+ * Scope: single-select pickers, settings pages and OMP's built-in text
+ * prompts (the login dialog's API-key field). While an extension dialog
+ * is racing the host (§4.12), these adapters decline - the race owns the entry.
  * While a picker's action strip is open (the model hub's role chips after
  * activating a model), the picker adapter shows and answers the strip, not
  * the list; a strip without chips (name entry) stays with the terminal.
@@ -94,8 +95,12 @@ type PrefsSectionLike = { id?: unknown; title?: unknown; rows?: unknown };
 
 type PrefsRowLike = { id?: unknown; label?: unknown; hint?: unknown; disabled?: unknown; control?: unknown };
 
+/** The text-field props this adapter reads (`TspInputProps` in pi-wire):
+ * what the field holds (mask dots when the host masks it) and the placeholder. */
+type InputProps = { text?: unknown; placeholder?: unknown };
+
 /** The described kinds this file drives, and the props each one carries. */
-type NodePropsByKind = { picker: PickerProps; prefs: PrefsProps };
+type NodePropsByKind = { picker: PickerProps; prefs: PrefsProps; input: InputProps };
 
 type NodeKind = keyof NodePropsByKind;
 
@@ -833,5 +838,141 @@ export const tspPrefsAdapter: DialogAdapter = {
     const change = target as { type?: unknown; item?: unknown; value?: unknown };
     if (change.type !== "change") return true;
     return typeof change.item === "string" && prefsChangeAdopted(owner, change.item, change.value);
+  },
+};
+
+/** What the document-order scan of a prompt returns: the first `input` node
+ * and the plain text of the last `text` node printed before it - the prompt
+ * line OMP's login dialog puts above the field. */
+type PromptScan = { input: NodeFound<"input">; label?: string };
+
+type ScanState = { lastText?: string };
+
+function scanPromptRoot(component: object, depth: number, visited: Set<object>, state: ScanState): PromptScan | undefined {
+  if (depth > MAX_COMPONENT_DEPTH || visited.has(component)) return undefined;
+  visited.add(component);
+  const root = describeTree(component);
+  if (!root) return undefined;
+  visited.add(root);
+  return scanPromptNode(root, component, depth, visited, state);
+}
+
+/** Depth-first, document order: stop at the first `input` node, remembering
+ * the last non-empty `text` node seen on the way (component boundaries
+ * descend like `walkNode` does, so the login dialog's nested
+ * `TextFormField` is found and the label before it is kept). */
+function scanPromptNode(node: NativeNodeLike, owner: object, depth: number, visited: Set<object>, state: ScanState): PromptScan | undefined {
+  const props = nodeProps(node, "input");
+  if (props) {
+    return { input: { owner, keypath: "", props }, ...(state.lastText === undefined ? {} : { label: state.lastText }) };
+  }
+  if (node.k === "text" && isObject(node.p)) {
+    const text = tspText(node.p.text).trim();
+    if (text) state.lastText = text;
+  }
+  const children = Array.isArray(node.c) ? (node.c as unknown[]) : undefined;
+  if (!children) return undefined;
+  for (const child of children) {
+    if (!isObject(child)) continue;
+    const component = asComponent(child);
+    if (component) {
+      const found = scanPromptRoot(component, depth + 1, visited, state);
+      if (found) return found;
+      continue;
+    }
+    if (visited.has(child)) continue;
+    visited.add(child);
+    const found = scanPromptNode(child as NativeNodeLike, owner, depth, visited, state);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function findPrompt(component: object): PromptScan | undefined {
+  return scanPromptRoot(component, 0, new Set<object>(), {});
+}
+
+/** Trailing hints the terminal needs but Telegram does not ("…, then press
+ * Enter"): the answer arrives through the send button, so the clause says
+ * nothing the user cannot infer. */
+const PROMPT_HINT = /[,;]?\s*(?:and\s+)?(?:then\s+)?press\s+enter\b.*$/i;
+
+/** The prompt line as a Telegram title: hint clause and trailing colon gone. */
+function promptTitle(text: string | undefined): string | undefined {
+  if (!text) return undefined;
+  const title = text.replace(PROMPT_HINT, "").replace(/[:：;.,\s]+$/u, "").trim();
+  return title === "" ? undefined : title;
+}
+
+/** Titles that name a credential: treat the field as secret even when the
+ * host forgot to mask it, so Telegram deletes the answer message. */
+const SECRET_TITLE = /key|token|password|secret/i;
+
+/** Whether the host masks the field: the input's owner component (OMP's
+ * `TextFormField`) or the pi-tui `Input` it wraps carries `mask: true`.
+ * A field read, never a screen. */
+function ownerMasks(owner: object): boolean {
+  const record = owner as HostRecord;
+  if (record.mask === true) return true;
+  const inner = record.input;
+  return isObject(inner) && inner.mask === true;
+}
+
+/**
+ * OMP's built-in text prompts (login API keys): the host describes the field
+ * as an `input` node and takes `{ act: "submit" | "cancel" }` on its root.
+ * The answer is typed through the root's own `handleInput` (the same
+ * delegation the terminal does), never by parsing what is on screen.
+ */
+export const tspInputAdapter: DialogAdapter = {
+  id: "tsp-input",
+
+  detect(component, ctx) {
+    if (ctx.entry?.race) return false; // §4.12: the race owns a raced extension dialog.
+    if (ctx.host !== "omp") return false;
+    if (typeof (component as Partial<Describable>).handleNativeEvent !== "function") return false;
+    // A tree that also describes a picker or a settings page belongs to the
+    // adapter that owns the dialog; this one only takes plain text prompts.
+    if (findNode(component, "picker") !== undefined || findNode(component, "prefs") !== undefined) return false;
+    return findNode(component, "input") !== undefined;
+  },
+
+  read(component): DialogModel {
+    const found = findPrompt(component);
+    if (!found) return { kind: "unsupported", what: "OMP text prompt closed or no longer an input" };
+    const title = promptTitle(found.label) ?? "Input";
+    const secret = ownerMasks(found.input.owner) || SECRET_TITLE.test(title);
+    const placeholder = tspText(found.input.props.placeholder).trim();
+    return { kind: "input", title, ...(placeholder ? { placeholder } : {}), secret };
+  },
+
+  act(component, action, ctx) {
+    // Never act on a stale tree: the prompt may be gone underneath us.
+    if (findNode(component, "input") === undefined) return false;
+    const handle = (component as Partial<Describable>).handleNativeEvent;
+    if (typeof handle !== "function") return false;
+    let event: unknown;
+    if (action.type === "submit") {
+      // The dialog routes keystrokes to its current field: clear it, then
+      // type. Enter is the `submit` action below, not a raw newline.
+      if (!setInputValue(component, action.text ?? "")) return false;
+      event = { type: "action", key: "", act: "submit", mods: [] };
+    } else if (action.type === "cancel") {
+      event = { type: "action", key: "", act: "cancel", mods: [] };
+    } else {
+      return false;
+    }
+    try {
+      handle.call(component, event);
+    } catch {
+      return false;
+    }
+    // Same as the picker/prefs adapters: the host only repaints on request (3E).
+    try {
+      ctx.requestRender();
+    } catch {
+      // A host without a live renderer has nothing to redraw; the act landed.
+    }
+    return true;
   },
 };

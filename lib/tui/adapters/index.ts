@@ -17,12 +17,13 @@ import { infoPanelAdapter, unsupportedAdapter } from "./panel.ts";
 import { piListAdapter, piSessionAdapter, piTreeAdapter } from "./pi-lists.ts";
 import { piLoginAdapter } from "./pi-login.ts";
 import { piSettingsAdapter } from "./pi-settings.ts";
-import { tspPickerAdapter, tspPrefsAdapter } from "./tsp.ts";
+import { tspInputAdapter, tspPickerAdapter, tspPrefsAdapter } from "./tsp.ts";
 
 export const DIALOG_ADAPTERS: DialogAdapter[] = [
   // OMP's own semantic descriptions beat any frame reading, on OMP only.
   tspPickerAdapter,
   tspPrefsAdapter,
+  tspInputAdapter,
   askDialogAdapter,
   approvalAdapter,
   customGoalAdapter,
@@ -63,6 +64,7 @@ export {
   piSessionAdapter,
   piSettingsAdapter,
   piTreeAdapter,
+  tspInputAdapter,
   tspPickerAdapter,
   tspPrefsAdapter,
   unsupportedAdapter,

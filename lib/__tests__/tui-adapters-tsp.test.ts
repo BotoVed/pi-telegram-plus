@@ -8,7 +8,7 @@
  * The prefs tests pin the settings-page mapping and the §4.12 race hand-off.
  */
 import { describe, expect, it } from "vitest";
-import { findPicker, tspPickerAdapter, tspPrefsAdapter } from "../tui/adapters/tsp.ts";
+import { findPicker, tspInputAdapter, tspPickerAdapter, tspPrefsAdapter } from "../tui/adapters/tsp.ts";
 import type { AdapterContext, DialogModel } from "../tui/model.ts";
 
 type Node = { k: string; p?: unknown; c?: unknown[]; key?: string };
@@ -931,5 +931,87 @@ describe("tsp prefs read-back, search and stale submenu", () => {
     const model = asSettings(tspPrefsAdapter.read(component, ctxFor()));
     expect(model.submenu).toBeUndefined();
     expect(model.search).toEqual({ query: "" });
+  });
+});
+
+/**
+ * OMP's `LoginDialogComponent`: a prompt line, then a nested input component
+ * (`TextFormField`); the root routes keystrokes to the field and takes
+ * submit/cancel through its own `handleNativeEvent`.
+ */
+function makeLoginDialog(opts: { mask?: "self" | "inner" | "none"; label?: string; extra?: Node[] } = {}) {
+  const keys: string[] = [];
+  const events: unknown[] = [];
+  const field: Record<string, unknown> = {
+    describe: () => ({ k: "input", p: { text: "", placeholder: "sk-..." } }),
+    handleNativeEvent: () => undefined,
+    handleInput: (data: string) => { keys.push(data); },
+  };
+  if (opts.mask === "inner") field.input = { mask: true };
+  else if (opts.mask !== "none") field.mask = true;
+  return {
+    keys,
+    events,
+    describe: () => ({
+      k: "col",
+      c: [
+        { k: "text", p: { text: opts.label ?? "Paste your API key:" } },
+        ...(opts.extra ?? []),
+        field,
+      ],
+    }),
+    handleNativeEvent: (event: unknown) => { events.push(event); },
+    handleInput: (data: string) => { keys.push(data); },
+  };
+}
+
+describe("tsp input adapter (OMP built-in text prompts)", () => {
+  it("detects the login dialog and titles the field after its prompt line", () => {
+    const component = makeLoginDialog();
+    expect(tspInputAdapter.detect(component, ctxFor())).toBe(true);
+    expect(tspInputAdapter.read(component, ctxFor())).toEqual({
+      kind: "input",
+      title: "Paste your API key",
+      placeholder: "sk-...",
+      secret: true,
+    });
+  });
+
+  it("types the answer through the dialog's own handleInput, then submits", () => {
+    const component = makeLoginDialog();
+    const { ctx, renders } = countingCtx();
+    expect(tspInputAdapter.act(component, { type: "submit", text: "sk-test-123" }, ctx)).toBe(true);
+    expect(component.keys).toEqual(["\x15", ..."sk-test-123"]);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "submit", mods: [] }]);
+    expect(renders()).toBe(1);
+  });
+
+  it("cancels with the native cancel action", () => {
+    const component = makeLoginDialog();
+    expect(tspInputAdapter.act(component, { type: "cancel" }, ctxFor())).toBe(true);
+    expect(component.events).toEqual([{ type: "action", key: "", act: "cancel", mods: [] }]);
+    expect(component.keys).toEqual([]);
+  });
+
+  it("declines a tree that also describes a picker", () => {
+    const component = makeLoginDialog({ extra: [{ k: "picker", p: pickerProps }] });
+    expect(tspInputAdapter.detect(component, ctxFor())).toBe(false);
+  });
+
+  it("declines a raced dialog and the pi host", () => {
+    expect(tspInputAdapter.detect(makeLoginDialog(), racedCtx())).toBe(false);
+    expect(tspInputAdapter.detect(makeLoginDialog(), ctxFor("pi"))).toBe(false);
+  });
+
+  it("reads the mask from the wrapped Input and secrets from the title", () => {
+    expect(tspInputAdapter.read(makeLoginDialog({ mask: "inner" }), ctxFor())).toMatchObject({ secret: true });
+    const keyword = makeLoginDialog({ mask: "none", label: "Enter your token, then press Enter" });
+    expect(tspInputAdapter.read(keyword, ctxFor())).toMatchObject({ title: "Enter your token", secret: true });
+    const plain = makeLoginDialog({ mask: "none", label: "Bot name:" });
+    expect(tspInputAdapter.read(plain, ctxFor())).toMatchObject({ title: "Bot name", secret: false });
+  });
+
+  it("falls back to a plain title when the prompt line is gone", () => {
+    expect(tspInputAdapter.read(makeLoginDialog({ label: "" }), ctxFor())).toMatchObject({ title: "Input" });
   });
 });
