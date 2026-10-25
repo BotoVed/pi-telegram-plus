@@ -10,7 +10,7 @@
  *   question       one title, one option list
  *   questionnaire  a tab bar with two or more questions, then the active one
  *
- * Anything else that arrives through `custom` is left to the snapshot adapter:
+ * Anything else that arrives through `custom` is reported as unsupported:
  * guessing at an unknown layout is how the old text matcher lost. pi-goal 0.7
  * changes the wording, the tab bar and the "Write your own answer" row, so the
  * parse below is deliberately narrow and fails closed.
@@ -133,7 +133,7 @@ export const customGoalAdapter: DialogAdapter = {
 
   read(component, ctx): DialogModel {
     const shape = parseGoalRender(renderText(component));
-    if (!shape) return { kind: "snapshot", text: renderText(component) };
+    if (!shape) return { kind: "unsupported", title: ctx.entry?.title, what: "goal-custom: render shape not recognised" };
 
     if (shape.shape === "confirm") {
       return { kind: "confirm", title: shape.title, message: shape.message };

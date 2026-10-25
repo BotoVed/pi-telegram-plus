@@ -13,14 +13,15 @@
  *   style argument; before anything is executed the live component is read
  *   again and the item is looked up by key. A stale button fails, it never acts
  *   on a different row (§4.5 rule 3).
- * - Nothing is invented. A screen no adapter can model is not sent at all
- *   (D4 replaces the silence with an explicit notice); if no adapter can
- *   perform the action, the button reports failure rather than guessing at a key sequence.
+ * - Nothing is invented. A screen no adapter can model is announced as
+ *   unsupported (§4.6.5 #13): the chat gets one plain notice and a cancel
+ *   button, never a mirrored frame or a guessed key sequence; if no adapter can
+ *   perform an action, the button reports failure rather than guessing.
  */
 import { log } from "../logger.ts";
 import type { DialogCallback } from "../callback-protocol.ts";
 import type { TelegramTransport, TelegramTurn } from "../types.ts";
-import { pickAdapter, snapshotAdapter } from "./adapters/index.ts";
+import { pickAdapter, unsupportedAdapter } from "./adapters/index.ts";
 import { renderText } from "./adapters/utils.ts";
 import { currentHostState } from "./host.ts";
 import { sendKeyTo } from "./keys.ts";
@@ -45,7 +46,7 @@ export const EDIT_THROTTLE_MS = 1_000;
 /** §4.7.1: only the last few generations of button identity are kept. */
 const KEEP_GENERATIONS = 3;
 
-export type TextPurpose = "input" | "editor" | "search" | "type";
+export type TextPurpose = "input" | "editor" | "search";
 
 /**
  * The slice of the focus view the broker reads (§4.4). The real FocusTracker
@@ -126,8 +127,6 @@ function textPurpose(model: DialogModel): TextPurpose | undefined {
       return "input";
     case "editor":
       return "editor";
-    case "snapshot":
-      return "type";
     case "select":
     case "settings":
       return model.search ? "search" : undefined;
@@ -239,8 +238,8 @@ export class DialogBroker {
       }
       // A progress widget - the spinner that holds the keyboard so Esc can interrupt -
       // is not a question. Drawing it would put a keyboard in the chat before the
-      // dialog anyone asked for has opened, and the screen mirror still shows the
-      // frame (§4.5 rule 1). A component with a recorded entry classifies as
+      // dialog anyone asked for has opened, and the terminal shows the spinner
+      // anyway (§4.5 rule 1). A component with a recorded entry classifies as
       // "dialog", so this only skips panels no adapter could answer anyway.
       if (info.kind === "progress") {
         // The spinner holds the keyboard so Esc can interrupt the turn; the question behind
@@ -309,15 +308,7 @@ export class DialogBroker {
     const ctx = this.context(component, info);
     // One adapter for the life of the dialog: the one that read it owns the
     // actions on it (§4.6.1, a dialog is only ever handed to one adapter).
-    const adapter = pickAdapterSafely(component, ctx) ?? snapshotAdapter;
-    if (adapter === snapshotAdapter) {
-      // A screen no adapter can model is not sent to Telegram at all: a
-      // snapshot message can show the frame but cannot answer the question.
-      // D4 replaces this silence with the explicit unsupported-dialog notice
-      // (决定 47).
-      brokerLog.debug("screen not sent: no adapter can model it", { ctor: ctorName(component) });
-      return;
-    }
+    const adapter = pickAdapterSafely(component, ctx) ?? unsupportedAdapter;
     const owner = this.owner();
     const session: DialogSession = {
       id: `${Date.now().toString(36)}.${(this.sequence++).toString(36)}`,
@@ -328,7 +319,7 @@ export class DialogBroker {
       root: info.root,
       kind: info.kind === "progress" ? "progress" : "dialog",
       adapter,
-      model: this.read(component, ctx, adapter) ?? { kind: "snapshot", text: renderText(component).trim() },
+      model: this.read(component, ctx, adapter) ?? { kind: "unsupported", what: `${adapter.id}: read failed` },
       owner: owner.origin,
       ownerFromScope: owner.fromScope,
       entry: ctx.entry,
@@ -490,8 +481,8 @@ export class DialogBroker {
 
     // The adapter types into the component's own field, which keeps cursor and
     // undo state coherent and works without a terminal to type into. A raw
-    // write is the fallback for dialogs no adapter can drive (a screen
-    // snapshot, a search filter that re-filters as it types).
+    // write is the fallback for dialogs no adapter can drive (a search filter
+    // that re-filters as it types).
     const subject = (session.subject ?? session.focus) as Record<string, unknown>;
     const ctx = this.context(subject, this.deps.focus.current());
     const driven = purpose === "input" || purpose === "editor"
@@ -625,7 +616,7 @@ export class DialogBroker {
   }
 
   private read(component: Record<string, unknown>, ctx: AdapterContext, adapter?: DialogAdapter): DialogModel | undefined {
-    const picked = adapter ?? pickAdapterSafely(component, ctx) ?? snapshotAdapter;
+    const picked = adapter ?? pickAdapterSafely(component, ctx) ?? unsupportedAdapter;
     try {
       return picked.read(component, ctx);
     } catch (err) {
@@ -839,7 +830,7 @@ export class DialogBroker {
       case "s":
         return { kind: "text", purpose: "search" };
       case "i":
-        return { kind: "text", purpose: model.kind === "snapshot" ? "type" : "input" };
+        return { kind: "text", purpose: "input" };
       case "y":
       case "n":
         return {

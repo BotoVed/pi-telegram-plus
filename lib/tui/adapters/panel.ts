@@ -5,16 +5,15 @@
  * typed while it is up (a loader, a history view, a debug view). It gets an
  * info model: the text plus one way out.
  *
- * A *snapshot* is the last resort for anything interactive we cannot parse:
- * the Telegram message shows what the terminal shows, plus the few keys the
- * dialog's own legend advertises. It is a safety net, not a translation — a
- * long list still cannot be scrolled, which is why every real selector is
- * supposed to get its own adapter.
+ * *Unsupported* is the last resort for anything interactive we cannot parse:
+ * the Telegram message says plainly that the dialog needs the terminal, and
+ * Escape is the only key that ever goes in. We never mirror the screen —
+ * arrow keys over an unparsed frame guess at what the dialog meant (§4.6.5 #13,
+ * 决定 47).
  */
 import type { DialogAdapter, DialogModel } from "../model.ts";
 import { isReadOnlyPanel } from "../find-shape.ts";
-import { setInputValue } from "../keys.ts";
-import { renderText } from "./utils.ts";
+import { constructorName, renderText } from "./utils.ts";
 
 /**
  * Whether Escape does more than close the view. pi's `BorderedLoader` keeps no
@@ -47,32 +46,21 @@ export const infoPanelAdapter: DialogAdapter = {
   },
 };
 
-/** The keys a snapshot may send, and only these. */
-const SNAPSHOT_KEYS = new Set(["up", "down", "enter", "esc"]);
-
-export const snapshotAdapter: DialogAdapter = {
-  id: "snapshot",
+export const unsupportedAdapter: DialogAdapter = {
+  id: "unsupported",
   detect() {
     // Last in the registry: it matches anything, so it must be asked last.
     return true;
   },
 
   read(component, ctx): DialogModel {
-    const text = ctx.snapshot?.(80) ?? renderText(component);
-    return { kind: "snapshot", text: text.trim() };
+    // No frame is read: there is nothing to mirror, only something to name.
+    const what = ctx.entry?.method ?? (constructorName(component) || "unknown");
+    return { kind: "unsupported", title: ctx.entry?.title, what };
   },
 
-  act(component, action, ctx) {
-    if (action.type === "cancel") return ctx.sendKey("esc");
-    if (action.type === "key") {
-      const name = action.name.toLowerCase();
-      return SNAPSHOT_KEYS.has(name) ? ctx.sendKey(name) : false;
-    }
-    if (action.type === "submit") {
-      const text = action.text ?? "";
-      if (!setInputValue(component, text)) return false;
-      return ctx.sendKey("enter");
-    }
-    return false;
+  act(_component, action, ctx) {
+    // Escape is the only thing that ever goes in.
+    return action.type === "cancel" ? ctx.sendKey("esc") : false;
   },
 };

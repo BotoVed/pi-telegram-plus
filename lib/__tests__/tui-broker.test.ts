@@ -158,6 +158,53 @@ describe("dialog broker", () => {
     expect(broker.sessionFor(42)).toBeUndefined();
   });
 
+  it("announces a dialog Telegram cannot handle with only a cancel button", async () => {
+    const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
+    const keys: string[] = [];
+    const component: Record<string, unknown> = {
+      render: () => "weird frame",
+      handleInput: (input: string) => {
+        keys.push(input);
+      },
+    };
+    focus.openDialog(component);
+    await settle();
+
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.sent[0]?.text).toContain("无法处理");
+    // The frame itself is never mirrored, only named.
+    expect(transport.sent[0]?.text).not.toContain("weird frame");
+    const buttons = transport.sent[0]!.rows.flat() as Array<{ text: string }>;
+    expect(buttons.map((button) => button.text)).toEqual(["取消"]);
+
+    const session = broker.current();
+    expect(session?.adapter?.id).toBe("unsupported");
+    const result = broker.handleCallback(42, undefined, {
+      sessionId: session?.id ?? "",
+      generation: 0,
+      op: "x",
+    });
+    await settle();
+
+    expect(result).toEqual({ handled: true });
+    expect(keys).toEqual(["\x1b"]);
+  });
+
+  it("gives a read-only panel a single close button", async () => {
+    const { broker, transport, focus } = makeBroker({
+      turns: [turn(42)],
+      entry: { kind: "panel", source: "omp", title: "Status" },
+    });
+    const component: Record<string, unknown> = { render: () => "session report text" };
+    focus.openDialog(component);
+    await settle();
+
+    expect(transport.sent).toHaveLength(1);
+    expect(transport.sent[0]?.text).toContain("session report text");
+    const buttons = transport.sent[0]!.rows.flat() as Array<{ text: string }>;
+    expect(buttons.map((button) => button.text)).toEqual(["关闭"]);
+  });
+
   it("walks the host key path on a row tap and retires the message", async () => {
     const { broker, transport, focus } = makeBroker({ turns: [turn(42)] });
     const { component, keys } = selector(focus);

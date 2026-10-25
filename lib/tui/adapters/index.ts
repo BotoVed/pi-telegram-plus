@@ -2,7 +2,7 @@
  * Adapter registry (§4.6.1).
  *
  * Ordered by specificity: the first `detect` that says yes owns the dialog, and
- * a dialog is only ever handed to one adapter. `snapshot` matches everything,
+ * a dialog is only ever handed to one adapter. `unsupported` matches everything,
  * so it sits last and only ever sees what nothing else claimed.
  *
  * A `detect` that throws is treated as "no": a probe against an unknown host
@@ -13,7 +13,7 @@ import { askDialogAdapter } from "./ask.ts";
 import { approvalAdapter } from "./approval.ts";
 import { customGoalAdapter } from "./goal.ts";
 import { extensionEditorAdapter, extensionInputAdapter, extensionSelectAdapter } from "./extension.ts";
-import { infoPanelAdapter, snapshotAdapter } from "./panel.ts";
+import { infoPanelAdapter, unsupportedAdapter } from "./panel.ts";
 
 export const DIALOG_ADAPTERS: DialogAdapter[] = [
   askDialogAdapter,
@@ -23,7 +23,7 @@ export const DIALOG_ADAPTERS: DialogAdapter[] = [
   extensionEditorAdapter,
   extensionSelectAdapter,
   infoPanelAdapter,
-  snapshotAdapter,
+  unsupportedAdapter,
 ];
 
 export function pickAdapter(component: object, ctx: AdapterContext): DialogAdapter | undefined {
@@ -31,7 +31,7 @@ export function pickAdapter(component: object, ctx: AdapterContext): DialogAdapt
     try {
       if (adapter.detect(component, ctx)) return adapter;
     } catch {
-      // Fall through to the next, and eventually to the snapshot.
+      // Fall through to the next, and eventually to the unsupported fallback.
     }
   }
   return undefined;
@@ -45,5 +45,5 @@ export {
   extensionInputAdapter,
   extensionSelectAdapter,
   infoPanelAdapter,
-  snapshotAdapter,
+  unsupportedAdapter,
 };

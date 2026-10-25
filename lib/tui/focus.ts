@@ -330,7 +330,7 @@ export class FocusTracker {
       let value = getUi.call(runner) as Record<string, unknown> | undefined;
       // Never patch our own routed UI - unwrap to the host context underneath it.
       // Without this the entry hooks are skipped whenever a Telegram swap happens to be
-      // installed at hook time, and every dialog afterwards reads as a snapshot.
+      // installed at hook time, and every dialog afterwards reports as unsupported.
       for (let depth = 0; value?.__piTelegramPlusRoutedUi === true && depth < 8; depth += 1) {
         const base = value.__piTelegramPlusRoutedBaseUi;
         value = base && typeof base === "object" ? (base as Record<string, unknown>) : undefined;

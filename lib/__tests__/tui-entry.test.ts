@@ -5,7 +5,7 @@
  * built. The pending entry is popped the moment the call returns - pi's `show*`
  * methods return a promise that settles only when the user answers - so a dialog
  * whose focus the tracker notices on a later tick would otherwise reach the
- * adapters with no entry at all and fall back to a snapshot of arrow keys.
+ * adapters with no entry at all and report as an unsupported dialog.
  *
  * The dialog here is pi's real component; only the mode that builds it is faked.
  */

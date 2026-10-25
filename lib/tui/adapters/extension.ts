@@ -108,10 +108,10 @@ export const extensionSelectAdapter: DialogAdapter = {
     const title = typeof rawTitle === "string" && rawTitle.length > 0 ? plain(rawTitle) : (entry?.title ?? "Choose");
 
     // Frame-position reading is bound to the OMP versions it was verified
-    // against (§4.6.6 exception 2): outside that range the adapter mirrors the
-    // screen instead of guessing rows out of the frame.
+    // against (§4.6.6 exception 2): outside that range the adapter refuses to
+    // guess rows out of the frame and says it cannot handle the dialog.
     if (!ompFrameSupported(ctx.host)) {
-      return { kind: "snapshot", title, text: renderText(component) };
+      return { kind: "unsupported", title, what: "ext-select: OMP version not verified" };
     }
 
     // A two-option Yes/No list is a confirmation, whichever way it arrived:
@@ -125,9 +125,9 @@ export const extensionSelectAdapter: DialogAdapter = {
     }
 
     if (labels.length === 0) {
-      // Nothing readable: fall back to the screen so the chat still shows the
-      // dialog and keeps its escape hatch (§4.6.4 #13).
-      return { kind: "snapshot", title, text: renderText(component) };
+      // Nothing readable: say plainly that Telegram cannot handle it, so the
+      // chat still keeps its escape hatch (§4.6.5 #13).
+      return { kind: "unsupported", title, what: "ext-select: no readable options" };
     }
 
     const items: DialogItem[] = rows

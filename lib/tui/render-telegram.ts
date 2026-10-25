@@ -287,16 +287,24 @@ function renderProgress(model: Extract<DialogModel, { kind: "progress" }>, ctx: 
   };
 }
 
-/** Screen mirror: the only place raw terminal keys are forwarded (§4.6.5). */
-function renderSnapshot(model: Extract<DialogModel, { kind: "snapshot" | "info" }>, ctx: RenderContext): RenderedDialog {
+/** Read-only panel: the text plus one way out (§4.6.5 #12). */
+function renderInfo(model: Extract<DialogModel, { kind: "info" }>, ctx: RenderContext): RenderedDialog {
   const body = `<pre>${escapeHtml(clean(model.text).slice(0, 3000))}</pre>\n`;
-  const rows = [keep([button("↑", ctx, "k", "up"), button("↓", ctx, "k", "down"), button("Enter", ctx, "k", "enter")])];
-  const actions = keep([button("⌨️ 输入", ctx, "i")]);
-  actions.push(...cancelRow(ctx, model.kind === "info" ? "关闭" : "Esc"));
-  rows.push(actions);
   return {
-    text: header(model.title ?? "未适配的对话框", model.kind === "snapshot" ? "镜像终端画面，按键会送进宿主" : undefined, [body]),
-    rows,
+    text: header(model.title ?? "终端信息", undefined, [body]),
+    rows: [cancelRow(ctx, "关闭")],
+    keyMap: new Map(),
+    page: 0,
+    pages: 1,
+  };
+}
+
+/** §4.6.5 #13: an unrecognised dialog is announced, never mirrored. */
+function renderUnsupported(model: Extract<DialogModel, { kind: "unsupported" }>, ctx: RenderContext): RenderedDialog {
+  const body = `终端上有一个 Telegram 无法处理的对话框（${escapeHtml(shorten(clean(model.what), 120))}），请在终端处理。\n`;
+  return {
+    text: header(model.title ?? "Telegram 无法处理的对话框", undefined, [body]),
+    rows: [cancelRow(ctx, "取消")],
     keyMap: new Map(),
     page: 0,
     pages: 1,
@@ -325,8 +333,9 @@ export function renderDialog(model: DialogModel, ctx: RenderContext): RenderedDi
       case "progress":
         return renderProgress(model, renderContext);
       case "info":
-      case "snapshot":
-        return renderSnapshot(model, renderContext);
+        return renderInfo(model, renderContext);
+      case "unsupported":
+        return renderUnsupported(model, renderContext);
     }
   })();
   if (!ctx.redact) return rendered;

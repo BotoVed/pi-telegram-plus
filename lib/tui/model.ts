@@ -64,7 +64,8 @@ export type DialogModel =
   | { kind: "editor"; title: string; prefill?: string }
   | { kind: "progress"; text: string; cancellable: boolean }
   | { kind: "info"; title?: string; text: string; closable: boolean }
-  | { kind: "snapshot"; title?: string; text: string };
+  /** §4.6.5 #13: nothing can model this dialog; the chat gets a plain notice, never a frame. */
+  | { kind: "unsupported"; title?: string; what: string };
 
 export type DialogAction =
   | { type: "choose"; key: string }
@@ -77,7 +78,7 @@ export type DialogAction =
   | { type: "submit"; text?: string }
   | { type: "confirm"; yes: boolean }
   | { type: "approve"; key: string }
-  | /** component-specific key; snapshots only allow up/down/enter/esc */
+  | /** component-specific key; only dialogs that advertise one may receive it */
     { type: "key"; name: string }
   | { type: "cancel" };
 
@@ -172,7 +173,7 @@ export type DialogSession = {
   pendingInput?: {
     flowId: string;
     secret: boolean;
-    purpose: "input" | "editor" | "search" | "type";
+    purpose: "input" | "editor" | "search";
   };
   /**
    * generation -> callback argument -> item/option key, exactly as rendered.

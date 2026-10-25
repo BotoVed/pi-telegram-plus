@@ -201,17 +201,28 @@ describe("one-line text input", () => {
   });
 });
 
-describe("mirroring a render instead of a model", () => {
-  it("decodes a render that returns one string per line", () => {
-    const component = { render: () => ["alpha", "  beta"] };
-    const { ctx } = harness(component);
+describe("a dialog nothing can model", () => {
+  it("names the dialog instead of mirroring the screen, and only ever sends Escape", () => {
+    const component = { render: () => ["alpha", "  beta"], handleInput: () => {} };
+    const { ctx, bytes } = harness(component);
 
-    const model = pickAdapter(component, ctx)!.read(component, ctx);
-    if (model.kind !== "snapshot") throw new Error(`expected a snapshot model, got ${model.kind}`);
+    const adapter = pickAdapter(component, ctx)!;
+    expect(adapter.id).toBe("unsupported");
 
-    expect(model.text).toBe("alpha\n  beta");
+    const model = adapter.read(component, ctx);
+    if (model.kind !== "unsupported") throw new Error(`expected an unsupported model, got ${model.kind}`);
+    expect(model.what).toBe("Object");
+    // The frame is never read: nothing rendered reaches the model.
+    expect(JSON.stringify(model)).not.toContain("alpha");
+
+    expect(adapter.act(component, { type: "cancel" }, ctx)).toBe(true);
+    expect(bytes()).toEqual(["\u001b"]);
+    expect(adapter.act(component, { type: "key", name: "down" }, ctx)).toBe(false);
+    expect(adapter.act(component, { type: "submit", text: "x" }, ctx)).toBe(false);
   });
+});
 
+describe("read-only panels", () => {
   it("treats a loading spinner as a read-only panel and leaves escape working", () => {
     const tui = { requestRender: () => {} };
     const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
@@ -415,22 +426,24 @@ describe("OMP frame version gate", () => {
     expect(model.items.map((item) => item.label)).toEqual(gateLabels);
   });
 
-  it("mirrors the screen instead of the frame on an unverified OMP version", () => {
+  it("refuses to model the frame on an unverified OMP version", () => {
     setOmpVersion("18.13.0");
     const { component, ctx, picked } = gatedOmpDialog();
     const adapter = pickAdapter(component, ctx)!;
 
-    expect(adapter.read(component, ctx).kind).toBe("snapshot");
+    const model = adapter.read(component, ctx);
+    expect(model.kind).toBe("unsupported");
     expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(false);
     expect(picked).toEqual([]);
   });
 
-  it("mirrors the screen when the OMP version cannot be determined", () => {
+  it("refuses to model the frame when the OMP version cannot be determined", () => {
     setOmpVersion(undefined);
     const { component, ctx, picked } = gatedOmpDialog();
     const adapter = pickAdapter(component, ctx)!;
 
-    expect(adapter.read(component, ctx).kind).toBe("snapshot");
+    const model = adapter.read(component, ctx);
+    expect(model.kind).toBe("unsupported");
     expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(false);
     expect(picked).toEqual([]);
   });
