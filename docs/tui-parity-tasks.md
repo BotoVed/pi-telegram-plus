@@ -37,7 +37,7 @@
 | 3B 扩展对话框 | 扩展 UI 竞答（select、confirm、input、editor、ask、approve）；custom 明确告知，pi-goal 走例外一 | S25 可行性验证及后续任务（取代 T3.2a–T3.2c） | dialogs 套件两个宿主全绿且走竞答路径；对应条目移出清单 |
 | 3C OMP 内置选择器 | TSP 适配器；删除 OMP 画面读取代码；`/fork`、`/clone` 交给宿主，选择器走 TSP（决定 52） | T3.2d–T3.2g | OMP 的 `/model`、`/settings`、`/login`、`/resume`、`/tree`、`/agents`、`/fork`、`/clone` 在 Telegram 显示原生列表并能完成操作，结果与终端一致 |
 | 3D pi 内置选择器 | 读字段的适配器（pi 1.4.0）；`/fork`、`/clone` 交给宿主，选择器用 `UserMessageSelectorComponent` 适配器，之后删除插件自带的消息列表（决定 52） | T3.3–T3.10，含 1.4 新增 `/thinking`、`/trust` | pi 同组命令（含 `/fork`、`/clone`）达到同样效果 |
-| 3E 收尾验收 | 只有输出的命令逐个验证；阶段 3 总验收 | T3.2（剩余）、T3.12、T3.13 | 两个宿主全量 E2E 通过；清单中属于阶段 3 的条目清空 |
+| 3E 收尾验收 | 只有输出的命令逐个验证；阶段 3 总验收 | T3.2（剩余）、T3.12、T3.13 | 两个宿主全量 E2E 通过；清单中属于阶段 3 的条目清空；README 中已过时的说明（`/tg-*`、`tuiBridge`、屏幕镜像）由主控改写 |
 
 3A 检查点（用户 2026-10-25：3A 仍太大，再拆）：
 
@@ -65,7 +65,8 @@
 | D4 | `SnapshotAdapter` 改为 `UnsupportedAdapter`（明确告知 + 取消） | D2 | ☑ | `5fc9d8b`；3A-2、3A-3 检查点完成 |
 | A1 | 开发依赖升级到 pi `1.4.0`；按 1.4.0 源码核对剩余代码依赖的宿主接口，输出"需要改"清单 | D1–D4 | ☑（核对部分由主控完成；升级依赖并入 A2） | 4 处需要改：捕获补丁点 `initHooksAndCustomTools` 已改名；入口改挂 `pushExtensionDialog`/`removeExtensionDialog`；命令目录只用 `autocompleteProvider`；内置命令新增 `/bug`、`/thinking`、`/trust` |
 | A2 | 按 A1 清单修正 pi 侧代码（入口改用 1.4.0 的对话框栈 `pushExtensionDialog`/`removeExtensionDialog` 等）；更新方案中的 0.81.1 引用；删除多版本测试矩阵 | A1 | ☑ | `cecf115`；矩阵工具与 E2E 多版本循环拆到 A3 |
-| A3 | 删除多版本兼容矩阵工具（`gen-compat-matrix.mjs`、`compat:*`、发布流程检查）；E2E 只测 `node_modules` 里的 pi 1.4.0 | A2 | ☐ | |
+| A3 | 删除多版本兼容矩阵工具（`gen-compat-matrix.mjs`、`compat:*`、发布流程检查）；E2E 只测 `node_modules` 里的 pi 1.4.0 | A2 | ☑ | `c3b893f`；README 兼容性一节、`docs/compatibility.md` 已改写，`compat-results.json` 已删除 |
+| A4 | 启动时检查宿主版本（pi `1.4.0`、OMP `18.12.x`），不符或读不到即停止工作，并在状态栏与 Telegram 说明原因（§0.1 第 1 条） | A3 | ☐ | |
 
 每个任务的完成标准：`npm run typecheck`、`npm test` 全绿；E2E 只允许"待迁移"清单内的步骤失败；删除的代码相关测试同步删除或改写。每个任务由主控拆成单独的任务书派发。
 
