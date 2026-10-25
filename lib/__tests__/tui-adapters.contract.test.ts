@@ -7,14 +7,12 @@
  * renames a field, re-points a keybinding, or changes what a render looks like
  * therefore fails here instead of showing a dead button in Telegram.
  *
- * Nothing here mocks a component. Where a fixture is hand-built it is a fake
- * *render*, to pin the decoder, never a fake dialog.
+ * Nothing here mocks a component: every dialog below is a real host component,
+ * and the one hand-built fixture is a focus owner nothing can model.
  */
-import { readFileSync } from "node:fs";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import * as host from "@earendil-works/pi-coding-agent";
 import { pickAdapter } from "../tui/adapters/index.ts";
-import { renderText, setOmpVersion } from "../tui/adapters/utils.ts";
 import { sendKeyTo } from "../tui/keys.ts";
 import type { AdapterContext, DialogModel, EntryInfo } from "../tui/model.ts";
 
@@ -22,9 +20,6 @@ import type { AdapterContext, DialogModel, EntryInfo } from "../tui/model.ts";
 // pi-tui's own theme singleton. Both are undefined until the theme is seeded.
 beforeAll(() => {
   host.initTheme("dark");
-  // The frame-reading adapters are gated to the OMP version this capture came
-  // from (§4.6.6 exception 2); the suite below runs as that verified version.
-  setOmpVersion("18.12.5");
 });
 
 type KeyLog = { target: string; data: string }[];
@@ -80,7 +75,6 @@ function harness(component: unknown, entry?: EntryInfo, hostName: "pi" | "omp" =
     root: component as object,
     entry,
     sendKey: (name) => sendKeyTo(component, name),
-    snapshot: (width) => renderText(component, width),
     requestRender: () => {},
   };
   return { ctx, keys, bytes: () => keys.map((entry2) => entry2.data) };
@@ -246,214 +240,5 @@ describe("read-only panels", () => {
     } finally {
       component.dispose();
     }
-  });
-});
-
-/**
- * OMP's hook dialogs: the entry call carries the options, but the component that
- * owns focus keeps its rows in private fields, so the only place the list and its
- * cursor exist is the frame the component draws. The frames below are OMP's own
- * text, taken from the stage-0 capture (`docs/host-probe/omp-18.12.5.json`,
- * `focusTypes[*].rendered`); only the container around them is built here.
- */
-function capturedFrame(marker: string): string {
-  const probe = JSON.parse(
-    readFileSync(new URL("../../docs/host-probe/omp-18.12.5.json", import.meta.url), "utf8"),
-  ) as { frameSamples?: { rendered?: string }[] };
-  for (const sample of probe.frameSamples ?? []) {
-    const frame = sample.rendered ?? "";
-    if (frame.includes(marker)) return frame;
-  }
-  throw new Error(`the capture has no frame containing ${marker}`);
-}
-
-/** Move the frame's `❯` onto `label`, leaving OMP's own text otherwise intact. */
-function frameWithCursor(frame: string, labels: string[], cursor: number): string {
-  const label = labels[cursor];
-  return frame
-    .split("\n")
-    .map((line) => (line.includes("❯") ? line.replace("❯", " ") : line))
-    .map((line) => {
-      const content = line.replace(/^\s*│\s*/, "").replace(/\s*│\s*$/, "").trim();
-      return label !== undefined && content === label ? line.replace(label, `❯ ${label}`) : line;
-    })
-    .join("\n");
-}
-
-/** A focus owner with unreadable rows that answers the arrow keys its frame advertises. */
-function framedDialog(frame: string, labels: string[]) {
-  const picked: string[] = [];
-  let cursor = 0;
-  const component: Record<string, unknown> = {
-    // Rows with private state: nothing an adapter can read from the outside.
-    children: labels.map(() => ({})),
-    render: () => frameWithCursor(frame, labels, cursor),
-    handleInput(data: string) {
-      if (data === "\u001b[B") cursor = Math.min(cursor + 1, labels.length - 1);
-      else if (data === "\u001b[A") cursor = Math.max(cursor - 1, 0);
-      else if (data === "\r") picked.push(labels[cursor] ?? "");
-    },
-  };
-  return { component, picked };
-}
-
-describe("a dialog whose rows live in private fields", () => {
-  const selectLabels = ["alpha", "beta", "gamma"];
-  const selectEntry: EntryInfo = { kind: "select", title: "PROBE_SELECT_TITLE", options: selectLabels, source: "omp" };
-
-  function ompDialog(frameMarker: string, labels: string[], entry: EntryInfo) {
-    const dialog = framedDialog(capturedFrame(frameMarker), labels);
-    return { ...dialog, ...harness(dialog.component, entry, "omp") };
-  }
-
-  it("reads the choices from the entry and marks the row the frame marks", () => {
-    const { component, ctx } = ompDialog("PROBE_SELECT_TITLE", selectLabels, selectEntry);
-
-    const adapter = pickAdapter(component, ctx)!;
-    expect(adapter.id).toBe("ext-select");
-    const model = expectSelect(adapter.read(component, ctx));
-
-    expect(model.items.map((item) => item.label)).toEqual(selectLabels);
-    expect(model.items.findIndex((item) => item.focused)).toBe(0);
-  });
-
-  it("chooses a row by walking the cursor the frame shows", () => {
-    const { component, ctx, bytes, picked } = ompDialog("PROBE_SELECT_TITLE", selectLabels, selectEntry);
-    const adapter = pickAdapter(component, ctx)!;
-
-    expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(true);
-
-    expect(picked).toEqual(["gamma"]);
-    expect(bytes()).toEqual(["\u001b[B", "\u001b[B", "\r"]);
-  });
-
-  it("answers a confirm through the rows the host drew", () => {
-    const entry: EntryInfo = { kind: "confirm", title: "PROBE_CONFIRM_TITLE", message: "PROBE_CONFIRM_MESSAGE", source: "omp" };
-    const { component, ctx, picked } = ompDialog("PROBE_CONFIRM_TITLE", ["Yes", "No"], entry);
-    const adapter = pickAdapter(component, ctx)!;
-
-    const model = adapter.read(component, ctx);
-    expect(model.kind).toBe("confirm");
-    expect(adapter.act(component, { type: "confirm", yes: false }, ctx)).toBe(true);
-
-    expect(picked).toEqual(["No"]);
-  });
-
-  it("refuses when the frame no longer shows the option it was asked to pick", () => {
-    const { component, ctx, bytes } = ompDialog("PROBE_SELECT_TITLE", ["alpha", "beta"], {
-      ...selectEntry,
-      options: ["alpha", "beta", "delta"],
-    });
-    const adapter = pickAdapter(component, ctx)!;
-
-    // "delta" is not on screen: the Broker has to redraw instead of guessing a row.
-    expect(adapter.act(component, { type: "choose", key: "2:delta" }, ctx)).toBe(false);
-    expect(bytes()).toEqual([]);
-  });
-
-  it("counts steps through the rows the frame shows, not the whole option list", () => {
-    const frame = ["╭ Pick ────╮", "│ beta     │", "│ gamma    │", "│ delta    │", "╰──────────╯"].join("\n");
-    const entry: EntryInfo = {
-      kind: "select",
-      title: "Pick",
-      options: ["alpha", "beta", "gamma", "delta", "epsilon"],
-      source: "omp",
-    };
-    const { component, picked } = framedDialog(frame, ["beta", "gamma", "delta"]);
-    const { ctx } = harness(component, entry, "omp");
-    const adapter = pickAdapter(component, ctx)!;
-
-    // The terminal filtered five options down to three: the arrows move between the rows on
-    // screen, so delta is two Downs away even though the entry lists it fourth.
-    expect(adapter.act(component, { type: "choose", key: "3:delta" }, ctx)).toBe(true);
-    expect(picked).toEqual(["delta"]);
-  });
-
-  it("matches option strings the host pads with indentation and a state mark", () => {
-    // OMP hands the extension host option strings that already carry their own indentation
-    // and its own "this is the current value" dot, while the frame draws the cursor mark in
-    // front of them: the two only agree once that decoration is ignored.
-    const options = ["  hidden", "● brief", "  full"];
-    const frame = [
-      "╭─ 🔧 Tool rendering ────────────────────────────────╮",
-      "│                                                  │",
-      "│  ❯   hidden                                     │",
-      "│    ● brief                                     │",
-      "│      full                                      │",
-      "│ ↑/↓ navigate  ⏎ select  ⎋ cancel               │",
-      "╰──────────────────────────────────────────────╯",
-    ].join("\n");
-    const picked: string[] = [];
-    let cursor = 0;
-    const component: Record<string, unknown> = {
-      children: options.map(() => ({})),
-      render: () => frame,
-      handleInput(data: string) {
-        if (data === "\u001b[B") cursor = Math.min(cursor + 1, options.length - 1);
-        else if (data === "\u001b[A") cursor = Math.max(cursor - 1, 0);
-        else if (data === "\r") picked.push(options[cursor] ?? "");
-      },
-    };
-    const entry: EntryInfo = { kind: "select", title: "Tool rendering", options, source: "omp" };
-    const { ctx } = harness(component, entry, "omp");
-    const adapter = pickAdapter(component, ctx)!;
-
-    expect(adapter.act(component, { type: "choose", key: `1:${options[1]}` }, ctx)).toBe(true);
-    expect(picked).toEqual([options[1]]);
-  });
-});
-
-describe("OMP frame version gate", () => {
-  const gateLabels = ["alpha", "beta", "gamma"];
-  const gateEntry: EntryInfo = { kind: "select", title: "PROBE_SELECT_TITLE", options: gateLabels, source: "omp" };
-
-  afterEach(() => {
-    setOmpVersion("18.12.5");
-  });
-
-  function gatedOmpDialog() {
-    const dialog = framedDialog(capturedFrame("PROBE_SELECT_TITLE"), gateLabels);
-    return { ...dialog, ...harness(dialog.component, gateEntry, "omp") };
-  }
-
-  it("models the frame rows on a verified OMP version", () => {
-    setOmpVersion("18.12.5");
-    const { component, ctx } = gatedOmpDialog();
-    const adapter = pickAdapter(component, ctx)!;
-
-    const model = expectSelect(adapter.read(component, ctx));
-
-    expect(model.items.map((item) => item.label)).toEqual(gateLabels);
-  });
-
-  it("refuses to model the frame on an unverified OMP version", () => {
-    setOmpVersion("18.13.0");
-    const { component, ctx, picked } = gatedOmpDialog();
-    const adapter = pickAdapter(component, ctx)!;
-
-    const model = adapter.read(component, ctx);
-    expect(model.kind).toBe("unsupported");
-    expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(false);
-    expect(picked).toEqual([]);
-  });
-
-  it("refuses to model the frame when the OMP version cannot be determined", () => {
-    setOmpVersion(undefined);
-    const { component, ctx, picked } = gatedOmpDialog();
-    const adapter = pickAdapter(component, ctx)!;
-
-    const model = adapter.read(component, ctx);
-    expect(model.kind).toBe("unsupported");
-    expect(adapter.act(component, { type: "choose", key: "2:gamma" }, ctx)).toBe(false);
-    expect(picked).toEqual([]);
-  });
-
-  it("leaves pi dialogs unaffected by the OMP version", () => {
-    setOmpVersion("18.13.0");
-    const component = new host.ExtensionSelectorComponent("Pick env", ["dev", "staging"], () => {}, () => {});
-    const { ctx } = harness(component);
-    const adapter = pickAdapter(component, ctx)!;
-
-    expect(expectSelect(adapter.read(component, ctx)).items.map((item) => item.label)).toEqual(["dev", "staging"]);
   });
 });

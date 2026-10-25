@@ -125,8 +125,6 @@ export type AdapterContext = {
   entry?: EntryInfo;
   /** Send one named key to the focused component's handleInput. */
   sendKey(name: string): boolean;
-  /** Screen text of the focused area, for adapters that parse the render. */
-  snapshot?(width: number): string | undefined;
   requestRender(): void;
 };
 

@@ -1,7 +1,7 @@
 import { stripAnsi } from "./ansi.ts";
 import { log } from "./logger.ts";
 import { probeCapture } from "./tui/probe.ts";
-import { setOmpVersion, SUPPORTED_OMP_VERSIONS } from "./tui/adapters/utils.ts";
+import { SUPPORTED_OMP_VERSIONS } from "./tui/adapters/utils.ts";
 
 const bridgeLog = log.child("tui-bridge");
 
@@ -288,7 +288,6 @@ export function installTuiBridge(): Promise<void> {
       loadPiMode(),
       loadOmpVersion(),
     ]);
-    setOmpVersion(ompVersion);
     state.hostCommands = ompCommands;
     // The pi version comes off the module loadPiMode already imported; a second
     // concurrent import of the same specifier is what the mock host resolves

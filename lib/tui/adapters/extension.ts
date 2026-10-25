@@ -13,10 +13,8 @@
 import type { DialogAdapter, DialogItem, DialogModel } from "../model.ts";
 import { findShape, isEditorShape, isInputShape, isSelectList } from "../find-shape.ts";
 import { setInputValue } from "../keys.ts";
-import { log } from "../../logger.ts";
-import { descriptionOf, frameCursor, frameRows, labelOf, ompFrameSupported, plain, renderText, resolveRowKey, rowKey, selectRow } from "./utils.ts";
+import { descriptionOf, labelOf, plain, resolveRowKey, rowKey, selectRow } from "./utils.ts";
 
-const adapterLog = log.child("tui-adapter");
 type HostRecord = Record<string, unknown>;
 type Rows = { labels: string[]; descriptions: (string | undefined)[]; cursor: number };
 
@@ -70,20 +68,6 @@ function splitTitle(title: string): { title: string; message?: string } {
   return { title: title.slice(0, newline).trim(), message: title.slice(newline + 1).trim() };
 }
 
-/** The message the terminal shows under a confirmation title, when it has one. */
-function messageFromRender(component: object): string | undefined {
-  const render = renderText(component);
-  if (render.length === 0) return undefined;
-  const lines = render.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
-  // Borders, the title, the option rows and the navigation legend are not the
-  // message; everything between the title and the first option row is.
-  const body = lines.filter((line) =>
-    !/^[─—\-\s]+$/.test(line)
-    && !/^[>▶►•·*\s]*\d+[.)]/.test(line)
-    && !/(navigate|select|cancel|esc)/i.test(line));
-  return body.length > 0 ? body.join("\n") : undefined;
-}
-
 const YES_NO = new Set(["yes", "no"]);
 
 /**
@@ -107,13 +91,6 @@ export const extensionSelectAdapter: DialogAdapter = {
     const rawTitle = (component as HostRecord).baseTitle;
     const title = typeof rawTitle === "string" && rawTitle.length > 0 ? plain(rawTitle) : (entry?.title ?? "Choose");
 
-    // Frame-position reading is bound to the OMP versions it was verified
-    // against (§4.6.6 exception 2): outside that range the adapter refuses to
-    // guess rows out of the frame and says it cannot handle the dialog.
-    if (!ompFrameSupported(ctx.host)) {
-      return { kind: "unsupported", title, what: "ext-select: OMP version not verified" };
-    }
-
     // A two-option Yes/No list is a confirmation, whichever way it arrived:
     // pi's `showExtensionConfirm` draws it through the selector, and its title
     // carries the message after a newline.
@@ -121,7 +98,7 @@ export const extensionSelectAdapter: DialogAdapter = {
       || (labels.length === 2 && labels.every((label) => YES_NO.has(label.toLowerCase())) && title.includes("\n"));
     if (looksConfirmed) {
       const parts = splitTitle(title);
-      return { kind: "confirm", title: parts.title, message: entry?.message ?? messageFromRender(component) ?? parts.message };
+      return { kind: "confirm", title: parts.title, message: entry?.message ?? parts.message };
     }
 
     if (labels.length === 0) {
@@ -133,12 +110,6 @@ export const extensionSelectAdapter: DialogAdapter = {
     const items: DialogItem[] = rows
       ? buildItems(rows)
       : labels.map((label, index) => ({ key: rowKey(index, label), label }));
-    if (!rows) {
-      // The frame is the only place the terminal cursor exists for these dialogs,
-      // and the mirror has to show it (§4.6.4 #2).
-      const cursor = frameCursor(labels, ctx.snapshot?.(80) ?? renderText(component));
-      if (cursor !== undefined) items[cursor] = { ...items[cursor], focused: true };
-    }
     return { kind: "select", title, items, total: labels.length };
   },
 
@@ -165,8 +136,6 @@ export const extensionSelectAdapter: DialogAdapter = {
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "choose" && action.type !== "toggle" && action.type !== "confirm") return false;
 
-    if (!ompFrameSupported(ctx.host)) return false;
-
     // Labels come from the component when it exposes its rows, and from the entry
     // call otherwise: OMP keeps them in closures with no readable field.
     const rows = rowsOf(component);
@@ -188,25 +157,12 @@ export const extensionSelectAdapter: DialogAdapter = {
     if (target === undefined) return false;
 
     // Move with arrow keys instead of writing `selectedIndex`: that is the only path that
-    // makes the component redraw its own cursor (§4.1.3). With the rows private, the drawn
-    // frame is where the cursor lives: count the steps between the marked row and the target
-    // *within the rows the frame shows*, so a list the terminal has filtered or paged still
-    // lands on the right row - and a target that is not on screen refuses, because guessing
-    // would press Enter on whatever happens to be marked (§4.5 #3).
-    if (rows) return selectRow(ctx.sendKey, rows.cursor, target);
-    const frame = ctx.snapshot?.(80) ?? renderText(component);
-    const seen = frameRows(labels, frame);
-    if (seen.marked === undefined || seen.at === undefined) {
-      adapterLog.debug("frame marks no known row", { labels, visible: seen.visible, frame });
-      return false;
-    }
-    const to = seen.visible.indexOf(target);
-    if (to < 0) {
-      const key = "key" in action ? action.key : undefined;
-      adapterLog.debug("requested row is off screen", { key, onScreen: seen.visible.length, labels: labels.length });
-      return false;
-    }
-    return selectRow(ctx.sendKey, seen.at, to);
+    // makes the component redraw its own cursor (§4.1.3). A component whose rows live in
+    // private fields no longer has its cursor read out of the drawn frame: those dialogs
+    // are answered through their race handle or their semantic description, so this
+    // fallback refuses rather than guessing where the cursor sits.
+    if (!rows) return false;
+    return selectRow(ctx.sendKey, rows.cursor, target);
   },
 };
 

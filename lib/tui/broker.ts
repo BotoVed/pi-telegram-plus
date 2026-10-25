@@ -22,7 +22,6 @@ import { log } from "../logger.ts";
 import type { DialogCallback } from "../callback-protocol.ts";
 import type { TelegramTransport, TelegramTurn } from "../types.ts";
 import { pickAdapter, unsupportedAdapter } from "./adapters/index.ts";
-import { renderText } from "./adapters/utils.ts";
 import { currentHostState } from "./host.ts";
 import { sendKeyTo } from "./keys.ts";
 import type { FocusInfo, FocusTracker } from "./focus.ts";
@@ -669,7 +668,6 @@ export class DialogBroker {
       root: info.root,
       entry,
       sendKey: (name: string) => sendKeyTo(component, name),
-      snapshot: (width: number) => renderText(component, width),
       requestRender: () => {
         const render = state.ui?.requestRender;
         if (typeof render !== "function") return;

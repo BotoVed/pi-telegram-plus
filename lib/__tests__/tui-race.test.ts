@@ -8,11 +8,10 @@
  * side wins, whether the loser's signal aborts, and that the entry layer
  * still sees the call (`pushEntry` takes the handle before the host runs).
  */
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { installRace, takePendingRace, type RaceHandle } from "../tui/race.ts";
 import { extensionEditorAdapter, extensionInputAdapter, extensionSelectAdapter } from "../tui/adapters/extension.ts";
 import { approvalAdapter } from "../tui/adapters/approval.ts";
-import { setOmpVersion } from "../tui/adapters/utils.ts";
 import { hookEntryMethods, UI_CONTEXT_SPECS } from "../tui/entry.ts";
 import { FocusTracker } from "../tui/focus.ts";
 import type { AdapterContext, EntryInfo } from "../tui/model.ts";
@@ -475,10 +474,6 @@ describe("extensionEditorAdapter with a race handle", () => {
 });
 
 describe("approvalAdapter with a race handle", () => {
-  afterEach(() => {
-    setOmpVersion(undefined);
-  });
-
   function approvalCtx(race: RaceHandle | undefined, session?: string) {
     const sendKey = vi.fn(() => true);
     const entry: EntryInfo = {
@@ -549,25 +544,14 @@ describe("approvalAdapter with a race handle", () => {
     expect(answer).not.toHaveBeenCalled();
   });
 
-  it("without a handle it still reads the drawn key legend", () => {
-    setOmpVersion("18.12.5");
-    const { ctx, sendKey } = approvalCtx(undefined);
-    const component = { render: () => "Allow `git push`?\ny approve\nn deny" };
-    expect(approvalAdapter.detect(component, ctx)).toBe(true);
-    const model = approvalAdapter.read(component, ctx);
-    if (model.kind !== "approval") throw new Error("expected an approval model");
-    expect(model.options.map((option) => option.key)).toEqual(["y", "n"]);
-    expect(approvalAdapter.act(component, { type: "approve", key: "y" }, ctx)).toBe(true);
-    expect(sendKey).toHaveBeenCalledWith("y");
-    expect(approvalAdapter.act(component, { type: "cancel" }, ctx)).toBe(true);
-    expect(sendKey).toHaveBeenCalledWith("esc");
-    expect(approvalAdapter.act(component, { type: "approve", key: "s" }, ctx)).toBe(false);
-  });
-
-  it("without a handle or a legend it declines", () => {
-    setOmpVersion("18.12.5");
-    const { ctx } = approvalCtx(undefined);
-    expect(approvalAdapter.detect({ render: () => "Allow `git push`?" }, ctx)).toBe(false);
+  it("without a handle it neither claims the dialog nor sends keys", () => {
+    const { ctx, sendKey, component } = approvalCtx(undefined);
+    // The legend is no longer read off the frame, so nothing says which keys this
+    // dialog answers to: the snapshot adapter has to take it instead.
+    expect(approvalAdapter.detect(component, ctx)).toBe(false);
+    expect(approvalAdapter.act(component, { type: "approve", key: "once" }, ctx)).toBe(false);
+    expect(approvalAdapter.act(component, { type: "cancel" }, ctx)).toBe(false);
+    expect(sendKey).not.toHaveBeenCalled();
   });
 });
 

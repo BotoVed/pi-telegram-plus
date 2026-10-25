@@ -6,43 +6,16 @@
  * once/session/deny set the method resolves with, so the adapter never looks
  * at the screen.
  *
- * Without one, the *keys* the dialog answers to are whatever its own legend
- * advertises, and those differ between hosts and versions. So the adapter only
- * claims a dialog whose render names its keys: a button that presses a key
- * nobody listens for is worse than no button at all, because it reports success
- * while nothing happened.
- *
- * With no readable legend the adapter declines, and the snapshot adapter takes
- * over - which still leaves the terminal's own keys and the escape hatch.
+ * Without a handle the adapter declines. The keys such a dialog answers to are
+ * whatever its own legend advertises, and those differ between hosts and
+ * versions - reading them out of the drawn frame is gone (§4.6.6 exception 2).
+ * A button that presses a key nobody listens for is worse than no button at all,
+ * so the snapshot adapter takes over instead, which still leaves the terminal's
+ * own keys and the escape hatch.
  */
 import type { DialogAdapter, DialogModel } from "../model.ts";
-import { ompFrameSupported, plain, renderText } from "./utils.ts";
-
-/** `y approve  n deny  s always` / `[y] approve` style legends. */
-const LEGEND = /(?:^|\s)(?:\[?)(ctrl\+[a-z]|shift+[a-z]|alt\+[a-z]|[a-z])(?:\]?)\s+([A-Za-z][^\n]{2,48})/g;
-
-/** Keys that must never be offered: they mean something outside the dialog. */
-const BLOCKED = new Set(["ctrl+c", "ctrl+d", "ctrl+g", "ctrl+o", "ctrl+p", "ctrl+q", "ctrl+u", "ctrl+v", "ctrl+w", "ctrl+x", "ctrl+y", "ctrl+z"]);
 
 type Option = { key: string; label: string };
-
-function parseLegend(render: string): Option[] {
-  const options: Option[] = [];
-  for (const line of render.split("\n")) {
-    // A legend line is short and holds the separators the hosts use.
-    if (line.length > 120) continue;
-    if (!/(approve|deny|allow|reject|session|always|once)/i.test(line)) continue;
-    LEGEND.lastIndex = 0;
-    let match: RegExpExecArray | null = LEGEND.exec(line);
-    while (match) {
-      const key = match[1].toLowerCase();
-      const label = match[2].trim();
-      if (!BLOCKED.has(key) && !options.some((option) => option.key === key)) options.push({ key, label });
-      match = LEGEND.exec(line);
-    }
-  }
-  return options;
-}
 
 /** The longest prompt the entry carried, which is the question being asked. */
 function detailOf(entry: { approval?: { full?: string; compact?: string; session?: string } }): string | undefined {
@@ -52,50 +25,45 @@ function detailOf(entry: { approval?: { full?: string; compact?: string; session
   return values.length > 0 ? values.sort((a, b) => b.length - a.length).join("\n") : undefined;
 }
 
+/** The answers a raced `ui.approve` resolves with; the session row only when the prompt carries one. */
+function raceOptions(entry: { approval?: { session?: string } }): Option[] {
+  return [
+    { key: "once", label: "允许一次" },
+    ...(entry.approval?.session ? [{ key: "session", label: entry.approval.session }] : []),
+    { key: "deny", label: "拒绝" },
+  ];
+}
+
 export const approvalAdapter: DialogAdapter = {
   id: "omp-approval",
 
   detect(component, ctx) {
-    if (ctx.entry?.kind !== "approval") return false;
-    // A raced approve needs no legend: the answers go to the extension call.
-    if (ctx.entry.race) return true;
-    // The legend comes out of the drawn frame: bound to the verified OMP
-    // versions (§4.6.6 exception 2), snapshot takes over otherwise.
-    if (!ompFrameSupported(ctx.host)) return false;
-    return parseLegend(renderText(component)).length > 0;
+    // Only a raced approve is claimable: without the handle nothing says which
+    // keys the dialog actually listens for.
+    return ctx.entry?.kind === "approval" && ctx.entry.race !== undefined;
   },
+
   read(component, ctx): DialogModel {
     const entry = ctx.entry;
-    // Raced: the fixed answers `ui.approve` resolves with, not the legend.
-    const options = entry?.race
-      ? [
-          { key: "once", label: "允许一次" },
-          ...(entry.approval?.session ? [{ key: "session", label: entry.approval.session }] : []),
-          { key: "deny", label: "拒绝" },
-        ]
-      : parseLegend(renderText(component));
     return {
       kind: "approval",
       title: entry?.title ?? "Tool approval",
       detail: entry ? detailOf(entry) : undefined,
-      options,
+      options: entry ? raceOptions(entry) : [],
     };
   },
+
   act(component, action, ctx) {
     const race = ctx.entry?.race;
-    if (race && !race.settled) {
-      if (action.type === "cancel") return race.answer("deny"), true;
-      if (action.type === "approve" && (action.key === "once" || action.key === "session" || action.key === "deny")) {
-        return race.answer(action.key), true;
-      }
-      return false;
+    if (!race || race.settled) return false;
+    if (action.type === "cancel") {
+      race.answer("deny");
+      return true;
     }
-    if (action.type === "cancel") return ctx.sendKey("esc");
-    if (action.type !== "approve") return false;
-    const options = parseLegend(renderText(component));
-    if (!options.some((option) => option.key === action.key)) return false;
-    return ctx.sendKey(action.key);
+    if (action.type === "approve" && (action.key === "once" || action.key === "session" || action.key === "deny")) {
+      race.answer(action.key);
+      return true;
+    }
+    return false;
   },
 };
-
-export const approvalInternals = { parseLegend, plain };

@@ -9,16 +9,8 @@
  *   only where the component exposes a setter for exactly that purpose.
  */
 
-/** OMP versions the plugin supports: the frame-reading adapters were verified against these (§4.6.6 exception 2), and startup refuses anything else (§0.1). Single copy - tui-bridge gates on it too. */
+/** OMP versions the plugin supports: startup refuses anything else (§0.1). Single copy - tui-bridge gates on it too. */
 export const SUPPORTED_OMP_VERSIONS = /^18\.12\./;
-let ompVersion: string | undefined;
-export function setOmpVersion(version: string | undefined): void {
-  ompVersion = version;
-}
-/** True when frame reading may be used: not OMP, or an OMP version in the verified range. */
-export function ompFrameSupported(host: "pi" | "omp"): boolean {
-  return host !== "omp" || (ompVersion !== undefined && SUPPORTED_OMP_VERSIONS.test(ompVersion));
-}
 
 /** CSI sequences, OSC strings and stray control bytes that colour the render. */
 const ANSI_PATTERN = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|[\x07\x08]/g;
@@ -68,66 +60,6 @@ export function resolveRowKey(labels: string[], key: string): number | undefined
   if (Number.isInteger(index) && labels[index] === label) return index;
   const moved = labels.indexOf(label);
   return moved >= 0 ? moved : undefined;
-}
-
-const FRAME_ROW = /^\s*(?:│\s*)?(?<mark>[→❯▸])?\s*(?<text>.*?)\s*$/;
-const ROW_GLYPH = /^[○●◉□☐☑✓]\s*/;
-
-/**
- * The rows the drawn frame shows, in the order the frame shows them, plus which of them the
- * host marks as current. Hosts that keep a dialog's rows in private fields expose no cursor
- * field, so the frame the component draws is the only place the cursor exists (§4.6.5). A
- * frame that shows none of the known labels, or marks two rows, is not a list we understand.
- */
-export function frameRows(labels: string[], frame: string): { visible: number[]; marked?: number; at?: number } {
-  const visible: number[] = [];
-  let marked: number | undefined;
-  let at: number | undefined;
-  for (const line of frame.split("\n")) {
-    const groups = FRAME_ROW.exec(line)?.groups;
-    if (!groups) continue;
-    const text = groups.text.replace(/\s*│\s*$/, "").replace(ROW_GLYPH, "").trim();
-    if (text === "") continue;
-    const index = longestLabelMatch(labels, text);
-    if (index === undefined || visible.includes(index)) continue;
-    if (groups.mark) {
-      // Two cursors means this is not the single-choice list we think it is.
-      if (marked !== undefined) return { visible: [] };
-      marked = index;
-      at = visible.length;
-    }
-    visible.push(index);
-  }
-  return marked === undefined || at === undefined ? { visible } : { visible, marked, at };
-}
-
-/** Which of `labels` the frame marks as current; `undefined` when it marks none. */
-export function frameCursor(labels: string[], frame: string): number | undefined {
-  return frameRows(labels, frame).marked;
-}
-
-/**
- * A frame row may carry a description column after the label, and hosts pad their option
- * strings with their own indentation and state marks (`"  hidden"`, `"● brief"`), so both
- * sides are compared with that decoration stripped. The longest label wins: one row's text
- * can begin with another row's.
- */
-function longestLabelMatch(labels: string[], text: string): number | undefined {
-  let best: number | undefined;
-  let bestLength = -1;
-  for (let index = 0; index < labels.length; index += 1) {
-    const label = plainLabel(labels[index]);
-    if (label.length > bestLength && (text === label || text.startsWith(label))) {
-      best = index;
-      bestLength = label.length;
-    }
-  }
-  return best;
-}
-
-/** An option string as the frame shows it: no indentation, no current-value mark. */
-function plainLabel(label: string): string {
-  return label.replace(/^\s+/, "").replace(ROW_GLYPH, "").trim();
 }
 
 /** Read a label out of a host list entry, whatever field it keeps it in. */
