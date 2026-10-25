@@ -3,7 +3,7 @@
  * (§4.6.4). They all end in the same place — the focused component's own input
  * handler — so Telegram never reimplements a decision the host already made.
  *
- * pi 0.81.1 renders all three through `Extension{Selector,Input,Editor}
+ * pi 1.4.0 renders all three through `Extension{Selector,Input,Editor}
  * Component`, thin wrappers: the selector keeps its options in a plain
  * `string[]`, the input delegates to a pi-tui `Input`, the editor to a pi-tui
  * `Editor`. OMP's equivalents keep their data in closures, so each adapter

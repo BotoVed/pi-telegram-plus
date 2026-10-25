@@ -30,19 +30,25 @@ function trackerSink(tracker: FocusTracker) {
   };
 }
 
-/** A host mode that builds its input the way pi does: assign the field, resolve later. */
+/** A host mode that builds its input the way pi 1.4.0 does: push it onto the
+ *  dialog stack with its blocked status, resolve when the user answers. */
 class FakeMode {
-  extensionInput: unknown = undefined;
+  readonly pushed: Array<{ component: unknown; blocked?: unknown }> = [];
 
   showExtensionInput(title: string, placeholder?: string): Promise<string | undefined> {
-    return new Promise<string | undefined>((resolve) => {
-      this.extensionInput = new host.ExtensionInputComponent(
-        title,
-        placeholder ?? "",
-        (value: string) => resolve(value),
-        () => resolve(undefined),
-      );
-    });
+    const { promise, resolve } = Promise.withResolvers<string | undefined>();
+    const component = new host.ExtensionInputComponent(
+      title,
+      placeholder ?? "",
+      (value: string) => resolve(value),
+      () => resolve(undefined),
+    );
+    this.pushExtensionDialog(component, { kind: "question", message: title });
+    return promise;
+  }
+
+  pushExtensionDialog(component: unknown, blocked?: unknown): void {
+    this.pushed.push({ component, blocked });
   }
 }
 
@@ -51,7 +57,7 @@ function context(entry?: EntryInfo): AdapterContext {
 }
 
 describe("entry hooks record the dialog on the component (§4.1.2)", () => {
-  it("keeps the input entry readable after the call has returned", () => {
+  it("binds the pending entry through pi's pushExtensionDialog", () => {
     const tracker = new FocusTracker();
     const mode = new FakeMode();
     hookEntryMethods(
@@ -61,14 +67,44 @@ describe("entry hooks record the dialog on the component (§4.1.2)", () => {
       "pi",
       new WeakSet<object>(),
     );
+    tracker.hookPiDialogStack(mode as unknown as Record<string, unknown>);
 
     // The promise stays pending: this is exactly the window a mirrored dialog lives in.
     void mode.showExtensionInput("Bot name", "unique label");
-    const component = mode.extensionInput as Record<string, unknown>;
+    const push = mode.pushed[0];
+    const component = push?.component as Record<string, unknown>;
 
     expect(component).toBeInstanceOf(host.ExtensionInputComponent);
-    expect(tracker.entryFor(component)).toMatchObject({ kind: "input", title: "Bot name" });
+    // pi hands the blocked status to the stack; the hook logs it as reported.
+    expect(push?.blocked).toEqual({ kind: "question", message: "Bot name" });
+    expect(tracker.entryFor(component)).toMatchObject({ kind: "input", title: "Bot name", method: "showExtensionInput" });
     expect(pickAdapter(component, context(tracker.entryFor(component)))?.id).toBe("ext-input");
+  });
+
+  it("does not let a custom dialog's async push steal an open dialog's entry", () => {
+    const tracker = new FocusTracker();
+    const mode = new FakeMode();
+    hookEntryMethods(
+      mode as unknown as Record<string, unknown>,
+      PI_ENTRY_SPECS,
+      trackerSink(tracker),
+      "pi",
+      new WeakSet<object>(),
+    );
+    tracker.hookPiDialogStack(mode as unknown as Record<string, unknown>);
+
+    // An input dialog is open and has claimed its entry.
+    void mode.showExtensionInput("Bot name");
+    const inputComponent = mode.pushed[0]?.component as Record<string, unknown>;
+    expect(tracker.entryFor(inputComponent)).toMatchObject({ kind: "input" });
+
+    // A custom dialog built while the input stays open: its factory wrapper
+    // already bound the entry, then pi pushes it outside any entry call.
+    const custom = { render: () => "", handleInput: () => {} };
+    tracker.bindEntry(custom, { kind: "custom", title: "Picker", source: "pi", method: "custom" } as EntryInfo);
+    mode.pushExtensionDialog(custom);
+
+    expect(tracker.entryFor(custom)).toMatchObject({ kind: "custom", title: "Picker" });
   });
 });
 

@@ -27,7 +27,6 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:pi-versions": "node scripts/test-pi-versions.mjs",
     "test:e2e": "node scripts/e2e/run-e2e.mjs",
     "test:e2e:omp": "node scripts/e2e/run-e2e-omp.mjs",
     "test:e2e:tui-bridge": "node scripts/e2e/run-e2e-tui-bridge.mjs",
@@ -54,7 +53,7 @@
     "url": "https://github.com/jalyfeng/pi-telegram-plus"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.80.7 <1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
@@ -68,6 +67,6 @@
   "devDependencies": {
     "typescript": "^6.0.3",
     "vitest": "^4.1.8",
-    "@earendil-works/pi-coding-agent": "0.81.1"
+    "@earendil-works/pi-coding-agent": "1.4.0"
   }
 }

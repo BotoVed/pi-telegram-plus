@@ -41,8 +41,6 @@ export type EntrySpec = {
   kind: EntryKindLiteral;
   factory?: boolean;
   extract: Extract;
-  /** Field the host assigns its freshly built component to, for `bindEntry`. */
-  componentField?: string;
 };
 
 type Extract = (args: unknown[]) => EntryInfo | undefined;
@@ -130,12 +128,13 @@ const approvalFrom: Extract = (args) => {
   return { kind: "approval", title: "Tool approval", approval: { full, compact, session }, source: "omp" };
 };
 
-/** pi 0.81.1 `InteractiveMode` entry methods. */
+/** pi 1.4.0 `InteractiveMode` entry methods. Every dialog they build reaches the
+ *  mode's dialog stack through `pushExtensionDialog` (bound in focus.ts). */
 export const PI_ENTRY_SPECS: EntrySpec[] = [
-  { method: "showExtensionSelector", kind: "select", extract: selectFrom, componentField: "extensionSelector" },
-  { method: "showExtensionConfirm", kind: "confirm", extract: confirmFrom, componentField: "extensionSelector" },
-  { method: "showExtensionInput", kind: "input", extract: inputFrom(false), componentField: "extensionInput" },
-  { method: "showExtensionEditor", kind: "editor", extract: editorFrom, componentField: "extensionEditor" },
+  { method: "showExtensionSelector", kind: "select", extract: selectFrom },
+  { method: "showExtensionConfirm", kind: "confirm", extract: confirmFrom },
+  { method: "showExtensionInput", kind: "input", extract: inputFrom(false) },
+  { method: "showExtensionEditor", kind: "editor", extract: editorFrom },
   { method: "showExtensionCustom", kind: "custom", factory: true, extract: customFrom },
 ];
 
@@ -191,6 +190,14 @@ export function entryFromCall(spec: EntrySpec, args: unknown[], source: "pi" | "
 
 /** How deep inside another entry call the current entry call is running. */
 let entryCallDepth = 0;
+
+/** True while the current call stack sits inside a hooked entry call. pi 1.4.0
+ *  pushes selector/confirm/input/editor dialogs synchronously inside their
+ *  `showExtension*` call; a custom dialog is pushed later, and its factory
+ *  wrapper already binds that one itself. */
+export function insideEntryCall(): boolean {
+  return entryCallDepth > 0;
+}
 
 const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   !!value && typeof value === "object" && typeof (value as PromiseLike<unknown>).then === "function";
@@ -254,13 +261,6 @@ export function hookEntryMethods(
           const retire = (): void => { sink.pop(token); };
           if (isThenable(result)) void Promise.resolve(result).then(retire, retire);
           else retire();
-          // The host assigns the component it just built to a field on itself.
-          // Binding records the entry on that component, so a dialog keeps its
-          // meaning even when the focus tracker only notices it on a later tick.
-          const created = spec.componentField
-            ? (this as Record<string, unknown> | undefined)?.[spec.componentField]
-            : undefined;
-          if (info && created && typeof created === "object") sink.bind(created as object, info);
           return result;
         };
     Object.defineProperty(wrapped, "name", { value: `ptp:${spec.method}` });

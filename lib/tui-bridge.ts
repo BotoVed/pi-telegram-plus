@@ -11,7 +11,7 @@ export type TuiCommand = {
   name: string;
   description?: string;
   aliases?: string[];
-  source: "builtin" | "autocomplete" | "host";
+  source: "builtin" | "autocomplete";
 };
 
 export type TuiSnapshot = {
@@ -270,7 +270,6 @@ export function installTuiBridge(): Promise<void> {
     const piProto = asHostConstructor(pi?.InteractiveMode);
     if (piProto) {
       patchMethod(piProto, "setupEditorSubmitHandler", "pi");
-      patchMethod(piProto, "initHooksAndCustomTools", "pi");
       patchMethod(piProto, "init", "pi");
       patchMethod(piProto, "run", "pi");
     }
@@ -488,10 +487,6 @@ async function buildCommandCatalog(): Promise<TuiCommand[]> {
     for (const command of commandList(provider?.commands, "autocomplete")) add(command);
   }
 
-  const session = asHostObject(mode?.session);
-  for (const source of [session?.slashCommands, session?.customCommands, session?.promptTemplates]) {
-    for (const command of commandList(source, "host")) add(command);
-  }
   bridgeLog.debug("command catalog built", { host: state.host, builtin: state.hostCommands.length, total: commands.length });
   return commands;
 }

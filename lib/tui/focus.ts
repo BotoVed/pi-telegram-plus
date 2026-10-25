@@ -13,7 +13,7 @@
  *   keystroke in the terminal is distinguishable from anything the plugin does.
  */
 import { onHostState, hookMethod, isHostObject, type HostState } from "./host.ts";
-import { hookEntryMethods, PI_ENTRY_SPECS, UI_CONTEXT_SPECS, OMP_ENTRY_SPECS, type EntrySink } from "./entry.ts";
+import { hookEntryMethods, insideEntryCall, PI_ENTRY_SPECS, UI_CONTEXT_SPECS, OMP_ENTRY_SPECS, type EntrySink } from "./entry.ts";
 import { isEditorShape, isFilteredList, isInputShape, isReadOnlyPanel, isSelectList, isSettingsList } from "./find-shape.ts";
 import type { EntryInfo } from "./model.ts";
 import { log } from "../logger.ts";
@@ -320,7 +320,30 @@ export class FocusTracker {
     const toolUi = this.readUiContext(runner);
     if (toolUi && toolUi !== ui) hookEntryMethods(toolUi, UI_CONTEXT_SPECS, sink, state.host === "omp" ? "omp" : "pi", this.tagged);
     if (state.host === "omp") hookEntryMethods(state.mode, OMP_ENTRY_SPECS, sink, "omp", this.tagged);
-    if (state.host === "pi") hookEntryMethods(state.mode, PI_ENTRY_SPECS, sink, "pi", this.tagged);
+    if (state.host === "pi" && state.mode) {
+      hookEntryMethods(state.mode, PI_ENTRY_SPECS, sink, "pi", this.tagged);
+      this.hookPiDialogStack(state.mode);
+    }
+  }
+
+  /**
+   * pi 1.4.0 routes every extension dialog through the mode's
+   * `pushExtensionDialog(component, blocked)`. A synchronous push runs inside
+   * the hooked `showExtension*` call, so the innermost pending entry is this
+   * dialog's: bind it to the component, so the dialog keeps its meaning even
+   * when focus is only noticed on a later tick. `blocked` ({ kind, message })
+   * is logged as reported. A push outside any entry call is the custom
+   * factory's async one - already bound by the factory wrapper, so it must
+   * not steal an older open dialog's entry.
+   */
+  hookPiDialogStack(mode: Record<string, unknown>): void {
+    hookMethod(mode, "pushExtensionDialog", "pi-extension-dialog", (args) => {
+      focusLog.debug("pi extension dialog pushed", { blocked: args[1] });
+      const component = args[0];
+      if (!insideEntryCall() || !isHostObject(component)) return;
+      const top = this.pending[this.pending.length - 1];
+      if (top) this.bindEntry(component, top.info);
+    });
   }
 
   private readUiContext(runner?: { getUIContext?: () => unknown }): Record<string, unknown> | undefined {
