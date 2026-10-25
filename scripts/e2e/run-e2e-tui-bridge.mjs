@@ -394,21 +394,30 @@ async function runHost(host, piCli, label) {
       // `full` mode: the keyboard carries semantic buttons resolved against the
       // live component, so the proof is that the terminal reacts to them. The
       // keyboard is re-read before each tap because a brokered action republishes
-      // the message with a fresh generation.
-      const paneBefore = String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
+      // the message with a fresh generation, and buttons are deduped by TEXT:
+      // the generation inside the callback data changes on every republish, so
+      // data-based dedup lets the same screen slot be tapped twice - OMP lays
+      // its paging buttons out by position (current page omitted), which flips
+      // the pane back to where it started (3E).
+      const pane = () => String(tmux("capture-pane", "-p", "-t", session).stdout ?? "");
       const tapped = [];
+      const seenTexts = new Set();
       for (const pattern of [DIALOG_ROW, DIALOG_ROW, DIALOG_KEY]) {
         const button = (await keyboardOf()).find((entry) => {
           const data = String(entry.callback_data ?? "");
-          return pattern.test(data) && !tapped.includes(data);
+          return pattern.test(data) && !seenTexts.has(String(entry.text ?? ""));
         });
         if (!button) continue;
-        tapped.push(String(button.callback_data));
+        seenTexts.add(String(button.text ?? ""));
+        const label = String(button.text ?? "").trim() || String(button.callback_data);
+        const paneBefore = pane();
         await callbackAnswered(await injectCallback(String(button.callback_data), mirrorMessageId));
+        await sleep(600);
+        tapped.push({ label, changed: pane() !== paneBefore });
       }
       if (tapped.length < 2) throw new Error(`dialog keyboard is not driveable: ${buttons.length} buttons`);
-      if (String(tmux("capture-pane", "-p", "-t", session).stdout ?? "") === paneBefore) {
-        throw new Error(`the terminal ignored ${tapped.join(", ")}`);
+      if (!tapped.some((tap) => tap.changed)) {
+        throw new Error(`the terminal ignored ${tapped.map((tap) => `"${tap.label}" pane ${tap.changed ? "changed" : "unchanged"}`).join(", ")}`);
       }
       // §4.5.1: a message that arrives while a dialog owns the terminal input is
       // a dialog action, not a prompt - it must never start a model turn.

@@ -779,26 +779,45 @@ async function runHost(host, label, phase = "main") {
               || buttonsOf(entry).some((b) => /^default\b/i.test(String(b.text ?? ""))))) ?? false,
           4_000).catch(() => undefined);
         let purposeMessageId;
+        let purposeLabel;
+        let purposeCursor;
         if (purposeDialog) {
           purposeMessageId = purposeDialog.body?.message_id ?? purposeDialog.message_id;
-          const purposeButton = buttonsOf(purposeDialog).find((b) => /^default\b/i.test(String(b.text ?? "")))
-            ?? buttonsOf(purposeDialog).find((b) => !DIALOG_CANCEL.test(String(b.callback_data ?? "")));
-          if (purposeButton) await click(purposeButton, purposeMessageId).catch(() => undefined);
+          // 3E: OMP's purpose options are toggles - an already-assigned one
+          // (✓ prefix) unassigns and only closes the option strip, so pick the
+          // first non-cancel option whose text carries no ✓ (e.g. `smol`).
+          const purposeButton = buttonsOf(purposeDialog).find((b) => !DIALOG_CANCEL.test(String(b.callback_data ?? ""))
+            && !String(b.text ?? "").includes("✓"));
+          if (!purposeButton) {
+            throw new Error(`no unassigned purpose: ${buttonsOf(purposeDialog).map((b) => String(b.text ?? "").replace(/\s+/g, " ")).join(" / ").slice(0, 90)}`);
+          }
+          purposeLabel = String(purposeButton.text ?? "").replace(/\s+/g, " ").trim().slice(0, 24);
+          // Take the cursor before the click: `click` awaits the follow-up edit,
+          // so the strip closing is already in the log by the time we look.
+          purposeCursor = await cursor();
+          await click(purposeButton, purposeMessageId).catch(() => undefined);
         }
-        // Applied means either a host status message naming the new model, or
-        // the Broker retiring the dialog message (summary edit + strip). With
-        // the purpose step the retired message can be the purpose dialog.
+        // Applied means a host status message naming the new model, the Broker
+        // retiring the dialog message (summary edit + strip), or the purpose
+        // strip closing back into the model panel. With the purpose step the
+        // edited message can be the purpose dialog.
         const dialogIds = [dialogMessageId, purposeMessageId];
         const applied = await waitFor("model selection applied", (state) => {
           const after = state.calls.slice(clickCursor);
           if (after.some((entry) => entry.method === "sendMessage" && /mock-model/.test(String(entry.body?.text ?? "")))) return true;
+          // Third signal (3E): closing the purpose strip edits the same dialog
+          // message back to the model panel, so its text stops matching
+          // /Assign .* to/ even though the panel keeps its own buttons.
+          if (purposeCursor !== undefined && state.calls.slice(purposeCursor).some((entry) =>
+            entry.method === "editMessageText" && entry.body?.message_id === purposeMessageId
+            && typeof entry.body?.text === "string" && !/Assign .* to/i.test(entry.body.text))) return true;
           return after.some((entry) =>
             (entry.method === "editMessageText" || entry.method === "editMessageReplyMarkup")
             && dialogIds.includes(entry.body?.message_id)
             && !buttonsOf(entry).some((b) => String(b.callback_data ?? "").startsWith("tgplus:dlg:")));
         }, 15_000).catch(() => undefined);
         record("menu /model selects", Boolean(applied),
-          applied ? `dialog${purposeMessageId !== undefined ? " +purpose" : ""} · ${String(dialog.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60)}` : "selection not confirmed");
+          applied ? `dialog${purposeLabel ? ` +purpose:${purposeLabel}` : ""} · ${String(dialog.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60)}` : "selection not confirmed");
       }
     }
   } catch (error) {
