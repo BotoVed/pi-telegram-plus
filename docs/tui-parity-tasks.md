@@ -57,7 +57,7 @@
 
 最终结果：基本收发（pi、OMP）、dialogs（两宿主）、commands（pi 75/75、OMP 136/136）、tui-bridge（两宿主）全部通过；待迁移清单清空；单测 697/697、0 skip。
 
-遗留（不阻塞）：`!` 命令与普通文字在对话框开着时的提示措辞不一致；`/resume` 切到"全部"后列表异步加载，Telegram 是否自动刷新未专门验证；OMP 内置工具（bash 等）的审批经 `ToolContextStore` 调用，Telegram 回合里是否到达 Telegram 未专门验证。
+遗留处理（2026-10-25）：提示措辞已统一、对话框内容每秒同步（R1 `f812ee1`）；OMP 内置工具审批经 `runner.getUIContext()`，E2E 已证实能在 Telegram 上作答（R2 `9bdcf75`、R3 `370949f`，dialogs 新增 "tool approval answered from Telegram"）。剩余：模拟模型的裸 `PROBE_APPROVAL` 暗号仍匹配整段历史，可能在同会话后续步骤多触发一次审批（目前没有步骤受影响）。
 
 **3E 分工**（用户 2026-10-25）：主控跑全量 E2E、逐条分析失败原因并写修复任务书；**代码修改仍由 Qwen 执行**。
 
