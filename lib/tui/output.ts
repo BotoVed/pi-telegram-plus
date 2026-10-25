@@ -3,6 +3,7 @@
  * Telegram. It only claims output while a Telegram-issued command scope is
  * active; agent messages stay with the existing renderer.
  */
+import { existsSync } from "node:fs";
 import { escapeHtml } from "../html.ts";
 import { markdownToTelegramHtml } from "../markdown.ts";
 import { splitTelegramHtml } from "../text-split.ts";
@@ -66,7 +67,9 @@ export class OutputCapture {
   private readonly attached = new WeakSet<object>();
   private statusDepth = 0;
   private unsubscribe?: () => void;
-  private readonly exports = new WeakSet<object>();
+  /** Prototypes whose `exportToHtml`/`exportToJsonl` already carry the
+   * T4.4 file-send wrapper. */
+  private readonly exportProtos = new WeakSet<object>();
   /** `attached` already holds `mode` from the status-hook loop; report hooks
    * need their own dedupe set. */
   private readonly reportHooked = new WeakSet<object>();
@@ -248,13 +251,30 @@ export class OutputCapture {
         this.push(html);
       });
     }
+    // T4.4: `/export` ends with a file on disk; the terminal prints its path,
+    // the Telegram user gets the file itself (decision 20). The wrapper goes on
+    // the *prototype*: both hosts call the method on the session object
+    // (pi 1.4.0 interactive-mode.ts 6501 -> agent-session.ts 4348, OMP 18.12.5
+    // command-controller.ts 354 -> agent-session.ts 13714), and OMP may hand us
+    // a freshly focused sub-session of the same class.
     const session = state.session;
-    if (isHostObject(session) && !this.exports.has(session)) {
-      this.exports.add(session);
-      for (const name of ["exportToHtml", "exportToJsonl"]) {
-        hookMethod(session, name, `output-${name}`, undefined, (_args, result) => {
-          this.captureExport(name, result);
-        });
+    if (isHostObject(session)) {
+      const proto = Object.getPrototypeOf(session);
+      if (isHostObject(proto) && !this.exportProtos.has(proto)) {
+        this.exportProtos.add(proto);
+        // pi's `/export foo.jsonl` takes the sibling sync method instead
+        // (interactive-mode.js 5408), so both names share one wrapper.
+        for (const name of ["exportToHtml", "exportToJsonl"]) {
+          // With PITG_PROBE on, the probe already shadowed the method with an
+          // instance wrapper before any capture listener ran (tui-bridge.ts
+          // 212), so a prototype wrapper would be unreachable for this object;
+          // such an instance gets the wrapper on itself instead - exactly one
+          // path ever fires, so the file is never sent twice.
+          const target = Object.prototype.hasOwnProperty.call(session, name) ? session : proto;
+          hookMethod(target, name, `output-${name}`, undefined, (_args, result) => {
+            this.captureExport(result);
+          });
+        }
       }
     }
   }
@@ -345,25 +365,28 @@ export class OutputCapture {
     }
   }
 
-  private captureExport(method: string, result: unknown): void {
-    const scope = this.origin.active();
-    if (!scope || scope.label !== "export") return;
-    if (!result || typeof (result as { then?: unknown }).then !== "function") return;
-    void Promise.resolve(result as Promise<unknown>).then((value) => {
+  /** Send the file an `/export` just produced back to the scope that asked for
+   * it. OMP's `/share` writes a temp file through the same method
+   * (command-controller.ts 503), so the scope label is the gate: anything that
+   * is not an `export` scope sends nothing. */
+  private captureExport(result: unknown): void {
+    const binding = this.binding;
+    if (!binding || binding.finished || binding.scope.ended) return;
+    if (binding.scope.label !== "export") return;
+    void Promise.resolve(result).then((value) => {
+      if (binding.finished || binding.scope.ended) return;
       if (typeof value !== "string" || value.trim().length === 0) return;
-      const binding = this.binding;
-      if (!binding || binding.scope !== scope) return;
-      if (binding.telegram.chatId === undefined) return;
+      if (!existsSync(value)) return;
+      const { chatId, messageThreadId } = binding.telegram;
       void this.transport.sendDocument(
-        binding.telegram.chatId,
+        chatId,
         value,
-        `Session exported (${method.replace("exportTo", "").toLowerCase()})`,
+        "会话导出",
         undefined,
-        binding.telegram.messageThreadId,
-      ).catch(outputLog.swallow("warn", "send exported session failed", { path: value }));
-    }, (err) => {
-      outputLog.debug("export promise rejected", { err });
-    });
+        messageThreadId,
+        binding.scope.origin.sourceMessageId,
+      ).catch(outputLog.swallow("warn", "send exported session failed", { chatId, path: value }));
+    }, () => undefined);
   }
 }
 

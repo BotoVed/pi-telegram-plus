@@ -63,6 +63,14 @@ missing or mislabelled cannot be published.
   and a Telegram tap compete fairly: whoever answers first resolves the host's dialog once and
   the other keyboard disappears.
 
+- **`/export` sends the file back.** A `/export` started in Telegram now receives the exported
+  session as a document (caption `会话导出`, replying to the message that asked for it) instead of
+  only the host's `Session exported to: <path>` line, which points at a file the chat cannot
+  reach. pi's `/export <name>.jsonl` takes the sibling JSONL method and is covered as well. The
+  wrapper sits on the session class prototype, so a session object the host swaps later is still
+  watched, and it only fires inside an `export` scope - OMP's `/share`, which writes a temporary
+  file through the same method, still sends nothing.
+
 ### Fixed
 
 - **Two notices still pointed at menu rows that no longer exist.** The bot list marks the default bot with
