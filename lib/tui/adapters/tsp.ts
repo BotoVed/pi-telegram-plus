@@ -164,6 +164,17 @@ function findNodeVisited<K extends NodeKind>(component: object, kind: K, depth: 
   return walkNode(root, "", component, kind, depth, visited);
 }
 
+/**
+ * True when `component` describes itself as a picker or a settings page - i.e.
+ * the TSP adapters below could drive it. Focus classification uses this to tell
+ * an OMP dialog (model picker, settings page) from a spinner: OMP's dialogs
+ * carry `signal`/`abortController` fields like a loader does. A `describe` that
+ * throws describes nothing, so this is false.
+ */
+export function describesDialog(component: object): boolean {
+  return findNode(component, "picker") !== undefined || findNode(component, "prefs") !== undefined;
+}
+
 /** The catalogue id list, honouring `order` (string entries that exist) when present. */
 function visibleItems(props: PickerProps): PickerItemLike[] {
   const items = Array.isArray(props.items) ? (props.items as readonly PickerItemLike[]) : [];
