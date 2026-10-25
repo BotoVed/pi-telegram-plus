@@ -103,7 +103,7 @@
 |---|---|---|---|---|
 | P1 | pi 内置列表选择器：`/model`、`/scoped-models`、`/login`/`/logout` 提供方、`/trust`、`/fork`/`/clone` 消息列表（按构造器名读字段） | 3C | ☑ | `4eef2dd` |
 | P2 | pi `/settings`（`SettingsList`：当前值、切换、子菜单） | P1 | ☑ | `8230047` |
-| P3 | pi `/resume`（`SessionSelectorComponent`） | P1 | ☐ | |
+| P3 | pi `/resume`（`SessionSelectorComponent`） | P1 | ☑ | `2b2bd41`；切换范围后列表异步加载，broker 是否会重绘留到 3E 核对 |
 | P4 | pi `/tree`（`TreeSelectorComponent`） | P1 | ☐ | |
 | P5 | pi 登录对话框（`LoginDialog`：API key 输入按 secret 处理） | P1 | ☐ | |
 
