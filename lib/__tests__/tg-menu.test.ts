@@ -19,7 +19,7 @@ vi.mock("../pairing.ts", async (importOriginal) => {
   return { ...actual, createTelegramPairingCode: pairingMocks.createTelegramPairingCode };
 });
 
-import { registerTgMenuCommand, type SwitchInstanceDeps } from "../commands/tg-menu.ts";
+import { buildConfigMenuOptions, registerTgMenuCommand, type SwitchInstanceDeps } from "../commands/tg-menu.ts";
 import type { TelegramCommandDeps, TelegramConnectionState } from "../commands/telegram-commands.ts";
 import type { TgConfigDeps } from "../commands/register.ts";
 import { readBotRegistry, readProjectBinding, addBot, writeProjectBinding, clearDefaultBot } from "../config.ts";
@@ -676,5 +676,25 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message === "No active session" && c.level === "error")).toBe(true);
     expect(notifyCalls.some((c) => c.message.startsWith("Plugin debug info"))).toBe(false);
     expect(ui.select).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("buildConfigMenuOptions", () => {
+  const thinkingSession = {
+    getAvailableThinkingLevels: () => ["off", "low", "high"],
+    thinkingLevel: "low",
+  } as unknown as CapturedAgentSession;
+
+  it("hides the 🧠 thinking-level entry on pi (native /thinking already covers it)", () => {
+    const options = buildConfigMenuOptions({}, thinkingSession, "pi");
+    expect(options.some((o) => o.startsWith("🧠 Thinking level:"))).toBe(false);
+    // The rest of the Config menu is unchanged on pi.
+    expect(options).toContain("💭 Thinking: brief");
+    expect(options.at(-1)).toBe("⬅️ Back");
+  });
+
+  it("keeps the 🧠 thinking-level entry on omp", () => {
+    const options = buildConfigMenuOptions({}, thinkingSession, "omp");
+    expect(options).toContain("🧠 Thinking level: low");
   });
 });

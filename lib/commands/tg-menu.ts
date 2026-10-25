@@ -6,7 +6,9 @@ import type { TelegramInstanceMetadata } from "../instance-coordinator.ts";
 import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
 import type { MenuUi, TelegramCommandDeps, TelegramConnectionState } from "./telegram-commands.ts";
 import type { TgConfigDeps, SessionDeps } from "./register.ts";
-import type { BotRecord, BotRegistry, TelegramConfig } from "../types.ts";
+import type { BotRecord, BotRegistry, CapturedAgentSession, TelegramConfig } from "../types.ts";
+import { currentHostName } from "../tui/host.ts";
+import type { TuiHost } from "../tui-bridge.ts";
 import { configToolFlow, configThinkingFlow, configRetryFlow, configBashFlow } from "./tg-config.ts";
 import { formatPairingInstructions } from "../pairing.ts";
 import { formatDebugReport } from "./info.ts";
@@ -413,28 +415,35 @@ async function projectMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
 
 // ── Config submenu ─────────────────────────────────────────────────────────
 
+/** Build the Config submenu entries. Model thinking level lives on the
+ * session, not the bridge config; the flat thinking command was removed, so
+ * this menu is its Telegram-side home on OMP (no Telegram-reachable hotkey).
+ * pi has a native /thinking command that Telegram forwards and its selector
+ * can already operate, so hide the entry there instead of duplicating it. */
+export function buildConfigMenuOptions(
+  config: TelegramConfig,
+  session: CapturedAgentSession | undefined,
+  host: TuiHost,
+): string[] {
+  const thinkingLevels = session?.getAvailableThinkingLevels() ?? [];
+  return [
+    `🔧 Tool: ${config.tool ?? "brief"}`,
+    `💭 Thinking: ${config.thinking ?? "brief"}`,
+    ...(host !== "pi" && thinkingLevels.length > 0
+      ? [`🧠 Thinking level: ${session?.thinkingLevel ?? "off"}`]
+      : []),
+    `🔄 Retry: ${config.retryCount ?? 3}`,
+    `🐚 Shell confirm: ${config.bashConfirm ?? "dangerous"}`,
+    BACK_LABEL,
+  ];
+}
+
 async function configMenu(ui: MenuUi, configDeps: TgConfigDeps, sessionDeps?: SessionDeps): Promise<boolean> {
   while (true) {
-    const config = configDeps.getConfig();
-    const currentTool = config.tool ?? "brief";
-    const currentThinking = config.thinking ?? "brief";
-    const currentRetry = config.retryCount ?? 3;
-    const currentBash = config.bashConfirm ?? "dangerous";
-    // Model thinking level lives on the session, not the bridge config; the
-    // flat thinking command was removed, so this menu is its Telegram-side
-    // home (pi users also have native /thinking; OMP has no Telegram-reachable
-    // hotkey).
     const session = sessionDeps?.getSession();
     const thinkingLevels = session?.getAvailableThinkingLevels() ?? [];
 
-    const choice = await pick(ui, CONFIG_MENU_PREFIX, [
-      `🔧 Tool: ${currentTool}`,
-      `💭 Thinking: ${currentThinking}`,
-      ...(thinkingLevels.length > 0 ? [`🧠 Thinking level: ${session?.thinkingLevel ?? "off"}`] : []),
-      `🔄 Retry: ${currentRetry}`,
-      `🐚 Shell confirm: ${currentBash}`,
-      BACK_LABEL,
-    ]);
+    const choice = await pick(ui, CONFIG_MENU_PREFIX, buildConfigMenuOptions(configDeps.getConfig(), session, currentHostName()));
     if (!choice || choice === BACK_LABEL) return true; // back to main
 
     if (choice.startsWith("🔧 Tool:")) {

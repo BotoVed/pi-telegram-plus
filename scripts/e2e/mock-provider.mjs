@@ -168,9 +168,9 @@ const server = createServer(async (req, res) => {
   // pins `bash` to `touch <path>` so a driver can deny the call and then assert
   // the file was never created. Arguments are derived from the
   // tool schema, with semantic overrides for the shapes we drive.
-  const probeMatch = /PROBE_TOOL:([A-Za-z0-9_]+)/.exec(userText);
-  const goalMatch = /PROBE_GOAL_(QUESTIONNAIRE|CONFIRM|QUESTION)/.exec(userText);
-  const approvalProbe = !approvalBashMatch && userText.includes("PROBE_APPROVAL");
+  const probeMatch = /PROBE_TOOL:([A-Za-z0-9_]+)/.exec(latestUserText);
+  const goalMatch = /PROBE_GOAL_(QUESTIONNAIRE|CONFIRM|QUESTION)/.exec(latestUserText);
+  const approvalProbe = !approvalBashMatch && latestUserText.includes("PROBE_APPROVAL");
   const goalToolName = goalMatch
     ? (goalMatch[1] === "CONFIRM"
       ? "propose_goal_draft"
