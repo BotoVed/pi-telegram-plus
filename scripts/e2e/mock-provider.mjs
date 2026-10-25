@@ -76,6 +76,14 @@ const server = createServer(async (req, res) => {
     .filter((m) => m.role === "user")
     .map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "")))
     .join("\n");
+  // The driver's newest instruction only: earlier codes (ask probes, an earlier
+  // approval probe) stay in the history, so anything that must follow the latest
+  // text reads this instead of the joined `userText`.
+  const latestUserMessage = (parsed.messages ?? []).filter((m) => m.role === "user").at(-1);
+  const latestUserText = latestUserMessage === undefined ? ""
+    : (typeof latestUserMessage.content === "string" ? latestUserMessage.content : JSON.stringify(latestUserMessage.content ?? ""));
+  const approvalBashMatch = /PROBE_APPROVAL_BASH:(\S+)/.exec(latestUserText);
+
   const toolNames = (parsed.tools ?? [])
     .map((tool) => tool?.function?.name ?? tool?.name ?? "")
     .filter(Boolean);
@@ -100,14 +108,12 @@ const server = createServer(async (req, res) => {
   // prompt path — render in the TUI, answer through the mirror — is exercised
   // exactly as a real model would. The follow-up request carries a tool result
   // and falls through to the normal text reply.
-  const hasToolResult = (parsed.messages ?? []).some((message) =>
-    message?.role === "tool" || message?.role === "toolResult");
   // Only the request that immediately follows a tool result is the echo of an
   // answer. A tool result somewhere in the history must not rule out a later ask:
   // a driver raises the single-question ask and then the multi-question one.
   const justAnswered = lastMessage?.role === "tool" || lastMessage?.role === "toolResult";
   const askTool = toolNames.find((name) => name === "ask");
-  const triggerAsk = Boolean(askTool) && !justAnswered && userText.includes("ASK_TOOL_PROBE")
+  const triggerAsk = Boolean(askTool) && !justAnswered && !approvalBashMatch && userText.includes("ASK_TOOL_PROBE")
     && !userText.includes("ASK_TOOL_PROBE_MULTI") && !userText.includes("ASK_TOOL_PROBE_CHECK");
   const askArguments = JSON.stringify({
     questions: [{
@@ -122,8 +128,9 @@ const server = createServer(async (req, res) => {
   // Multi-question / multi-select variant for the parity suite: the first
   // question is a checkbox group, the second a single choice, so the mirror
   // must toggle instead of submitting on the first pick.
-  const triggerMultiAsk = Boolean(askTool) && !justAnswered && userText.includes("ASK_TOOL_PROBE_MULTI");
-  const triggerCheckAsk = Boolean(askTool) && !justAnswered && userText.includes("ASK_TOOL_PROBE_CHECK");
+  // An approval probe in the latest message outranks every ask trigger.
+  const triggerMultiAsk = Boolean(askTool) && !justAnswered && !approvalBashMatch && userText.includes("ASK_TOOL_PROBE_MULTI");
+  const triggerCheckAsk = Boolean(askTool) && !justAnswered && !approvalBashMatch && userText.includes("ASK_TOOL_PROBE_CHECK");
   const checkAskArguments = JSON.stringify({
     questions: [{
       id: "e2e-toppings",
@@ -163,7 +170,6 @@ const server = createServer(async (req, res) => {
   // tool schema, with semantic overrides for the shapes we drive.
   const probeMatch = /PROBE_TOOL:([A-Za-z0-9_]+)/.exec(userText);
   const goalMatch = /PROBE_GOAL_(QUESTIONNAIRE|CONFIRM|QUESTION)/.exec(userText);
-  const approvalBashMatch = /PROBE_APPROVAL_BASH:(\S+)/.exec(userText);
   const approvalProbe = !approvalBashMatch && userText.includes("PROBE_APPROVAL");
   const goalToolName = goalMatch
     ? (goalMatch[1] === "CONFIRM"
@@ -181,7 +187,7 @@ const server = createServer(async (req, res) => {
   const probeTool = probeToolDef
     ? (probeToolDef.function?.name ?? probeToolDef.name)
     : undefined;
-  const triggerProbe = Boolean(probeTool) && !hasToolResult
+  const triggerProbe = Boolean(probeTool) && !justAnswered
     && Boolean(probeMatch || goalMatch || approvalProbe || approvalBashMatch);
 
   const fill = (schema) => {
