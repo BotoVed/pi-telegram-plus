@@ -7,6 +7,8 @@
  * the live component. Nothing here imports the host: the model is plain data.
  */
 
+import type { RaceHandle } from "./race.ts";
+
 export type DialogItem = {
   /** Stable inside one adapter: value/id when present, else "index + label". */
   key: string;
@@ -112,6 +114,8 @@ export type EntryInfo = {
   source: "pi" | "omp";
   /** Entry method name, for logs and adapter whitelists. */
   method?: string;
+  /** Live race handle when the extension's own `select` call is racing the host dialog (§4.12). */
+  race?: RaceHandle;
 };
 
 export type AdapterContext = {

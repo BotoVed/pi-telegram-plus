@@ -14,6 +14,7 @@
  */
 import { onHostState, hookMethod, isHostObject, type HostState } from "./host.ts";
 import { hookEntryMethods, insideEntryCall, PI_ENTRY_SPECS, UI_CONTEXT_SPECS, OMP_ENTRY_SPECS, type EntrySink } from "./entry.ts";
+import { installRace, takePendingRace } from "./race.ts";
 import { isEditorShape, isFilteredList, isInputShape, isReadOnlyPanel, isSelectList, isSettingsList } from "./find-shape.ts";
 import type { EntryInfo } from "./model.ts";
 import { log } from "../logger.ts";
@@ -162,6 +163,10 @@ export class FocusTracker {
       if (info.approval && !top.info.approval) top.info.approval = info.approval;
       return undefined;
     }
+    // The race wrapper of this very call registered its handle before the
+    // entry wrapper ran; take it so the record carries the answer path (§4.12).
+    const race = takePendingRace();
+    if (race) info.race = race;
     const record: PendingEntry = { info, at: Date.now() };
     this.pending.push(record);
     // A new question is a new dialog: let its own component claim the entry.
@@ -319,6 +324,9 @@ export class FocusTracker {
       | undefined;
     const toolUi = this.readUiContext(runner);
     if (toolUi && toolUi !== ui) hookEntryMethods(toolUi, UI_CONTEXT_SPECS, sink, state.host === "omp" ? "omp" : "pi", this.tagged);
+    // The race wrapper goes on outside the entry wrapper: it registers its
+    // handle before that wrapper pushes, so the entry above can take it (§4.12).
+    if (toolUi) installRace(toolUi, "select", this.tagged);
     if (state.host === "omp") hookEntryMethods(state.mode, OMP_ENTRY_SPECS, sink, "omp", this.tagged);
     if (state.host === "pi" && state.mode) {
       hookEntryMethods(state.mode, PI_ENTRY_SPECS, sink, "pi", this.tagged);

@@ -143,6 +143,18 @@ export const extensionSelectAdapter: DialogAdapter = {
   },
 
   act(component, action, ctx) {
+    // The extension's own `select` call may be racing the host dialog (§4.12):
+    // the tap then answers that call directly and the host closes itself; the
+    // keystroke path below is only the fallback (no handle, or already settled).
+    const race = ctx.entry?.race;
+    if (race && !race.settled && ctx.entry?.kind === "select") {
+      if (action.type === "cancel") return race.answer(undefined);
+      if (action.type === "choose") {
+        const labels = ctx.entry.options ?? [];
+        const index = resolveRowKey(labels, action.key);
+        return index === undefined ? false : race.answer(labels[index]);
+      }
+    }
     if (action.type === "cancel") return ctx.sendKey("esc");
     if (action.type !== "choose" && action.type !== "toggle" && action.type !== "confirm") return false;
 
