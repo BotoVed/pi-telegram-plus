@@ -667,3 +667,82 @@ describe("background refresh of an open dialog", () => {
     }
   });
 });
+
+describe("page reset when a dialog swaps in a different list", () => {
+  // S2: OMP's `/model` list spans pages; tapping a model turns the same dialog
+  // into the "Assign ... to" list. The terminal starts that new list at its
+  // first item - the chat must not stay parked on the old page.
+
+  /** A 25-option selector = 3 pages of 10, shaped like pi's extension selector. */
+  function pagedSelector(): Record<string, unknown> {
+    return {
+      baseTitle: "Models",
+      options: Array.from({ length: 25 }, (_, index) => `mock-model-${index}`),
+      selectedIndex: 0,
+      handleInput: () => undefined,
+    };
+  }
+
+  /** Open the dialog and tap "Next" once, so the chat sits on page 2. */
+  async function openOnPage2() {
+    const harness = makeBroker({ turns: [turn(42)] });
+    const component = pagedSelector();
+    harness.focus.openDialog(component);
+    await settle();
+    const session = harness.broker.current();
+    harness.broker.handleCallback(42, undefined, {
+      sessionId: session?.id ?? "",
+      generation: session?.generation ?? 0,
+      op: "p",
+      arg: "1",
+    });
+    await settle();
+    expect(transportText(harness.transport)).toContain("Page 2/3");
+    return { ...harness, component };
+  }
+
+  const transportText = (transport: { edits: Array<{ text: string }> }) =>
+    transport.edits[transport.edits.length - 1]?.text ?? "";
+
+  it("draws the first page when the dialog swaps in a different list", async () => {
+    vi.useFakeTimers();
+    try {
+      const { broker, transport, component } = await openOnPage2();
+
+      // The same component becomes the "Assign ... to" list: new title, new options.
+      component.baseTitle = "Assign mock-model-2 to";
+      component.options = ["default", "smol"];
+      vi.advanceTimersByTime(REFRESH_MS);
+      await settle();
+
+      const last = transport.edits[transport.edits.length - 1];
+      expect(broker.current()?.page).toBe(0);
+      expect(last?.text).toContain("Assign mock-model-2 to");
+      expect(last?.text).toContain("Page 1/1 · 2 items");
+      expect(last?.text).toContain("default");
+      // No navigation left on a one-page list: the user never sees "◀ Prev".
+      expect(JSON.stringify(last?.rows)).not.toContain("Prev");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the page when the same list only moves its cursor", async () => {
+    vi.useFakeTimers();
+    try {
+      const { transport, component } = await openOnPage2();
+
+      // Same kind, same title, same keys: only the terminal cursor moved onto
+      // an item of the page the chat is already showing.
+      component.selectedIndex = 11;
+      vi.advanceTimersByTime(REFRESH_MS);
+      await settle();
+
+      const last = transport.edits[transport.edits.length - 1];
+      expect(last?.text).toContain("Page 2/3");
+      expect(last?.text).toContain("mock-model-11");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

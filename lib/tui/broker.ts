@@ -126,6 +126,25 @@ function activeItems(model: DialogModel): DialogItem[] {
   }
 }
 
+/**
+ * Whether a re-read is the *same list* the user was paging through: same kind,
+ * same title, same set of clickable keys. The page number belongs to the list
+ * it was made for - when the dialog swaps in a different one (`/model`'s model
+ * list becoming "Assign ... to"), the chat must go back to the first page.
+ * A search filter changes the key set, and page 1 of the filtered result is
+ * exactly what the user wants to see, so a changed set resets too; a repaint
+ * that only moves a cursor or updates a value keeps the page.
+ */
+function sameList(previous: DialogModel | undefined, next: DialogModel): boolean {
+  if (!previous || previous.kind !== next.kind) return false;
+  const previousTitle = "title" in previous ? previous.title : undefined;
+  const nextTitle = "title" in next ? next.title : undefined;
+  if (previousTitle !== nextTitle) return false;
+  const before = [...new Set(activeItems(previous).map((item) => item.key))].sort();
+  const after = [...new Set(activeItems(next).map((item) => item.key))].sort();
+  return before.length === after.length && before.every((key, index) => key === after[index]);
+}
+
 /** Where free text belongs, if it belongs to the dialog at all (§4.5.1). */
 function textPurpose(model: DialogModel): TextPurpose | undefined {
   switch (model.kind) {
@@ -629,6 +648,12 @@ export class DialogBroker {
       this.retire(session, this.deps.focus.current());
       return;
     }
+    // The page number belongs to the list it was made for: when the dialog
+    // swaps in a different one (`/model`'s model list becoming "Assign ...
+    // to"), the chat goes back to the first page, like the terminal does; a
+    // repaint of the same list that only moves a cursor or refreshes a value
+    // keeps it.
+    if (!sameList(session.model, model)) session.page = 0;
     // The buttons are replaced by this draw, so the previous generation dies with them - but
     // only when the buttons themselves changed. OMP repaints an unchanged question and moves a
     // cursor the keyboard never shows, which used to report the keyboard the user is looking at
