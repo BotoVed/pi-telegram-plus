@@ -46,7 +46,7 @@ describe("legacy tuiBridge key is ignored", () => {
 });
 
 describe("bridge unavailable answers host traffic with the fixed notice", () => {
-  const OUTAGE_TEXT = "宿主桥接不可用（pi），插件无法工作。请在终端以交互模式运行 pi/OMP。";
+  const OUTAGE_TEXT = "The host bridge is unavailable (pi), so the plugin cannot work. Run pi/OMP interactively in a terminal.";
 
   function createHarness(options: {
     bridge: TuiBridgeAdapter;

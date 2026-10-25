@@ -123,7 +123,7 @@ describe("dialog callback dispatch", () => {
     // Nothing is focused, so the answer is "handled in the terminal" and the
     // dead keyboard has to come off the message.
     expect(harness.calls.some((call) => call.method === "answer"
-      && call.text === "已在终端处理")).toBe(true);
+      && call.text === "Answered in the terminal")).toBe(true);
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 55)).toBe(true);
   });
 
@@ -139,7 +139,7 @@ describe("dialog callback dispatch", () => {
 
     expect(harness.session.prompt).not.toHaveBeenCalled();
     expect(harness.calls.some((call) => call.method === "answer"
-      && call.text === "这个菜单已经过期")).toBe(true);
+      && call.text === "This menu has expired")).toBe(true);
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 56)).toBe(true);
   });
 
@@ -190,12 +190,12 @@ describe("chat text while a host dialog holds the focus", () => {
   // tui-broker.test.ts); the chat then gets a notice instead of a prompt that would
   // sit behind a dialog nobody answered.
   const noticeOf = (title?: string) =>
-    `终端上有一个对话框正在等待${title ? `（${title}）` : ""}，请点按钮作答，或发 /stop 取消。`;
+    `A dialog is waiting in the terminal${title ? ` (${title})` : ""}. Answer it with the buttons, or send /stop to cancel.`;
 
   const sentTexts = (calls: Call[]): string[] =>
     calls.filter((call) => call.method === "text").map((call) => String(call.text));
   const sawNotice = (calls: Call[]): boolean =>
-    sentTexts(calls).some((value) => value.includes("终端上有一个对话框正在等待"));
+    sentTexts(calls).some((value) => value.includes("A dialog is waiting in the terminal"));
 
   /** `select` without `search`: no text purpose, so the broker leaves it alone. */
   function noTextSession(title = "Settings"): DialogSession {

@@ -101,12 +101,12 @@ function itemButtons(items: DialogItem[], page: number, ctx: RenderContext, op: 
 function pageButtons(total: number, page: number, ctx: RenderContext): TelegramButton[] {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (pages <= 1) return [];
-  const previous = page > 0 ? button("◀ 上一页", ctx, "p", String(page - 1)) : undefined;
-  const next = page < pages - 1 ? button("下一页 ▶", ctx, "p", String(page + 1)) : undefined;
+  const previous = page > 0 ? button("◀ Prev", ctx, "p", String(page - 1)) : undefined;
+  const next = page < pages - 1 ? button("Next ▶", ctx, "p", String(page + 1)) : undefined;
   return keep([previous, button(`${page + 1}/${pages}`, ctx, "p", String((page + 1) % pages)), next]);
 }
 
-function cancelRow(ctx: RenderContext, label = "取消"): TelegramButton[] {
+function cancelRow(ctx: RenderContext, label = "Cancel"): TelegramButton[] {
   const cancel = button(label, ctx, "x");
   return cancel ? [cancel] : [];
 }
@@ -131,11 +131,11 @@ function renderSelect(model: Extract<DialogModel, { kind: "select" }>, ctx: Rend
   const { rows, keyMap } = itemButtons(window, page, ctx, model.multi ? "t" : "c");
   const actions: TelegramButton[] = [];
   if (model.multi) {
-    const submit = button("⏎ 提交", ctx, "k", "enter");
+    const submit = button("⏎ Submit", ctx, "k", "enter");
     if (submit) actions.push(submit);
   }
   if (model.search) {
-    const search = button(`🔍 ${shorten(model.search.query || "搜索", 20)}`, ctx, "s");
+    const search = button(`🔍 ${shorten(model.search.query || "Search", 20)}`, ctx, "s");
     if (search) actions.push(search);
   }
   for (const extra of model.extraActions ?? []) {
@@ -146,11 +146,11 @@ function renderSelect(model: Extract<DialogModel, { kind: "select" }>, ctx: Rend
   const nav = pageButtons(total, page, ctx);
   if (nav.length > 0) rows.push(nav);
   rows.push(actions);
-  const subtitle = `第 ${page + 1}/${pages} 页 · 共 ${total} 项`;
+  const subtitle = `Page ${page + 1}/${pages} · ${total} items`;
   return {
     text: listText(
       model.title,
-      model.search ? `${subtitle} · 🔍 ${shorten(model.search.query || "(全部)", 20)}` : subtitle,
+      model.search ? `${subtitle} · 🔍 ${shorten(model.search.query || "(all)", 20)}` : subtitle,
       model.items,
       page,
       model.multi,
@@ -167,12 +167,12 @@ function renderSettings(model: Extract<DialogModel, { kind: "settings" }>, ctx: 
   if (model.submenu) {
     const inner = renderDialog(model.submenu.model, { ...ctx, page: 0 });
     const rows = inner.rows.slice();
-    rows.push(cancelRow(ctx, "↩ 返回"));
+    rows.push(cancelRow(ctx, "↩ Back"));
     const keyMap = new Map<string, string>();
     // Keys are the exact callback arguments of the buttons drawn above, so the
     // Broker can look one up without knowing this is a nested view.
     for (const [key, value] of inner.keyMap) keyMap.set(key, value);
-    return { text: `${inner.text}\n<i>子菜单 · 返回发 Esc</i>`, rows, keyMap, page: 0, pages: 1 };
+    return { text: `${inner.text}\n<i>Submenu · Back sends Esc</i>`, rows, keyMap, page: 0, pages: 1 };
   }
   const page = Math.max(0, ctx.page ?? 0);
   const pages = Math.max(1, Math.ceil(model.items.length / PAGE_SIZE));
@@ -209,7 +209,7 @@ function renderSettings(model: Extract<DialogModel, { kind: "settings" }>, ctx: 
   if (nav.length > 0) rows.push(nav);
   rows.push(cancelRow(ctx));
   return {
-    text: listText(model.title, `第 ${page + 1}/${pages} 页 · 共 ${model.items.length} 项`, model.items, page),
+    text: listText(model.title, `Page ${page + 1}/${pages} · ${model.items.length} items`, model.items, page),
     rows,
     keyMap,
     page,
@@ -221,7 +221,7 @@ function renderQuestionnaire(model: Extract<DialogModel, { kind: "questionnaire"
   const activeIndex = Math.max(0, Math.min(model.active, model.questions.length - 1));
   const active = model.questions[activeIndex];
   if (!active) {
-    return { text: header(model.title, undefined, ["(没有可显示的问题)"]), rows: [cancelRow(ctx)], keyMap: new Map(), page: 0, pages: 1 };
+    return { text: header(model.title, undefined, ["(no questions to show)"]), rows: [cancelRow(ctx)], keyMap: new Map(), page: 0, pages: 1 };
   }
   const status = model.questions
     .map((question, index) => `${index === activeIndex ? "▸" : ""}${index + 1}${question.answered ? "✓" : "·"}`)
@@ -229,18 +229,18 @@ function renderQuestionnaire(model: Extract<DialogModel, { kind: "questionnaire"
   const body = `${escapeHtml(shorten(active.prompt, 300))}\n`;
   const { rows, keyMap } = itemButtons(active.items, 0, ctx, active.multi ? "t" : "c");
   const switchRow = keep([
-    activeIndex > 0 ? button("◀ 上一题", ctx, "q", String(activeIndex - 1)) : undefined,
-    button(`第 ${activeIndex + 1}/${model.questions.length} 题`, ctx, "q", String((activeIndex + 1) % model.questions.length)),
-    activeIndex < model.questions.length - 1 ? button("下一题 ▶", ctx, "q", String(activeIndex + 1)) : undefined,
+    activeIndex > 0 ? button("◀ Prev question", ctx, "q", String(activeIndex - 1)) : undefined,
+    button(`Question ${activeIndex + 1}/${model.questions.length}`, ctx, "q", String((activeIndex + 1) % model.questions.length)),
+    activeIndex < model.questions.length - 1 ? button("Next question ▶", ctx, "q", String(activeIndex + 1)) : undefined,
   ]);
   if (switchRow.length > 0) rows.unshift(switchRow);
   const actions: TelegramButton[] = [];
   if (active.allowCustom) {
-    const custom = button("✏️ 自己输入", ctx, "i");
+    const custom = button("✏️ Type an answer", ctx, "i");
     if (custom) actions.push(custom);
   }
   if (model.canSubmit) {
-    const submit = button("⏎ 提交全部", ctx, "k", "enter");
+    const submit = button("⏎ Submit all", ctx, "k", "enter");
     if (submit) actions.push(submit);
   }
   actions.push(...cancelRow(ctx));
@@ -264,15 +264,15 @@ function renderApproval(model: Extract<DialogModel, { kind: "approval" }>, ctx: 
 
 function renderConfirm(model: Extract<DialogModel, { kind: "confirm" }>, ctx: RenderContext): RenderedDialog {
   const body = model.message ? `${escapeHtml(shorten(model.message, 900))}\n` : "";
-  const rows = [keep([button("✅ 是", ctx, "y"), button("❌ 否", ctx, "n")]), cancelRow(ctx)];
+  const rows = [keep([button("✅ Yes", ctx, "y"), button("❌ No", ctx, "n")]), cancelRow(ctx)];
   return { text: header(model.title, undefined, [body]), rows, keyMap: new Map(), page: 0, pages: 1 };
 }
 
 function renderInput(model: Extract<DialogModel, { kind: "input" }>, ctx: RenderContext): RenderedDialog {
   const body = [
     model.placeholder ? `<pre>${escapeHtml(shorten(model.placeholder, 300))}</pre>\n` : "",
-    model.secret ? "<i>秘密输入：直接发送一条消息，机器人不会回显它。</i>\n" : "",
-    "直接发送一条消息作为输入；点“取消”放弃。",
+    model.secret ? "<i>Secret input: send a message; the bot will not echo it.</i>\n" : "",
+    "Send a message as the input, or tap Cancel.",
   ];
   return { text: header(model.title, undefined, body), rows: [cancelRow(ctx)], keyMap: new Map(), page: 0, pages: 1 };
 }
@@ -280,7 +280,7 @@ function renderInput(model: Extract<DialogModel, { kind: "input" }>, ctx: Render
 function renderProgress(model: Extract<DialogModel, { kind: "progress" }>, ctx: RenderContext): RenderedDialog {
   const body = `⏳ ${escapeHtml(shorten(model.text, 900))}\n`;
   return {
-    text: header("运行中", undefined, [body]),
+    text: header("Running", undefined, [body]),
     rows: model.cancellable ? [cancelRow(ctx)] : [],
     keyMap: new Map(),
     page: 0,
@@ -292,8 +292,8 @@ function renderProgress(model: Extract<DialogModel, { kind: "progress" }>, ctx: 
 function renderInfo(model: Extract<DialogModel, { kind: "info" }>, ctx: RenderContext): RenderedDialog {
   const body = `<pre>${escapeHtml(clean(model.text).slice(0, 3000))}</pre>\n`;
   return {
-    text: header(model.title ?? "终端信息", undefined, [body]),
-    rows: [cancelRow(ctx, "关闭")],
+    text: header(model.title ?? "Terminal", undefined, [body]),
+    rows: [cancelRow(ctx, "Close")],
     keyMap: new Map(),
     page: 0,
     pages: 1,
@@ -302,10 +302,10 @@ function renderInfo(model: Extract<DialogModel, { kind: "info" }>, ctx: RenderCo
 
 /** §4.6.5 #13: an unrecognised dialog is announced, never mirrored. */
 function renderUnsupported(model: Extract<DialogModel, { kind: "unsupported" }>, ctx: RenderContext): RenderedDialog {
-  const body = `终端上有一个 Telegram 无法处理的对话框（${escapeHtml(shorten(clean(model.what), 120))}），请在终端处理。\n`;
+  const body = `The terminal shows a dialog Telegram can't handle (${escapeHtml(shorten(clean(model.what), 120))}). Please answer it in the terminal.\n`;
   return {
-    text: header(model.title ?? "Telegram 无法处理的对话框", undefined, [body]),
-    rows: [cancelRow(ctx, "取消")],
+    text: header(model.title ?? "Dialog Telegram can't handle", undefined, [body]),
+    rows: [cancelRow(ctx, "Cancel")],
     keyMap: new Map(),
     page: 0,
     pages: 1,

@@ -504,8 +504,8 @@ describe("approvalAdapter with a race handle", () => {
     expect(model.kind).toBe("approval");
     if (model.kind !== "approval") return;
     expect(model.options).toEqual([
-      { key: "once", label: "允许一次" },
-      { key: "deny", label: "拒绝" },
+      { key: "once", label: "Allow once" },
+      { key: "deny", label: "Deny" },
     ]);
     expect(model.title).toBe("Tool approval");
     expect(model.detail).toContain("git push?");

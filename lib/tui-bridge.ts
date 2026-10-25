@@ -163,11 +163,11 @@ function unsupportedVersionReason(ompVersion: string | undefined, piVersion: str
   if (ompVersion !== undefined) {
     return SUPPORTED_OMP_VERSIONS.test(ompVersion)
       ? undefined
-      : `不支持的 OMP 版本 ${ompVersion}，需要 18.12.x`;
+      : `Unsupported OMP version ${ompVersion}; requires 18.12.x`;
   }
   return piVersion === SUPPORTED_PI_VERSION
     ? undefined
-    : `不支持的 pi 版本 ${piVersion ?? "未知"}，需要 ${SUPPORTED_PI_VERSION}`;
+    : `Unsupported pi version ${piVersion ?? "unknown"}; requires ${SUPPORTED_PI_VERSION}`;
 }
 
 function patchMethod(prototype: HostObject, name: string, host: TuiHost): boolean {

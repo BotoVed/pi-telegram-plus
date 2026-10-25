@@ -60,7 +60,7 @@ function dialogTitle(component: object): string {
   const title = children[1];
   const titleText = title && typeof title === "object" ? title as HostRecord : undefined;
   const text = titleText && typeof titleText.text === "string" ? stripAnsi(titleText.text).trim() : "";
-  return text.length > 0 ? text : "登录";
+  return text.length > 0 ? text : "Login";
 }
 
 /** A set `inputResolver` is the component's own "waiting for typed input". */
@@ -89,7 +89,7 @@ export const piLoginAdapter: DialogAdapter = {
         secret: true,
       };
     }
-    return { kind: "info", title, text: lines.join("\n") || "请在终端继续", closable: true };
+    return { kind: "info", title, text: lines.join("\n") || "Continue in the terminal", closable: true };
   },
 
   act(component, action, ctx): boolean {

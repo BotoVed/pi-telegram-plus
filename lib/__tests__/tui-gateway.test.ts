@@ -155,7 +155,7 @@ describe("command gateway", () => {
     await Promise.resolve();
 
     expect(transport.edits.length).toBeGreaterThan(0);
-    expect(transport.edits[transport.edits.length - 1]?.text).toContain("✓ 完成");
+    expect(transport.edits[transport.edits.length - 1]?.text).toContain("✓ Done");
     expect(draft).toBe("draft text");
     gateway.dispose();
   });
@@ -177,7 +177,7 @@ describe("command gateway", () => {
     expect(text).toContain("second");
     output.finish();
     await vi.advanceTimersByTimeAsync(20);
-    expect(transport.edits.at(-1)?.text).toContain("✓ 完成");
+    expect(transport.edits.at(-1)?.text).toContain("✓ Done");
     origin.end(scope, "idle");
   });
 
@@ -232,7 +232,7 @@ describe("command gateway", () => {
     expect(transport.sends[0]?.text).toContain("!!date");
     expect(origin.active()?.label).toBe("!");
     await vi.advanceTimersByTimeAsync(IDLE_MS + 1000);
-    expect(transport.edits.at(-1)?.text).toContain("✓ 完成");
+    expect(transport.edits.at(-1)?.text).toContain("✓ Done");
     gateway.dispose();
 
     const withoutHost = new CommandGateway({ ...deps, isEnabled: () => true, hostState: () => ({ host: "pi" }) });

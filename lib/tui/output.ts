@@ -317,7 +317,7 @@ export class OutputCapture {
       const dropped = binding.dropped;
       binding.dropped = 0;
       if (dropped > 0) {
-        const tail = `…还有 ${dropped} 项输出，请在终端查看`;
+        const tail = `…${dropped} more output entries; see the terminal`;
         added = added ? `${added}\n\n${tail}` : tail;
       }
       const combined = added
@@ -327,7 +327,7 @@ export class OutputCapture {
       const single = splitTelegramHtml(`${header}\n\n${combined}`, 3400);
       if (single.length === 1 && !binding.overflowed) {
         let text = single[0];
-        if (final && !text.includes("✓ 完成")) text += "\n\n<i>✓ 完成</i>";
+        if (final && !text.includes("✓ Done")) text += "\n\n<i>✓ Done</i>";
         if (text !== binding.lastText) {
           binding.lastText = text;
           binding.lastEditAt = Date.now();
@@ -351,7 +351,7 @@ export class OutputCapture {
         if (final) {
           await this.transport.sendText(
             binding.telegram.chatId,
-            "<i>✓ 完成</i>",
+            "<i>✓ Done</i>",
             binding.telegram.messageThreadId,
           ).catch(outputLog.swallow("debug", "send command completion failed", { chatId: binding.telegram.chatId }));
         }
@@ -381,7 +381,7 @@ export class OutputCapture {
       void this.transport.sendDocument(
         chatId,
         value,
-        "会话导出",
+        "Session export",
         undefined,
         messageThreadId,
         binding.scope.origin.sourceMessageId,

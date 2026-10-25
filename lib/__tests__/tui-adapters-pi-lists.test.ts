@@ -108,7 +108,7 @@ describe("read", () => {
   it("models the model selector from filteredModels and currentModel", () => {
     const { ctx } = harness();
     const model = expectSelect(piListAdapter.read(new ModelSelectorComponent(), ctx));
-    expect(model.title).toBe("选择模型");
+    expect(model.title).toBe("Select model");
     expect(model.total).toBe(4);
     expect(model.multi).toBeUndefined();
     expect(model.items.map((item) => item.label)).toEqual([
@@ -161,7 +161,7 @@ describe("read", () => {
   it("flattens fork messages to one truncated line each", () => {
     const { ctx } = harness();
     const model = expectSelect(piListAdapter.read(new UserMessageList(), ctx));
-    expect(model.title).toBe("选择消息");
+    expect(model.title).toBe("Select message");
     expect(model.items.map((item) => item.label)).toEqual(["first message", `${"x".repeat(60)}…`, "short"]);
     expect(model.items[2].focused).toBe(true);
   });

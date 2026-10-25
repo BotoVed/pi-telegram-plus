@@ -574,7 +574,7 @@ async function runHost(host, label, phase = "main") {
     try {
       const since = await cursor();
       await dispatch("/compact");
-      const compactBody = await waitBody("compact completion", since, /\/compact[\s\S]*(?:Compaction|compacted|Nothing to compact|✓ 完成)/i, 30_000);
+      const compactBody = await waitBody("compact completion", since, /\/compact[\s\S]*(?:Compaction|compacted|Nothing to compact|✓ Done)/i, 30_000);
       record("stage1 /compact returns completion output", Boolean(compactBody),
         bodyText(compactBody).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 140));
     } catch (error) {

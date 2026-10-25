@@ -78,7 +78,7 @@ describe("read", () => {
   it("models the tree: indent prefixes, stripped colors, truncation, fallback text", () => {
     const { ctx } = harness();
     const model = expectSelect(piTreeAdapter.read(new TreeSelectorComponent(), ctx));
-    expect(model.title).toBe("会话树");
+    expect(model.title).toBe("Session tree");
     expect(model.total).toBe(5);
     expect(model.items.map((item) => item.label)).toEqual([
       "root",

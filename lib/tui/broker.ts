@@ -309,8 +309,8 @@ export class DialogBroker {
 
     session.closedBy = byTelegram ? "telegram" : "terminal";
     const summary = byTelegram
-      ? `✅ ${session.pendingInput?.secret === true ? "已提交（内容已隐藏）" : session.lastAction ?? "已处理"}`
-      : "已在终端处理";
+      ? `✅ ${session.pendingInput?.secret === true ? "Submitted (hidden)" : session.lastAction ?? "Done"}`
+      : "Answered in the terminal";
     this.publish(session, summary);
     return session.closedBy;
   }
@@ -384,7 +384,7 @@ export class DialogBroker {
   handleCallback(chatId: number, messageThreadId: number | undefined, callback: DialogCallback):
     { handled: boolean; toast?: string; clear?: boolean } {
     const session = this.session;
-    if (!session || session.state === "closed") return { handled: true, toast: "已在终端处理", clear: true };
+    if (!session || session.state === "closed") return { handled: true, toast: "Answered in the terminal", clear: true };
     // Every way a tap can be refused is a user-visible dead button, so say which one
     // fired and what focus looked like at that moment.
     const refuse = (reason: string, toast: string, clear = true) => {
@@ -408,16 +408,16 @@ export class DialogBroker {
       || telegram.chatId !== chatId
       || (telegram.messageThreadId ?? undefined) !== (messageThreadId ?? undefined);
     if (session.id !== callback.sessionId || wrongTarget) {
-      return refuse("stale-session", "这个菜单已经过期");
+      return refuse("stale-session", "This menu has expired");
     }
     if (callback.generation !== session.generation) {
       // Rule 3.2: something else moved the list; show the current one.
       this.redraw(session);
-      return refuse("generation", "列表已变化，请重新选择", false);
+      return refuse("generation", "The list changed. Please choose again", false);
     }
     if (!this.canDrive(session)) {
       this.retire(session, this.deps.focus.current());
-      return refuse("focus-moved", "已在终端处理");
+      return refuse("focus-moved", "Answered in the terminal");
     }
 
     const subject = (session.subject ?? session.focus) as Record<string, unknown>;
@@ -425,7 +425,7 @@ export class DialogBroker {
     const model = this.read(subject, ctx);
     if (!model) {
       this.retire(session, this.deps.focus.current());
-      return refuse("no-model", "已在终端处理");
+      return refuse("no-model", "Answered in the terminal");
     }
     const resolved = this.resolve(session, model, callback);
     if (resolved.kind === "page") {
@@ -444,13 +444,13 @@ export class DialogBroker {
       this.redraw(session);
       return {
         handled: true,
-        toast: resolved.purpose === "search" ? "输入关键词即可搜索" : "直接发送一条消息作为答案",
+        toast: resolved.purpose === "search" ? "Send a keyword to search" : "Send a message as the answer",
       };
     }
     if (resolved.kind === "none") {
       // Rule 3.4: the row the button was drawn for is gone (or never existed).
       this.redraw(session);
-      return refuse("row-gone", "列表已变化，请重新选择", false);
+      return refuse("row-gone", "The list changed. Please choose again", false);
     }
 
     session.model = model;
@@ -460,7 +460,7 @@ export class DialogBroker {
     if (!done) {
       session.state = "open";
       this.redraw(session);
-      return refuse("act-refused", "这个按钮在这里不起作用", false);
+      return refuse("act-refused", "This button does nothing here", false);
     }
     // Rule 3.5: the component may already be gone (selectors resolve inline),
     // or it may stay open (multi-select, settings rows).
@@ -510,7 +510,7 @@ export class DialogBroker {
       void this.deps.transport.deleteMessage(telegram.chatId, messageId).catch(() => undefined);
     }
     if (!written) {
-      return { handled: true, toast: "宿主没有接收这段输入" };
+      return { handled: true, toast: "The host did not accept this input" };
     }
     if (this.session === session && session.state !== "closed") {
       if (this.canDrive(session)) this.redraw(session);
@@ -865,20 +865,20 @@ export class DialogBroker {
         return {
           kind: "action",
           action: { type: "confirm", yes: callback.op === "y" },
-          label: callback.op === "y" ? "确认" : "取消",
+          label: callback.op === "y" ? "Confirm" : "Cancel",
         };
       case "x":
-        return { kind: "action", action: { type: "cancel" }, label: "取消" };
+        return { kind: "action", action: { type: "cancel" }, label: "Cancel" };
       case "k":
         // Enter means "submit this dialog": the multi-select and questionnaire
         // adapters act on `submit`, the mirror on the raw key.
         return arg === "enter"
-          ? { kind: "action", action: { type: "submit" }, label: "提交" }
-          : { kind: "action", action: { type: "key", name: arg }, label: `按键 ${arg}` };
+          ? { kind: "action", action: { type: "submit" }, label: "Submit" }
+          : { kind: "action", action: { type: "key", name: arg }, label: `Key ${arg}` };
       case "q": {
         const index = Number.parseInt(arg, 10);
         if (!Number.isFinite(index)) return { kind: "none" };
-        return { kind: "action", action: { type: "question", index }, label: `第 ${index + 1} 题` };
+        return { kind: "action", action: { type: "question", index }, label: `Question ${index + 1}` };
       }
       default:
         break;
@@ -893,13 +893,13 @@ export class DialogBroker {
         const item = items.find((entry) => entry.key === key);
         if (!item) return { kind: "none" };
         return callback.op === "c"
-          ? { kind: "action", action: { type: "choose", key }, label: `选择 ${item.label}` }
-          : { kind: "action", action: { type: "toggle", key }, label: `切换 ${item.label}` };
+          ? { kind: "action", action: { type: "choose", key }, label: `Choose ${item.label}` }
+          : { kind: "action", action: { type: "toggle", key }, label: `Toggle ${item.label}` };
       }
       case "m": {
         const item = items.find((entry) => entry.key === key);
         if (!item) return { kind: "none" };
-        return { kind: "action", action: { type: "submenu", key }, label: `打开 ${item.label}` };
+        return { kind: "action", action: { type: "submenu", key }, label: `Open ${item.label}` };
       }
       case "a": {
         const option = model.kind === "approval" ? model.options.find((entry) => entry.key === key) : undefined;

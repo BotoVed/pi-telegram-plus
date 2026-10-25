@@ -82,7 +82,7 @@ describe("OutputCapture /export file", () => {
     expect(docs).toEqual([{
       chatId: 42,
       path: file,
-      caption: "会话导出",
+      caption: "Session export",
       messageThreadId: 7,
       replyToMessageId: 99,
     }]);

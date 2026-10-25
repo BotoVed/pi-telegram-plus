@@ -13,9 +13,9 @@ describe("formatTelegramStatusLine", () => {
       pollingActive: true,
       paired: true,
       error: "boom",
-      unsupported: "不支持的 pi 版本 1.3.0，需要 1.4.0",
+      unsupported: "Unsupported pi version 1.3.0; requires 1.4.0",
     });
-    expect(result).toContain("不支持的 pi 版本 1.3.0");
+    expect(result).toContain("Unsupported pi version 1.3.0");
     expect(result).not.toContain("boom");
   });
 

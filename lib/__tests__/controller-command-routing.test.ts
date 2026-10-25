@@ -156,7 +156,7 @@ describe("Command routing after the mirror removal (D2)", () => {
 
     await send(harness.controller, "/tg_bot_add");
 
-    expect(harness.calls.some((call) => call.text?.includes("未知命令，请使用 /tg。"))).toBe(true);
+    expect(harness.calls.some((call) => call.text?.includes("Unknown command. Use /tg."))).toBe(true);
   });
 
   it("answers a stale screen-mirror callback as expired without injecting keys", async () => {
@@ -171,7 +171,7 @@ describe("Command routing after the mirror removal (D2)", () => {
       from: { id: 7 },
     });
 
-    expect(harness.calls.some((call) => call.method === "answer" && call.toast === "此按钮已过期")).toBe(true);
+    expect(harness.calls.some((call) => call.method === "answer" && call.toast === "This button has expired")).toBe(true);
     expect(harness.calls.some((call) => call.method === "removeKeyboard" && call.messageId === 5)).toBe(true);
     expect(key).not.toHaveBeenCalled();
     expect(write).not.toHaveBeenCalled();
@@ -196,7 +196,7 @@ describe("§4.5 rule 6: a command settles this chat's open dialog before the gat
     // The Esc must land before the submission - submitting first would queue the
     // command behind the very dialog the chat just abandoned.
     expect(abandon.mock.invocationCallOrder[0]).toBeLessThan(run.mock.invocationCallOrder[0]);
-    const notice = harness.calls.find((call) => call.text?.includes("已关闭未回答的对话框"));
+    const notice = harness.calls.find((call) => call.text?.includes("Closed the unanswered dialog"));
     expect(notice?.text).toContain("Settings");
     abandon.mockRestore();
     run.mockRestore();
@@ -214,7 +214,7 @@ describe("§4.5 rule 6: a command settles this chat's open dialog before the gat
     // Treated as handled: the command text may not fall through to the editor either.
     expect(submit).not.toHaveBeenCalled();
     expect(harness.session.prompt).not.toHaveBeenCalled();
-    expect(harness.calls.some((call) => call.text?.includes("终端上有一个未完成的对话框"))).toBe(true);
+    expect(harness.calls.some((call) => call.text?.includes("The terminal has an unanswered dialog"))).toBe(true);
     abandon.mockRestore();
     run.mockRestore();
   });

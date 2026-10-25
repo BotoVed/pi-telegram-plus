@@ -438,7 +438,7 @@ async function runHost(host, servers) {
         { timeoutMs: 25_000 }).catch(() => undefined);
     }
     const outage = await waitFor("outage notice scan", (state) =>
-      state.calls.find((entry) => /TUI bridge unavailable|宿主桥接不可用/.test(String(entry?.body?.text ?? ""))) ?? false,
+      state.calls.find((entry) => /TUI bridge unavailable|The host bridge is unavailable/.test(String(entry?.body?.text ?? ""))) ?? false,
       { timeoutMs: 1 }).catch(() => undefined);
     record("plugin authenticated and bridge available", Boolean(configShown) && outage === undefined,
       outage ? `outage notice: ${String(outage.body?.text ?? "").slice(0, 60)}`
@@ -580,7 +580,7 @@ async function runHost(host, servers) {
     await injectText("/probe-custom-unknown");
     const notice = await waitFor("unsupported dialog notice", (state) =>
       state.calls.slice(since).findLast((entry) =>
-        /Telegram 无法处理的对话框/.test(String(entry.body?.text ?? ""))
+        /Dialog Telegram can't handle/.test(String(entry.body?.text ?? ""))
         && Array.isArray(rowsOf(entry))) ?? false, { timeoutMs: 25_000 })
       .catch(() => undefined);
     if (!notice) throw new Error("no unsupported-dialog notice for /probe-custom-unknown");
@@ -627,11 +627,11 @@ async function runHost(host, servers) {
         // A Submit affordance appears only once every question is answered, and a
         // multi-select question needs its own "Done selecting" row before the next tab
         // can be finished - pressing either is progress, not an answer. The Broker
-        // draws these rows in Chinese ("⏎ 提交全部", "下一题 ▶"), so both vocabularies count.
-        const SKIP_ROW = /^\s*(Cancel|Other\b|⬅|Back|Next\b|Prev\b|取消|✏️)/i;
-        const isSubmit = (text) => (/\b(Submit|Done|Enter)\b/i.test(text) || /提交|确定|确认/.test(text))
+        // draws these rows in English ("⏎ Submit all", "Next question ▶").
+        const SKIP_ROW = /^\s*(Cancel|Other\b|⬅|Back|Next\b|Prev\b|✏️)/i;
+        const isSubmit = (text) => /\b(Submit|Done|Enter)\b/i.test(text)
           && !/selecting/i.test(text);
-        const isAdvance = (text) => /done selecting|上一题|下一题|^\s*第\s*\d+\/\d+\s*题\s*$/.test(text);
+        const isAdvance = (text) => /done selecting|\b(Prev|Next) question\b|^Question \d+\/\d+$/i.test(text);
         const labels = buttonsOf(kb).map(labelOf);
         const messageId = kb.body?.message_id ?? kb.message_id;
         // The Broker edits at most once a second, and a dialog is redrawn as soon as the host
@@ -667,9 +667,9 @@ async function runHost(host, servers) {
           if (submit) break;
           // Answer everything the current tab offers before moving on: an unanswered
           // tab is what keeps Submit hidden.
-          // Prefer a row that actually moves forward: the tab strip ("第 1/2 题") also counts
+          // Prefer a row that actually moves forward: the tab strip ("Question 1/2") also counts
           // as an advance, and pressing the tab already on screen changes nothing.
-          const forward = (text) => /下一题|上一题|done selecting|\bNext\b|▶|⬅/i.test(text);
+          const forward = (text) => /done selecting|\bNext\b|\bPrev\b|▶|⬅|◀/i.test(text);
           const option = rows.find((b) => !SKIP_ROW.test(labelOf(b)) && !isAdvance(labelOf(b)) && !clicked.has(identity(b)))
             ?? rows.find((b) => isAdvance(labelOf(b)) && forward(labelOf(b)) && !clicked.has(identity(b)))
             ?? rows.find((b) => isAdvance(labelOf(b)) && !clicked.has(identity(b)));
@@ -712,7 +712,7 @@ async function runHost(host, servers) {
     }
   }
 
-  // ── tool approval: OMP's exec prompt answered by "拒绝" from Telegram ─
+  // ── tool approval: OMP's exec prompt answered by "Deny" from Telegram ─
   // Runs only on OMP: pi has no tool-approval dialog. `write` mode auto-approves
   // read/write tools but asks before exec, so the mock's `touch` only reaches the
   // shell if the denial is ignored.
@@ -727,13 +727,13 @@ async function runHost(host, servers) {
       const kb = await waitFor("approval keyboard", (state) =>
         state.calls.slice(since).findLast((entry) =>
           dialectOf(entry) === "broker"
-          && buttonsOf(entry).some((b) => String(b.text ?? "").includes("允许一次"))
-          && buttonsOf(entry).some((b) => String(b.text ?? "").includes("拒绝"))) ?? false);
+          && buttonsOf(entry).some((b) => String(b.text ?? "").includes("Allow once"))
+          && buttonsOf(entry).some((b) => String(b.text ?? "").includes("Deny"))) ?? false);
       const labels = buttonsOf(kb).map((b) => String(b.text ?? ""));
-      const deny = buttonsOf(kb).find((b) => String(b.text ?? "").includes("拒绝"));
+      const deny = buttonsOf(kb).find((b) => String(b.text ?? "").includes("Deny"));
       const messageId = kb.body?.message_id ?? kb.message_id;
       if (!await clickButton(deny, messageId)) {
-        throw new Error(`pressing "拒绝" was never acknowledged; labels: ${labels.join(" / ")}`);
+        throw new Error(`pressing "Deny" was never acknowledged; labels: ${labels.join(" / ")}`);
       }
       await sleep(3_000);
       const executed = existsSync(markerPath);

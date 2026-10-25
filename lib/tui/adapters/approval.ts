@@ -28,9 +28,9 @@ function detailOf(entry: { approval?: { full?: string; compact?: string; session
 /** The answers a raced `ui.approve` resolves with; the session row only when the prompt carries one. */
 function raceOptions(entry: { approval?: { session?: string } }): Option[] {
   return [
-    { key: "once", label: "允许一次" },
+    { key: "once", label: "Allow once" },
     ...(entry.approval?.session ? [{ key: "session", label: entry.approval.session }] : []),
-    { key: "deny", label: "拒绝" },
+    { key: "deny", label: "Deny" },
   ];
 }
 

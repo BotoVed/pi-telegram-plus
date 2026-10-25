@@ -54,7 +54,7 @@ export type TelegramController = {
 function dialogBusyNotice(session: DialogSession): string {
   const model = session.model;
   const title = "title" in model ? model.title : undefined;
-  return `终端上有一个对话框正在等待${title ? `（${title}）` : ""}，请点按钮作答，或发 /stop 取消。`;
+  return `A dialog is waiting in the terminal${title ? ` (${title})` : ""}. Answer it with the buttons, or send /stop to cancel.`;
 }
 
 function getIncomingDocumentName(document?: TelegramDocument): string {
@@ -785,8 +785,8 @@ export function createTelegramController(deps: {
   // names the version problem instead of the generic "run interactively" hint.
   const bridgeOutageNotice = (): string => {
     const reason = bridge.getUnsupportedReason?.();
-    if (reason !== undefined) return `${reason}。插件已停止工作。`;
-    return `宿主桥接不可用（${bridge.getHost()}），插件无法工作。请在终端以交互模式运行 pi/OMP。`;
+    if (reason !== undefined) return `${reason}. The plugin has stopped.`;
+    return `The host bridge is unavailable (${bridge.getHost()}), so the plugin cannot work. Run pi/OMP interactively in a terminal.`;
   };
   const hostIsOmp = deps.isOmpHost ?? isOmpHost;
   const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1175,13 +1175,13 @@ export function createTelegramController(deps: {
     const abandoned = dialogBroker.abandonFor(chatId, messageThreadId);
     if (abandoned.kind === "blocked") {
       void deps.transport
-        .sendText(chatId, "终端上有一个未完成的对话框，请先在终端处理，或发 /stop。", messageThreadId, sourceMessageId)
+        .sendText(chatId, "The terminal has an unanswered dialog. Answer it there first, or send /stop.", messageThreadId, sourceMessageId)
         .catch(ctrlLog.swallow("debug", "sendText blocked-dialog notice failed", { chatId }));
       return "blocked";
     }
     if (abandoned.kind === "closed" && abandoned.title !== undefined) {
       void deps.transport
-        .sendText(chatId, `⚠️ 已关闭未回答的对话框：<b>${escapeHtml(abandoned.title)}</b>`, messageThreadId, sourceMessageId)
+        .sendText(chatId, `⚠️ Closed the unanswered dialog: <b>${escapeHtml(abandoned.title)}</b>`, messageThreadId, sourceMessageId)
         .catch(ctrlLog.swallow("debug", "sendText abandoned-dialog notice failed", { chatId }));
     }
     return "proceed";
@@ -1328,7 +1328,7 @@ export function createTelegramController(deps: {
         ?? session.extensionRunner.getCommand(name.replace(/_/g, "-"))
         ?? session.extensionRunner.getCommand(name.replace(/-/g, "_"));
       if (!served && !external) {
-        await deps.transport.sendText(chatId, "未知命令，请使用 /tg。", messageThreadId, sourceMessageId)
+        await deps.transport.sendText(chatId, "Unknown command. Use /tg.", messageThreadId, sourceMessageId)
           .catch(ctrlLog.swallow("warn", "sendText unknown-command notice failed", { chatId }));
         return true;
       }
@@ -1453,7 +1453,7 @@ export function createTelegramController(deps: {
       if (data.startsWith(DIALOG_CALLBACK_PREFIX)) {
         const dialogCallback = decodeDialogCallback(data);
         const result = dialogCallback === undefined
-          ? { handled: true, toast: "这个菜单已经过期", clear: true }
+          ? { handled: true, toast: "This menu has expired", clear: true }
           : dialogBroker.handleCallback(chatId, messageThreadId, dialogCallback);
         await deps.transport.answerCallbackQuery(query.id, result.toast)
           .catch(ctrlLog.swallow("debug", "answerCallbackQuery failed", { queryId: query.id }));
@@ -1467,7 +1467,7 @@ export function createTelegramController(deps: {
       // The old screen mirror is gone (§0.1 #4): a stale mirror keyboard must
       // never inject keys - the button only gets the expiry notice.
       if (data.startsWith(EXPIRED_TUI_CALLBACK_PREFIX)) {
-        await deps.transport.answerCallbackQuery(query.id, "此按钮已过期")
+        await deps.transport.answerCallbackQuery(query.id, "This button has expired")
           .catch(ctrlLog.swallow("debug", "answerCallbackQuery expired-tui failed", { queryId: query.id }));
         const expiredMessageId = query.message?.message_id;
         if (expiredMessageId !== undefined) {

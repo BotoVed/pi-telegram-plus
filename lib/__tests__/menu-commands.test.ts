@@ -78,7 +78,7 @@ describe("Telegram command menu", () => {
 
         expect(sent).toHaveLength(1);
         expect(sent[0]?.chatId).toBe(42);
-        expect(sent[0]?.text).toContain("未知命令，请使用 /tg");
+        expect(sent[0]?.text).toContain("Unknown command. Use /tg");
     });
 });
 

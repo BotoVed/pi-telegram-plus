@@ -230,7 +230,7 @@ export const tspPickerAdapter: DialogAdapter = {
 
   read(component, ctx): DialogModel {
     const found = findPicker(component);
-    if (!found) return { kind: "unsupported", what: "OMP 选择器已关闭或不再是选择器" };
+    if (!found) return { kind: "unsupported", what: "OMP picker closed or no longer a picker" };
     const { props } = found;
     const strip = pickerStrip(props);
     if (strip) {
@@ -244,7 +244,7 @@ export const tspPickerAdapter: DialogAdapter = {
       }));
       return {
         kind: "select",
-        title: tspText(strip.label) || "选择用途",
+        title: tspText(strip.label) || "Choose a role",
         items,
         total: items.length,
       };
@@ -262,7 +262,7 @@ export const tspPickerAdapter: DialogAdapter = {
     });
     return {
       kind: "select",
-      title: typeof props.title === "string" ? props.title : "选择",
+      title: typeof props.title === "string" ? props.title : "Select",
       items,
       total: typeof props.total === "number" ? props.total : items.length,
     };
@@ -335,7 +335,7 @@ function prefsRowItem(row: PrefsRowLike): DialogItem & { values?: string[] } {
   const label = tspText(row.label);
   const control = isObject(row.control) ? row.control : undefined;
   if (control?.k === "switch") {
-    return { key, label, value: control.on === true ? "开" : "关", values: ["开", "关"] };
+    return { key, label, value: control.on === true ? "On" : "Off", values: ["On", "Off"] };
   }
   if (control?.k === "choice") {
     const options = choiceOptions(control);
@@ -347,7 +347,7 @@ function prefsRowItem(row: PrefsRowLike): DialogItem & { values?: string[] } {
       values: options.map((option) => option.label),
     };
   }
-  return { key, label, value: "（请在终端修改）" };
+  return { key, label, value: "(change it in the terminal)" };
 }
 
 /** The change event for cycling a settings row, or undefined when unmappable. */
@@ -358,8 +358,8 @@ function prefsChangeEvent(keypath: string, props: PrefsProps, rowKey: string, wa
   if (!control) return undefined;
   if (control.k === "switch") {
     let next: boolean;
-    if (wanted === "开") next = true;
-    else if (wanted === "关") next = false;
+    if (wanted === "On") next = true;
+    else if (wanted === "Off") next = false;
     else if (wanted === undefined) next = control.on !== true;
     else return undefined;
     return { type: "change", key: keypath, item: rowKey, value: next };
@@ -388,7 +388,7 @@ export const tspPrefsAdapter: DialogAdapter = {
 
   read(component, ctx): DialogModel {
     const found = findNode(component, "prefs");
-    if (!found) return { kind: "unsupported", what: "OMP 设置页已关闭或不再是设置页" };
+    if (!found) return { kind: "unsupported", what: "OMP settings page closed or no longer a settings page" };
     const { props } = found;
     const currentPage = typeof props.page === "string" ? props.page : "";
     const items: (DialogItem & { values?: string[]; hasSubmenu?: boolean })[] = [];
@@ -404,7 +404,7 @@ export const tspPrefsAdapter: DialogAdapter = {
     }
     return {
       kind: "settings",
-      title: typeof props.title === "string" ? props.title : "设置",
+      title: typeof props.title === "string" ? props.title : "Settings",
       items,
     };
   },

@@ -165,7 +165,7 @@ export class CommandGateway {
     if (!result.ok) {
       this.deps.output.finish();
       this.deps.origin.end(scope, "error");
-      await transport.editText(origin.chatId, messageId, `${ackHtml}\n\n❌ 宿主没有接受这个命令`).catch(() => undefined);
+      await transport.editText(origin.chatId, messageId, `${ackHtml}\n\n❌ The host did not accept this command`).catch(() => undefined);
       return true;
     }
     const value = result.result;
@@ -203,17 +203,17 @@ export class CommandGateway {
       await checkpointCurrentUpdateCursor();
       const result = await this.deps.newSession!(request.origin);
       if (result && "cancelled" in result && result.cancelled) {
-        await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n<i>已取消</i>`).catch(() => undefined);
+        await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n<i>Cancelled</i>`).catch(() => undefined);
         return true;
       }
-      await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n✅ 新会话已开始`).catch(() => undefined);
+      await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n✅ New session started`).catch(() => undefined);
       if (draft.length > 0 && this.deps.writeDraft) {
         const timer = setTimeout(() => { this.deps.writeDraft?.(draft); }, 150);
         timer.unref?.();
       }
     } catch (err) {
       gatewayLog.debug("new session failed", { err });
-      await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n❌ 无法开始新会话`).catch(() => undefined);
+      await request.transport.editText(request.origin.chatId, messageId, `${ackHtml}\n\n❌ Could not start a new session`).catch(() => undefined);
     }
     return true;
   }

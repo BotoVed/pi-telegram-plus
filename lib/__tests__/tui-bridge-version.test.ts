@@ -105,14 +105,14 @@ describe("installTuiBridge version gate", () => {
     mockHosts({});
     const mod = await installFresh();
     const reason = mod.tuiBridge.getUnsupportedReason();
-    expect(reason).toContain("未知");
+    expect(reason).toContain("unknown");
     expect(patched(holders.pi, "init")).toBe(false);
   });
 });
 
 describe("controller sends the version refusal instead of the generic outage notice", () => {
-  const REASON = "不支持的 pi 版本 1.3.0，需要 1.4.0";
-  const GENERIC_TEXT = "宿主桥接不可用（pi），插件无法工作。请在终端以交互模式运行 pi/OMP。";
+  const REASON = "Unsupported pi version 1.3.0; requires 1.4.0";
+  const GENERIC_TEXT = "The host bridge is unavailable (pi), so the plugin cannot work. Run pi/OMP interactively in a terminal.";
 
   function createDownBridge(overrides: Partial<TuiBridgeAdapter> = {}): TuiBridgeAdapter {
     return {
@@ -188,7 +188,7 @@ describe("controller sends the version refusal instead of the generic outage not
     });
 
     expect(session.prompt).not.toHaveBeenCalled();
-    expect(sent.some((m) => m.text === `${REASON}。插件已停止工作。`)).toBe(true);
+    expect(sent.some((m) => m.text === `${REASON}. The plugin has stopped.`)).toBe(true);
   });
 
   it("keeps the generic outage notice when no version reason is set", async () => {
@@ -202,6 +202,6 @@ describe("controller sends the version refusal instead of the generic outage not
     });
 
     expect(sent.some((m) => m.text === GENERIC_TEXT)).toBe(true);
-    expect(sent.some((m) => m.text.includes("插件已停止工作"))).toBe(false);
+    expect(sent.some((m) => m.text.includes("The plugin has stopped"))).toBe(false);
   });
 });

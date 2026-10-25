@@ -171,11 +171,11 @@ describe("dialog broker", () => {
     await settle();
 
     expect(transport.sent).toHaveLength(1);
-    expect(transport.sent[0]?.text).toContain("无法处理");
+    expect(transport.sent[0]?.text).toContain("can't handle");
     // The frame itself is never mirrored, only named.
     expect(transport.sent[0]?.text).not.toContain("weird frame");
     const buttons = transport.sent[0]!.rows.flat() as Array<{ text: string }>;
-    expect(buttons.map((button) => button.text)).toEqual(["取消"]);
+    expect(buttons.map((button) => button.text)).toEqual(["Cancel"]);
 
     const session = broker.current();
     expect(session?.adapter?.id).toBe("unsupported");
@@ -202,7 +202,7 @@ describe("dialog broker", () => {
     expect(transport.sent).toHaveLength(1);
     expect(transport.sent[0]?.text).toContain("session report text");
     const buttons = transport.sent[0]!.rows.flat() as Array<{ text: string }>;
-    expect(buttons.map((button) => button.text)).toEqual(["关闭"]);
+    expect(buttons.map((button) => button.text)).toEqual(["Close"]);
   });
 
   it("walks the host key path on a row tap and retires the message", async () => {
@@ -330,7 +330,7 @@ describe("dialog broker", () => {
     });
     await settle();
 
-    expect(result.toast).toContain("列表已变化");
+    expect(result.toast).toContain("The list changed");
     expect(keys).toEqual([]);
     expect(broker.hasActive()).toBe(true);
   });
@@ -396,11 +396,11 @@ describe("dialog broker", () => {
     await settle();
 
     expect(transport.edits).toHaveLength(1);
-    expect(transport.edits[0]?.text).toContain("已在终端处理");
+    expect(transport.edits[0]?.text).toContain("Answered in the terminal");
     expect(broker.current()).toBeUndefined();
     // A late tap on the dead keyboard must not reach the host.
     const result = broker.handleCallback(42, undefined, { sessionId: "gone", generation: 0, op: "c", arg: "0.1" });
-    expect(result).toEqual({ handled: true, toast: "已在终端处理", clear: true });
+    expect(result).toEqual({ handled: true, toast: "Answered in the terminal", clear: true });
   });
 
   it("mirrors a dialog onto the chat whose command scope is running", async () => {

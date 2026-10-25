@@ -49,7 +49,7 @@ const PI_LIST_SPECS: Record<string, PiListSpec> = {
         && current.provider === item.provider
         && current.id === item.id;
     },
-    title: () => "选择模型",
+    title: () => "Select model",
   },
   // `/scoped-models`: Enter toggles the row, ctrl+s persists, so it is a
   // multi-select on Telegram; `enabled` is the checkbox.
@@ -81,7 +81,7 @@ const PI_LIST_SPECS: Record<string, PiListSpec> = {
   UserMessageList: {
     items: (c) => (Array.isArray(c.messages) ? (c.messages as unknown[]) : []),
     label: messageLabel,
-    title: () => "选择消息",
+    title: () => "Select message",
   },
 };
 
@@ -169,7 +169,7 @@ const sessionLabel = (session: HostRecord): string => {
     base = text(session.firstMessage).replace(/\n/g, " ");
     if (base.length > SESSION_LABEL_MAX) base = `${base.slice(0, SESSION_LABEL_MAX)}…`;
   }
-  return `${base} · ${readNumber(session.messageCount)} 条`;
+  return `${base} · ${readNumber(session.messageCount)} msgs`;
 };
 
 const pad2 = (value: number): string => String(value).padStart(2, "0");
@@ -223,10 +223,10 @@ export const piSessionAdapter: DialogAdapter = {
     const all = record.scope === "all";
     return {
       kind: "select",
-      title: all ? "恢复会话（全部）" : "恢复会话（当前目录）",
+      title: all ? "Resume session (all)" : "Resume session (this folder)",
       items,
       total: items.length,
-      extraActions: [{ label: all ? "只看当前目录" : "查看全部", key: "tab" }],
+      extraActions: [{ label: all ? "This folder only" : "Show all", key: "tab" }],
     };
   },
 
@@ -311,7 +311,7 @@ export const piTreeAdapter: DialogAdapter = {
       current: leafId !== "" && text(asRecord(node.entry).id) === leafId,
       focused: index === cursor,
     }));
-    return { kind: "select", title: "会话树", items, total: items.length };
+    return { kind: "select", title: "Session tree", items, total: items.length };
   },
 
   act(component, action, ctx) {

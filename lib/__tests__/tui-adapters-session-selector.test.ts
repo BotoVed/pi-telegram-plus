@@ -100,11 +100,11 @@ describe("read", () => {
   it("models the current-folder scope: labels, times, current row, cursor, tab action", () => {
     const { ctx } = harness();
     const model = expectSelect(piSessionAdapter.read(new SessionSelectorComponent(), ctx));
-    expect(model.title).toBe("恢复会话（当前目录）");
+    expect(model.title).toBe("Resume session (this folder)");
     expect(model.items.map((item) => item.label)).toEqual([
-      "重构任务 · 12 条",
-      "修复 登录问题 · 3 条",
-      `${"x".repeat(50)}… · 100 条`,
+      "重构任务 · 12 msgs",
+      "修复 登录问题 · 3 msgs",
+      `${"x".repeat(50)}… · 100 msgs`,
     ]);
     expect(model.items.map((item) => item.description)).toEqual([
       "2026-10-20 09:05",
@@ -114,12 +114,12 @@ describe("read", () => {
     expect(model.items.map((item) => item.current)).toEqual([false, true, false]);
     expect(model.items.map((item) => item.focused)).toEqual([false, true, false]);
     expect(model.items.map((item) => item.key)).toEqual([
-      "0:重构任务 · 12 条",
-      "1:修复 登录问题 · 3 条",
-      `2:${"x".repeat(50)}… · 100 条`,
+      "0:重构任务 · 12 msgs",
+      "1:修复 登录问题 · 3 msgs",
+      `2:${"x".repeat(50)}… · 100 msgs`,
     ]);
     expect(model.total).toBe(3);
-    expect(model.extraActions).toEqual([{ label: "查看全部", key: "tab" }]);
+    expect(model.extraActions).toEqual([{ label: "Show all", key: "tab" }]);
   });
 
   it("switches title and tab label when the scope is all", () => {
@@ -127,8 +127,8 @@ describe("read", () => {
     const component = new SessionSelectorComponent();
     component.scope = "all";
     const model = expectSelect(piSessionAdapter.read(component, ctx));
-    expect(model.title).toBe("恢复会话（全部）");
-    expect(model.extraActions).toEqual([{ label: "只看当前目录", key: "tab" }]);
+    expect(model.title).toBe("Resume session (all)");
+    expect(model.extraActions).toEqual([{ label: "This folder only", key: "tab" }]);
   });
 });
 
@@ -136,10 +136,10 @@ describe("act", () => {
   it("choose walks the terminal cursor to the row and presses enter", () => {
     const { ctx, sent } = harness();
     const component = new SessionSelectorComponent();
-    expect(piSessionAdapter.act(component, { type: "choose", key: "2:" + `${"x".repeat(50)}… · 100 条` }, ctx)).toBe(true);
+    expect(piSessionAdapter.act(component, { type: "choose", key: "2:" + `${"x".repeat(50)}… · 100 msgs` }, ctx)).toBe(true);
     expect(sent).toEqual(["down", "enter"]);
     sent.length = 0;
-    expect(piSessionAdapter.act(component, { type: "choose", key: "0:重构任务 · 12 条" }, ctx)).toBe(true);
+    expect(piSessionAdapter.act(component, { type: "choose", key: "0:重构任务 · 12 msgs" }, ctx)).toBe(true);
     expect(sent).toEqual(["up", "enter"]);
   });
 
@@ -217,11 +217,11 @@ describe("contract: real pi 1.4.0 session selector", () => {
     const ctx = realCtx(selector);
     expect(piSessionAdapter.detect(selector, ctx)).toBe(true);
     const model = expectSelect(piSessionAdapter.read(selector, ctx));
-    expect(model.title).toBe("恢复会话（当前目录）");
-    expect(model.items.map((item) => item.label)).toEqual(["alpha first line · 4 条", "命名会话 · 9 条"]);
+    expect(model.title).toBe("Resume session (this folder)");
+    expect(model.items.map((item) => item.label)).toEqual(["alpha first line · 4 msgs", "命名会话 · 9 msgs"]);
     expect(model.items[1].current).toBe(true);
     expect(model.items[0].focused).toBe(true);
-    expect(model.extraActions).toEqual([{ label: "查看全部", key: "tab" }]);
+    expect(model.extraActions).toEqual([{ label: "Show all", key: "tab" }]);
     expect(piSessionAdapter.act(selector, { type: "choose", key: model.items[1].key }, ctx)).toBe(true);
     expect(picked).toEqual([BETA]);
   });
@@ -232,7 +232,7 @@ describe("contract: real pi 1.4.0 session selector", () => {
     await landed;
     const ctx = realCtx(selector);
     expect(piSessionAdapter.act(selector, { type: "key", name: "tab" }, ctx)).toBe(true);
-    expect(expectSelect(piSessionAdapter.read(selector, ctx)).title).toBe("恢复会话（全部）");
+    expect(expectSelect(piSessionAdapter.read(selector, ctx)).title).toBe("Resume session (all)");
     expect(piSessionAdapter.act(selector, { type: "cancel" }, ctx)).toBe(true);
     expect(cancelled).toBe(1);
   });
