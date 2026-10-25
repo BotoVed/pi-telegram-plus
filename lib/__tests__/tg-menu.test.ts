@@ -12,11 +12,19 @@ vi.mock("../telegram-api.ts", () => ({
   getTelegramBotUsername: mocks.getTelegramBotUsername,
 }));
 
+// Deterministic pairing codes for the regenerate/unpair assertions.
+const pairingMocks = vi.hoisted(() => ({ createTelegramPairingCode: vi.fn() }));
+vi.mock("../pairing.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof pairingModule>();
+  return { ...actual, createTelegramPairingCode: pairingMocks.createTelegramPairingCode };
+});
+
 import { registerTgMenuCommand, type SwitchInstanceDeps } from "../commands/tg-menu.ts";
 import type { TelegramCommandDeps, TelegramConnectionState } from "../commands/telegram-commands.ts";
 import type { TgConfigDeps } from "../commands/register.ts";
-import { readBotRegistry, readProjectBinding, addBot, writeProjectBinding } from "../config.ts";
+import { readBotRegistry, readProjectBinding, addBot, writeProjectBinding, clearDefaultBot } from "../config.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
+import type * as pairingModule from "../pairing.ts";
 
 function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
   return {
@@ -24,14 +32,17 @@ function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
     name: overrides.name ?? "test-bot",
     token: overrides.token ?? "tok-1",
     ...(overrides.botUsername === undefined ? {} : { botUsername: overrides.botUsername }),
+    ...(overrides.allowedUserId === undefined ? {} : { allowedUserId: overrides.allowedUserId }),
+    ...(overrides.pairingCode === undefined ? {} : { pairingCode: overrides.pairingCode }),
   };
 }
 
 /** Choice label for bot-list / picker menus (matches formatBotLabel in tg-menu.ts). */
 function botChoiceFull(bot: BotRecord, isDefault: boolean): string {
-  const marker = isDefault ? " ★ default" : "";
-  const username = bot.botUsername ? `@${bot.botUsername}` : "no username";
-  return `${bot.name}${marker} · ${username} · ${bot.id.slice(0, 8)}`;
+  const marker = isDefault ? " ⭐ 默认" : "";
+  const username = bot.botUsername ? `@${bot.botUsername}` : "无用户名";
+  const paired = bot.allowedUserId !== undefined ? "已配对" : "未配对";
+  return `${bot.name}${marker} · ${username} · ${paired}`;
 }
 
 /** Scripted mock UI: returns values from the script in order, one per call. */
@@ -88,6 +99,7 @@ describe("/tg multi-level menu", () => {
     pollingActive = false;
     mocks.getTelegramBotUsername.mockReset();
     mocks.getTelegramBotUsername.mockResolvedValue("testbot");
+    pairingMocks.createTelegramPairingCode.mockReset().mockReturnValue("654321");
 
     connectionStateValue = "disconnected";
     awaitReconcileCalls = 0;
@@ -171,18 +183,18 @@ describe("/tg multi-level menu", () => {
     expect(ui.select).toHaveBeenCalledTimes(1);
   });
 
-  it("Bots → Bot list → shows bots as selectable options", async () => {
+  it("Bots → Bot 列表 → shows bots as selectable options", async () => {
     const bot = makeBot({ name: "alpha", token: "t1", botUsername: "alphabot" });
     await addBot(bot);
-    const { ui } = makeScriptedUi({ select: ["🤖 Bots", "Bot list", "⬅️ Back", "⬅️ Back", "❌ Close"] });
+    const { ui } = makeScriptedUi({ select: ["🤖 Bots", "Bot 列表", "⬅️ Back", "⬅️ Back", "❌ Close"] });
     await commands.get("tg")!("", makeCtx(ui));
-    const botListCall = ui.select.mock.calls[2]; // 3rd select = Bot list (after main + Bots submenu)
+    const botListCall = ui.select.mock.calls[2]; // 3rd select = Bot 列表 (after main + Bots submenu)
     expect(botListCall[1]).toContain(botChoiceFull(bot, true));
   });
 
   it("Bots → Add bot → adds bot to registry", async () => {
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "➕ Add bot", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "➕ 添加 Bot", "⬅️ Back", "❌ Close"],
       input: ["my-menu-bot"],
       inputSecret: ["token-from-menu"],
     });
@@ -195,15 +207,14 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message.includes("Bot added"))).toBe(true);
   });
 
-  it("Bots → Bot list → bot → Set as default sets the global default", async () => {
+  it("Bots → 全局默认 Bot → pick bot sets the global default", async () => {
     const bot1 = makeBot({ name: "a" });
     const bot2 = makeBot({ name: "b" });
     await addBot(bot1);
     await addBot(bot2);
     // bot1 is the default (first added). bot2 is not default.
-    const bot2Choice = botChoiceFull(bot2, false);
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", bot2Choice, "Set as default", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "⭐ 全局默认 Bot：a", botChoiceFull(bot2, false), "⬅️ Back", "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
     const registry = await readBotRegistry();
@@ -211,36 +222,38 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message.includes("Default bot set to"))).toBe(true);
   });
 
-  it("Clear default on an unbound project clears globally, warns, refreshes routing and closes the menu", async () => {
+  it("清除默认 on an unbound project clears globally, warns, refreshes routing and closes the menu", async () => {
     const bot = makeBot({ name: "solo" });
     await addBot(bot); // becomes default
     config = { botToken: bot.token };
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Clear default"],
+      select: ["🤖 Bots", "⭐ 全局默认 Bot：solo", "清除默认"],
     });
     const closeMenu = vi.fn(async () => undefined);
     await commands.get("tg")!("", makeCtx({ ...ui, closeMenu }));
     const registry = await readBotRegistry();
     expect(registry.defaultBotId).toBeUndefined();
     expect(ui.confirm).not.toHaveBeenCalled();
-    expect(ui.select).toHaveBeenCalledTimes(4); // menu exited right after clearing
+    expect(ui.select).toHaveBeenCalledTimes(3); // menu exited right after clearing
     expect(closeMenu).toHaveBeenCalled();
     expect(notifyCalls.some((c) => c.message.includes("Default bot cleared"))).toBe(true);
+    expect(notifyCalls.some((c) => c.message.includes("/tg → Project → 绑定 Bot"))).toBe(true);
     expect(config.botToken).toBeUndefined(); // runtime re-resolved immediately
   });
 
-  it("Clear default on a bound project clears globally and stays in the menu", async () => {
+  it("清除默认 on a bound project clears globally and stays in the menu", async () => {
     const bot = makeBot({ name: "solo" });
     await addBot(bot);
     await writeProjectBinding(projectDir, { botId: bot.id, enabled: true });
     config = { botToken: bot.token };
     const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "Clear default", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "⭐ 全局默认 Bot：solo", "清除默认", "⬅️ Back", "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
     expect((await readBotRegistry()).defaultBotId).toBeUndefined();
     expect(ui.confirm).not.toHaveBeenCalled();
-    expect(ui.select.mock.calls[4][0]).toBe("🤖 solo"); // detail re-rendered without the ★
+    // picker re-rendered without 清除默认 (no default any more)
+    expect(ui.select.mock.calls[3][1]).toEqual([botChoiceFull(bot, false), "⬅️ Back"]);
     expect(config.botToken).toBe(bot.token); // binding still routes this project
   });
 
@@ -251,12 +264,12 @@ describe("/tg multi-level menu", () => {
     await addBot(bot2);
     config = { botToken: bot1.token };
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot2, false), "Set as default"],
+      select: ["🤖 Bots", "⭐ 全局默认 Bot：a", botChoiceFull(bot2, false)],
     });
     const closeMenu = vi.fn(async () => undefined);
     await commands.get("tg")!("", makeCtx({ ...ui, closeMenu }));
     expect((await readBotRegistry()).defaultBotId).toBe(bot2.id);
-    expect(ui.select).toHaveBeenCalledTimes(4);
+    expect(ui.select).toHaveBeenCalledTimes(3);
     expect(closeMenu).toHaveBeenCalled();
     expect(notifyCalls.some((c) => c.message.includes("switches to @b_bot"))).toBe(true);
     expect(config.botToken).toBe("tok-b"); // runtime switched immediately
@@ -276,12 +289,12 @@ describe("/tg multi-level menu", () => {
     expect(closeMenu).toHaveBeenCalledTimes(1);
   });
 
-  it("Bots → Bot list → bot → Remove → confirms and removes", async () => {
+  it("Bots → Bot 列表 → bot → 删除 → confirms and removes", async () => {
     const bot = makeBot({ name: "toremove" });
     await addBot(bot);
     const botChoice = botChoiceFull(bot, true);
     const { ui, notifyCalls } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoice, "Remove", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "Bot 列表", botChoice, "删除", "⬅️ Back", "❌ Close"],
       confirm: [true],
     });
     await commands.get("tg")!("", makeCtx(ui));
@@ -290,26 +303,26 @@ describe("/tg multi-level menu", () => {
     expect(notifyCalls.some((c) => c.message.includes("Bot removed"))).toBe(true);
   });
 
-  it("Bots → Bot list → bot → Remove → cancel confirm does not remove and stays on the bot", async () => {
+  it("Bots → Bot 列表 → bot → 删除 → cancel confirm does not remove and stays on the bot", async () => {
     const bot = makeBot({ name: "keep" });
     await addBot(bot);
     const botChoice = botChoiceFull(bot, true);
     const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoice, "Remove", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "Bot 列表", botChoice, "删除", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
       confirm: [false],
     });
     await commands.get("tg")!("", makeCtx(ui));
     const registry = await readBotRegistry();
     expect(registry.bots).toHaveLength(1);
-    expect(ui.select.mock.calls[4][0]).toBe("🤖 keep ★ default"); // re-rendered bot detail, not the list
+    expect(ui.select.mock.calls[4][0]).toBe("🤖 keep"); // re-rendered bot detail (no default marker), not the list
   });
 
-  it("Bots → Bot list → bot → Update → updates allowedUserId", async () => {
+  it("Bots → Bot 列表 → bot → 更新 → updates allowedUserId", async () => {
     const bot = makeBot({ name: "mybot", token: "tok-x" });
     await addBot(bot);
     const botChoice = botChoiceFull(bot, true);
     const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoice, "Update", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "Bot 列表", botChoice, "更新", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
       input: ["allowedUserId", "99999"],
     });
     await commands.get("tg")!("", makeCtx(ui));
@@ -317,27 +330,32 @@ describe("/tg multi-level menu", () => {
     expect(registry.bots[0].allowedUserId).toBe(99999);
   });
 
-  it("Bots → Bot list → bot → per-bot action menu shows explicit Clear/Set default plus Update/Remove", async () => {
+  it("Bots → Bot 列表 → bot detail offers 更新/配对/删除 only (no default toggle)", async () => {
     const bot = makeBot({ name: "zeta", token: "t-z" });
     await addBot(bot);
     const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot, true), "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      select: ["🤖 Bots", "Bot 列表", botChoiceFull(bot, true), "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
     });
     await commands.get("tg")!("", makeCtx(ui));
-    const detailCall = ui.select.mock.calls[3]; // 4th select = bot detail (main + Bots + Bot list + detail)
-    expect(detailCall[1]).toEqual(["Clear default", "Update", "Remove", "⬅️ Back"]);
+    const detailCall = ui.select.mock.calls[3]; // 4th select = bot detail (main + Bots + Bot 列表 + detail)
+    expect(detailCall[1]).toEqual(["更新", "配对", "删除", "⬅️ Back"]);
   });
 
-  it("Bots → Bot list → non-default bot → per-bot action menu offers Set as default", async () => {
-    const bot1 = makeBot({ name: "a", token: "t-a" });
-    const bot2 = makeBot({ name: "b", token: "t-b" });
-    await addBot(bot1);
-    await addBot(bot2);
-    const { ui } = makeScriptedUi({
-      select: ["🤖 Bots", "Bot list", botChoiceFull(bot2, false), "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
-    });
+  it("Bots submenu shows 添加/列表/全局默认 in order with the default bot named", async () => {
+    const bot = makeBot({ name: "alpha", token: "t-a" });
+    await addBot(bot); // becomes default
+    const { ui } = makeScriptedUi({ select: ["🤖 Bots", "⬅️ Back", "❌ Close"] });
     await commands.get("tg")!("", makeCtx(ui));
-    expect(ui.select.mock.calls[3][1]).toEqual(["Set as default", "Update", "Remove", "⬅️ Back"]);
+    expect(ui.select.mock.calls[1][1]).toEqual(["➕ 添加 Bot", "Bot 列表", "⭐ 全局默认 Bot：alpha", "⬅️ Back"]);
+  });
+
+  it("Bots submenu default line shows 未设置 when no default is set", async () => {
+    await addBot(makeBot({ name: "alpha", token: "t-a" }));
+    await clearDefaultBot();
+    const { ui } = makeScriptedUi({ select: ["🤖 Bots", "⭐ 全局默认 Bot：未设置", "⬅️ Back", "⬅️ Back", "❌ Close"] });
+    await commands.get("tg")!("", makeCtx(ui));
+    expect(ui.select.mock.calls[2][0]).toBe("⭐ 全局默认 Bot");
+    expect(ui.select.mock.calls[2][1]).not.toContain("清除默认");
   });
 
   it("Project → shows the effective bot in the 绑定 Bot label", async () => {
@@ -536,16 +554,15 @@ describe("/tg multi-level menu", () => {
     expect(ui.select).toHaveBeenCalledTimes(3);
   });
 
-  it("Bots → Bot list with no bots shows info message", async () => {
-    const { ui, notifyCalls } = makeScriptedUi({ select: ["🤖 Bots", "Bot list", "⬅️ Back", "❌ Close"] });
+  it("Bots → Bot 列表 with no bots shows info message", async () => {
+    const { ui, notifyCalls } = makeScriptedUi({ select: ["🤖 Bots", "Bot 列表", "⬅️ Back", "❌ Close"] });
     await commands.get("tg")!("", makeCtx(ui));
     expect(notifyCalls.some((c) => c.message.includes("No bots registered"))).toBe(true);
   });
 
-  it("Bots → Bot list → no bots → info (replaces old Set default with no bots)", async () => {
-    // With no bots, Bot list shows the info message; Set default is only reachable
-    // per-bot, so the old 'Set default with no bots' path no longer exists.
-    const { ui, notifyCalls } = makeScriptedUi({ select: ["🤖 Bots", "Bot list", "⬅️ Back", "❌ Close"] });
+  it("Bots → Bot 列表 → no bots → info", async () => {
+    // With no bots, Bot 列表 shows the info message instead of a picker.
+    const { ui, notifyCalls } = makeScriptedUi({ select: ["🤖 Bots", "Bot 列表", "⬅️ Back", "❌ Close"] });
     await commands.get("tg")!("", makeCtx(ui));
     expect(ui.select).toHaveBeenCalledTimes(4);
     expect(notifyCalls.some((c) => c.message.includes("No bots registered"))).toBe(true);
@@ -557,5 +574,67 @@ describe("/tg multi-level menu", () => {
     });
     await commands.get("tg")!("", makeCtx(ui));
     expect(notifyCalls.some((c) => c.message.includes("not the active Telegram instance"))).toBe(true);
+  });
+
+  it("配对 page (unpaired): shows pairing instructions, 重新生成配对码 swaps the code", async () => {
+    const bot = makeBot({ name: "pairbot", pairingCode: "123456" });
+    await addBot(bot);
+    const { ui, notifyCalls } = makeScriptedUi({
+      select: ["🤖 Bots", "Bot 列表", botChoiceFull(bot, true), "配对", "重新生成配对码", "⬅️ Back", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    const pairingCall = ui.select.mock.calls[4]; // 5th select = pairing page
+    expect(pairingCall[0]).toBe("🔑 配对 · pairbot");
+    expect(pairingCall[1]).toEqual(["重新生成配对码", "⬅️ Back"]);
+    expect(notifyCalls.some((c) => c.message.includes("/pair 123456"))).toBe(true);
+    const after = (await readBotRegistry()).bots[0];
+    expect(after.pairingCode).toBe("654321");
+    expect(notifyCalls.some((c) => c.message.includes("/pair 654321"))).toBe(true);
+  });
+
+  it("配对 page (paired): shows 已配对用户, 解除配对 confirms then clears allowedUserId with a new code", async () => {
+    const bot = makeBot({ name: "pairbot", allowedUserId: 777 });
+    await addBot(bot);
+    const { ui, notifyCalls } = makeScriptedUi({
+      select: ["🤖 Bots", "Bot 列表", botChoiceFull(bot, true), "配对", "解除配对", "⬅️ Back", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      confirm: [true],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    const pairingCall = ui.select.mock.calls[4];
+    expect(pairingCall[0]).toBe("🔑 配对 · pairbot");
+    expect(pairingCall[1]).toEqual(["解除配对", "⬅️ Back"]);
+    expect(notifyCalls.some((c) => c.message.includes("已配对用户：777"))).toBe(true);
+    expect(ui.confirm).toHaveBeenCalledWith("解除配对？", expect.stringContaining("解除后当前聊天将无法继续使用"));
+    const after = (await readBotRegistry()).bots[0];
+    expect(after.allowedUserId).toBeUndefined();
+    expect(after.pairingCode).toBe("654321");
+  });
+
+  it("配对 page: 解除配对 cancel keeps allowedUserId and the pairing code untouched", async () => {
+    const bot = makeBot({ name: "keeppair", allowedUserId: 777, pairingCode: "111111" });
+    await addBot(bot);
+    const { ui } = makeScriptedUi({
+      select: ["🤖 Bots", "Bot 列表", botChoiceFull(bot, true), "配对", "解除配对", "⬅️ Back", "⬅️ Back", "⬅️ Back", "⬅️ Back", "❌ Close"],
+      confirm: [false],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    const after = (await readBotRegistry()).bots[0];
+    expect(after.allowedUserId).toBe(777);
+    expect(after.pairingCode).toBe("111111");
+  });
+
+  it("全局默认 Bot submenu lists bots with the ⭐ marker and 清除默认 last", async () => {
+    const bot1 = makeBot({ name: "a", botUsername: "a_bot" });
+    const bot2 = makeBot({ name: "b", allowedUserId: 42 });
+    await addBot(bot1);
+    await addBot(bot2);
+    const { ui } = makeScriptedUi({
+      select: ["🤖 Bots", "⭐ 全局默认 Bot：a", "⬅️ Back", "⬅️ Back", "❌ Close"],
+    });
+    await commands.get("tg")!("", makeCtx(ui));
+    expect(ui.select.mock.calls[2][0]).toBe("⭐ 全局默认 Bot");
+    expect(ui.select.mock.calls[2][1]).toEqual([
+      botChoiceFull(bot1, true), botChoiceFull(bot2, false), "清除默认", "⬅️ Back",
+    ]);
   });
 });

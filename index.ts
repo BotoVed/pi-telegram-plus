@@ -256,7 +256,7 @@ export default function piTelegramPlus(pi: ExtensionAPI): void {
     getCurrentChatId: () => config.activeChatId,
     stopPolling: () => polling.stop(),
     startPolling: () => polling.start(),
-    requestReconcile: requestCoordinatorReconcile,
+    requestReconcile: () => requestCoordinatorReconcile(),
     pendingHandoffs,
     getCurrentTurn: () => {
       const turn = getCurrentTelegramTurn();

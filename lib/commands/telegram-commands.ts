@@ -162,7 +162,7 @@ export async function clearBotDefaultFlow(
   const followsDefault = !binding?.binding.botId;
   ui.notify(
     followsDefault
-    ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg → Project → Bot) or set a default in the TUI to reconnect."
+    ? "Default bot cleared. This project has no binding, so it now loses Telegram and the menu closes. Bind a bot (/tg → Project → 绑定 Bot) or set a default in the TUI to reconnect."
       : "Default bot cleared.",
     followsDefault ? "warning" : "info",
   );
@@ -263,6 +263,47 @@ export async function removeBotFlow(
     await deps.getPolling().stop();
     deps.refreshStatus();
   }
+}
+
+/** Issue a fresh pairing code for a bot. When this pi runs exactly this bot,
+ *  mirror the code into the live config so the poller accepts the new
+ *  `/pair <code>` without a restart. */
+export async function regeneratePairingCodeFlow(ui: MenuUi, deps: TelegramCommandDeps, botId: string): Promise<void> {
+  const registry = await readBotRegistry();
+  const bot = registry.bots.find((b) => b.id === botId);
+  if (!bot) {
+    ui.notify(`Bot not found: ${botId.slice(0, 8)}`, "error");
+    return;
+  }
+  const pairingCode = createTelegramPairingCode();
+  await updateBot(bot.id, { pairingCode });
+  if (deps.getConfig().botToken === bot.token) {
+    deps.setConfig({ ...deps.getConfig(), pairingCode });
+    deps.refreshStatus();
+  }
+  ui.notify(formatPairingInstructions({ ...bot, botToken: bot.token, pairingCode } as TelegramConfig), "info");
+}
+
+/** Unpair the authorized Telegram user from a bot: clear allowedUserId and
+ *  issue a fresh pairing code (the old code must not re-authorize the old
+ *  user's chat). Destructive for the live chat, so confirm first. Re-pairing
+ *  itself still happens on Telegram via `/pair <code>`. */
+export async function unpairBotFlow(ui: MenuUi, deps: TelegramCommandDeps, botId: string): Promise<void> {
+  const registry = await readBotRegistry();
+  const bot = registry.bots.find((b) => b.id === botId);
+  if (!bot) {
+    ui.notify(`Bot not found: ${botId.slice(0, 8)}`, "error");
+    return;
+  }
+  const confirmed = await ui.confirm("解除配对？", "解除后当前聊天将无法继续使用，需要用新的配对码重新配对。");
+  if (!confirmed) return;
+  const pairingCode = createTelegramPairingCode();
+  await updateBot(bot.id, { allowedUserId: undefined, pairingCode });
+  if (deps.getConfig().botToken === bot.token) {
+    deps.setConfig({ ...deps.getConfig(), allowedUserId: undefined, pairingCode });
+    deps.refreshStatus();
+  }
+  ui.notify(formatPairingInstructions({ ...bot, botToken: bot.token, allowedUserId: undefined, pairingCode } as TelegramConfig), "info");
 }
 
 export async function bindProjectFlow(

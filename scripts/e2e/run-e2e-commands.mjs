@@ -629,12 +629,12 @@ async function runHost(host, label, phase = "main") {
     record("menu /tg opens", buttonsOf(main).length >= 5,
       buttonsOf(main).map((b) => b.text).join(" / "));
 
-    // Level 2-4: Bots → Bot list → per-bot actions.
-    let bots = await menuStep("Bots", main, /🤖 Bots/, [/🤖 Bots/, "➕ Add bot", "Bot list"]);
-    let list = await menuStep("Bots → Bot list", bots, /^Bot list$/, [/Bot list/]);
-    const botEntry = buttonsOf(list).find((b) => new RegExp(`(pi|omp) ?(★|·)|${host}-bot|· no username`, "i").test(String(b.text ?? "")));
+    // Level 2-4: Bots → Bot 列表 → per-bot actions.
+    let bots = await menuStep("Bots", main, /🤖 Bots/, [/🤖 Bots/, "➕ 添加 Bot", "Bot 列表"]);
+    let list = await menuStep("Bots → Bot 列表", bots, /^Bot 列表$/, [/Bot 列表/]);
+    const botEntry = buttonsOf(list).find((b) => new RegExp(`(pi|omp) ?(⭐|·)|${host}-bot|· (已配对|未配对)`, "i").test(String(b.text ?? "")));
     if (botEntry) {
-      const detail = await menuStep("Bots → list → detail", list, new RegExp(String(botEntry.text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), [/Update/, /Remove/, /default/]);
+      const detail = await menuStep("Bots → list → detail", list, new RegExp(String(botEntry.text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), [/更新/, /配对/, /删除/]);
       const back = findButton(detail, /^(⬅️ Back)$/);
       if (back) await click(back, detail.body?.message_id ?? detail.message_id).catch(() => undefined);
     } else {
@@ -903,9 +903,9 @@ async function runHost(host, label, phase = "main") {
   // secret prompt, so this exercises both answer paths.
   try {
     const mainForAdd = await openMain();
-    const botsMenu = await menuStep("Bots (add flow)", mainForAdd, /🤖 Bots/, [/🤖 Bots/, "➕ Add bot"]);
-    const add = findButton(botsMenu, /^➕ Add bot$/);
-    if (!add) throw new Error(`no ➕ Add bot entry: ${buttonsOf(botsMenu).map((b) => b.text).join(" / ")}`);
+    const botsMenu = await menuStep("Bots (add flow)", mainForAdd, /🤖 Bots/, [/🤖 Bots/, "➕ 添加 Bot"]);
+    const add = findButton(botsMenu, /^➕ 添加 Bot$/);
+    if (!add) throw new Error(`no ➕ 添加 Bot entry: ${buttonsOf(botsMenu).map((b) => b.text).join(" / ")}`);
     await click(add, botsMenu.body?.message_id ?? botsMenu.message_id);
     await waitFor("bot name prompt", (state) =>
       state.calls.findLast((c) => RESPONSE_METHODS.has(c.method) && /Bot name/i.test(String(c.body?.text ?? ""))) ?? false);
@@ -919,16 +919,16 @@ async function runHost(host, label, phase = "main") {
     record("menu Bots → Add bot answered from Telegram", true, String(added.body?.text ?? "").replace(/\s+/g, " ").slice(0, 60));
 
     // The add flow leaves the bot-name prompt behind; settle cancels it, then
-    // removal goes through the /tg menu (Bots → Bot list → e2e-extra → Remove).
+    // removal goes through the /tg menu (Bots → Bot 列表 → e2e-extra → 删除).
     await settle();
     const mainForRemove = await openMain();
-    const botsForRemove = await menuStep("Bots (remove flow)", mainForRemove, /🤖 Bots/, [/🤖 Bots/, "➕ Add bot"]);
-    const listForRemove = await menuStep("Bots → Bot list (remove flow)", botsForRemove, /^Bot list$/, [/Bot list/]);
+    const botsForRemove = await menuStep("Bots (remove flow)", mainForRemove, /🤖 Bots/, [/🤖 Bots/, "➕ 添加 Bot"]);
+    const listForRemove = await menuStep("Bots → Bot 列表 (remove flow)", botsForRemove, /^Bot 列表$/, [/Bot 列表/]);
     const extraEntry = buttonsOf(listForRemove).find((b) => /e2e-extra/.test(String(b.text ?? "")));
     if (!extraEntry) throw new Error(`no e2e-extra entry: ${buttonsOf(listForRemove).map((b) => b.text).join(" / ")}`);
     const detail = await click(extraEntry, listForRemove.body?.message_id ?? listForRemove.message_id);
-    const remove = findButton(detail, /^Remove$/);
-    if (!remove) throw new Error(`no Remove entry: ${buttonsOf(detail).map((b) => b.text).join(" / ")}`);
+    const remove = findButton(detail, /^删除$/);
+    if (!remove) throw new Error(`no 删除 entry: ${buttonsOf(detail).map((b) => b.text).join(" / ")}`);
     const rmPrompt = await click(remove, detail.body?.message_id ?? detail.message_id);
     const rmYes = findButton(rmPrompt, /^(Yes|Confirm|OK|✅.*)$/i);
     if (!rmYes) throw new Error(`no confirm on remove prompt: ${buttonsOf(rmPrompt).map((b) => b.text).join(" / ")}`);

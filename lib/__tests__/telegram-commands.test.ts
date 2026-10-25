@@ -12,6 +12,13 @@ vi.mock("../telegram-api.ts", () => ({
   getTelegramBotUsername: mocks.getTelegramBotUsername,
 }));
 
+// Deterministic pairing codes for the regenerate/unpair assertions.
+const pairingMocks = vi.hoisted(() => ({ createTelegramPairingCode: vi.fn() }));
+vi.mock("../pairing.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof pairingModule>();
+  return { ...actual, createTelegramPairingCode: pairingMocks.createTelegramPairingCode };
+});
+
 import {
   addBotFlow,
   bindProjectFlow,
@@ -19,14 +26,17 @@ import {
   disableProjectFlow,
   enableProjectFlow,
   listBotsFlow,
+  regeneratePairingCodeFlow,
   removeBotFlow,
   setBotDefaultFlow,
   unbindProjectFlow,
+  unpairBotFlow,
   updateBotFlow,
   type TelegramCommandDeps,
 } from "../commands/telegram-commands.ts";
 import { readBotRegistry, readProjectBinding, addBot, readResolvedTelegramConfig, enableConfiguredTelegramOnStartup } from "../config.ts";
 import type { BotRecord, ResolvedTelegramConfig, TelegramConfig } from "../types.ts";
+import type * as pairingModule from "../pairing.ts";
 
 function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
   return {
@@ -34,6 +44,8 @@ function makeBot(overrides: Partial<BotRecord> = {}): BotRecord {
     name: overrides.name ?? "test-bot",
     token: overrides.token ?? "tok-1",
     ...(overrides.botUsername === undefined ? {} : { botUsername: overrides.botUsername }),
+    ...(overrides.allowedUserId === undefined ? {} : { allowedUserId: overrides.allowedUserId }),
+    ...(overrides.pairingCode === undefined ? {} : { pairingCode: overrides.pairingCode }),
   };
 }
 
@@ -60,6 +72,7 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     pollingCalls.length = 0;
     mocks.getTelegramBotUsername.mockReset();
     mocks.getTelegramBotUsername.mockResolvedValue("testbot");
+    pairingMocks.createTelegramPairingCode.mockReset().mockReturnValue("654321");
 
     deps = {
       getConfig: () => config,
@@ -408,5 +421,69 @@ describe("Telegram management flows (bot registry + project binding)", () => {
     const binding = await readProjectBinding(projectDir);
     expect(binding?.binding.enabled).toBe(true);
     expect(binding?.binding.botId).toBe(bot.id);
+  });
+
+  it("regeneratePairingCodeFlow replaces the pairing code and notifies the new instructions", async () => {
+    const bot = makeBot({ name: "pairbot", token: "tok-p", pairingCode: "123456" });
+    await addBot(bot);
+    const ctx = makeCtx();
+
+    await regeneratePairingCodeFlow(ctx.ui, deps, bot.id);
+
+    const after = (await readBotRegistry()).bots[0];
+    expect(after.pairingCode).toBe("654321");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("/pair 654321"), "info");
+  });
+
+  it("regeneratePairingCodeFlow mirrors the new code into the live config when this pi runs that bot", async () => {
+    const bot = makeBot({ name: "live", token: "tok-live", pairingCode: "123456" });
+    await addBot(bot);
+    config = { botToken: bot.token, pairingCode: "123456" };
+    const ctx = makeCtx();
+
+    await regeneratePairingCodeFlow(ctx.ui, deps, bot.id);
+
+    expect(config.pairingCode).toBe("654321");
+  });
+
+  it("unpairBotFlow confirms, clears allowedUserId and issues a fresh pairing code", async () => {
+    const bot = makeBot({ name: "pairbot", token: "tok-p", allowedUserId: 777 });
+    await addBot(bot);
+    const ctx = makeCtx();
+    ctx.ui.confirm.mockResolvedValueOnce(true);
+
+    await unpairBotFlow(ctx.ui, deps, bot.id);
+
+    expect(ctx.ui.confirm).toHaveBeenCalledWith("解除配对？", expect.stringContaining("解除后当前聊天将无法继续使用"));
+    const after = (await readBotRegistry()).bots[0];
+    expect(after.allowedUserId).toBeUndefined();
+    expect(after.pairingCode).toBe("654321");
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("/pair 654321"), "info");
+  });
+
+  it("unpairBotFlow cancel leaves allowedUserId and pairing code untouched", async () => {
+    const bot = makeBot({ name: "keeppair", token: "tok-k", allowedUserId: 777, pairingCode: "111111" });
+    await addBot(bot);
+    const ctx = makeCtx();
+    ctx.ui.confirm.mockResolvedValueOnce(false);
+
+    await unpairBotFlow(ctx.ui, deps, bot.id);
+
+    const after = (await readBotRegistry()).bots[0];
+    expect(after.allowedUserId).toBe(777);
+    expect(after.pairingCode).toBe("111111");
+  });
+
+  it("unpairBotFlow on the bot this pi runs clears allowedUserId from the live config", async () => {
+    const bot = makeBot({ name: "live", token: "tok-live", allowedUserId: 777 });
+    await addBot(bot);
+    config = { botToken: bot.token, allowedUserId: 777 };
+    const ctx = makeCtx();
+    ctx.ui.confirm.mockResolvedValueOnce(true);
+
+    await unpairBotFlow(ctx.ui, deps, bot.id);
+
+    expect(config.allowedUserId).toBeUndefined();
+    expect(config.pairingCode).toBe("654321");
   });
 });

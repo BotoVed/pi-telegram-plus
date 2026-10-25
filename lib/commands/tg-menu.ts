@@ -6,11 +6,14 @@ import type { TelegramInstanceMetadata } from "../instance-coordinator.ts";
 import type { TelegramInstanceCoordinator } from "../instance-coordinator.ts";
 import type { MenuUi, TelegramCommandDeps, TelegramConnectionState } from "./telegram-commands.ts";
 import type { TgConfigDeps, SessionDeps } from "./register.ts";
-import type { BotRecord, BotRegistry } from "../types.ts";
+import type { BotRecord, BotRegistry, TelegramConfig } from "../types.ts";
 import { configToolFlow, configThinkingFlow, configRetryFlow, configBashFlow } from "./tg-config.ts";
+import { formatPairingInstructions } from "../pairing.ts";
 import {
   addBotFlow,
   clearBotDefaultFlow,
+  regeneratePairingCodeFlow,
+  unpairBotFlow,
   setBotDefaultFlow,
   updateBotFlow,
   removeBotFlow,
@@ -40,11 +43,10 @@ const MAIN_MENU_OPTIONS = [
   "❌ Close",
 ] as const;
 
-const BOTS_MENU_OPTIONS = [
-  "➕ Add bot",
-  "Bot list",
-  "⬅️ Back",
-] as const;
+const BOTS_MENU_ADD = "➕ 添加 Bot";
+const BOTS_MENU_LIST = "Bot 列表";
+const BOTS_MENU_DEFAULT_PREFIX = "⭐ 全局默认 Bot：";
+const CLEAR_DEFAULT_LABEL = "清除默认";
 
 const CONFIG_MENU_PREFIX = "⚙️ Telegram Config";
 const BACK_LABEL = "⬅️ Back";
@@ -52,9 +54,10 @@ const UNBIND_LABEL = "Unbind";
 
 /** Format a registered bot for display in bot-list / pickers. */
 function formatBotLabel(bot: BotRecord, registry: BotRegistry): string {
-  const marker = registry.defaultBotId === bot.id ? " ★ default" : "";
-  const username = bot.botUsername ? `@${bot.botUsername}` : "no username";
-  return `${bot.name}${marker} · ${username} · ${bot.id.slice(0, 8)}`;
+  const marker = registry.defaultBotId === bot.id ? " ⭐ 默认" : "";
+  const username = bot.botUsername ? `@${bot.botUsername}` : "无用户名";
+  const paired = bot.allowedUserId !== undefined ? "已配对" : "未配对";
+  return `${bot.name}${marker} · ${username} · ${paired}`;
 }
 
 /** Thrown from a leaf action that moves this pi off the current bot: the menu's
@@ -189,15 +192,51 @@ async function commandsMenu(ui: MenuUi, deps: CommandMenuDeps): Promise<void> {
 
 async function botsMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): Promise<boolean> {
   while (true) {
-    const choice = await pick(ui, "🤖 Bots", [...BOTS_MENU_OPTIONS]);
+    // Re-read each iteration so the "全局默认 Bot" line always shows the
+    // current default (or 未设置).
+    const registry = await readBotRegistry();
+    const defaultBot = registry.bots.find((b) => b.id === registry.defaultBotId);
+    const defaultChoice = `${BOTS_MENU_DEFAULT_PREFIX}${defaultBot?.name ?? "未设置"}`;
+    const choice = await pick(ui, "🤖 Bots", [BOTS_MENU_ADD, BOTS_MENU_LIST, defaultChoice, BACK_LABEL]);
     if (!choice || choice === BACK_LABEL) return true; // back to main
 
-    if (choice === "➕ Add bot") {
+    if (choice === BOTS_MENU_ADD) {
       await addBotFlow(ui, deps);
-    } else if (choice === "Bot list") {
+    } else if (choice === BOTS_MENU_LIST) {
       await botListMenu(ui, deps, cwd);
+    } else if (choice === defaultChoice) {
+      await defaultBotMenu(ui, deps, cwd);
     }
     // loop re-renders the Bots submenu
+  }
+}
+
+// ── Global default bot (the default is set ONLY here) ──────────────────────
+
+async function defaultBotMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): Promise<void> {
+  while (true) {
+    const registry = await readBotRegistry();
+    if (registry.bots.length === 0) {
+      ui.notify("No bots registered. Use ➕ 添加 Bot first.", "info");
+      return;
+    }
+    // The current default is ⭐-marked via formatBotLabel; 清除默认 only exists
+    // while a default actually is set.
+    const choices = registry.bots.map((b) => formatBotLabel(b, registry));
+    const selected = await pick(ui, "⭐ 全局默认 Bot", [
+      ...choices,
+      ...(registry.defaultBotId ? [CLEAR_DEFAULT_LABEL] : []),
+      BACK_LABEL,
+    ]);
+    if (!selected || selected === BACK_LABEL) return; // back to Bots submenu
+
+    if (selected === CLEAR_DEFAULT_LABEL) {
+      if (await clearBotDefaultFlow(ui, deps, cwd)) throw new MenuClosed();
+      continue;
+    }
+    const bot = registry.bots[choices.indexOf(selected)];
+    if (bot && await setBotDefaultFlow(ui, bot.id, deps, cwd)) throw new MenuClosed();
+    // loop re-renders the picker (the ⭐ marker may have moved)
   }
 }
 
@@ -207,15 +246,15 @@ async function botListMenu(ui: MenuUi, deps: TelegramCommandDeps, cwd: string): 
   while (true) {
     const registry = await readBotRegistry();
     if (registry.bots.length === 0) {
-      ui.notify("No bots registered. Use ➕ Add bot first.", "info");
+      ui.notify("No bots registered. Use ➕ 添加 Bot first.", "info");
       return;
     }
     const choices = registry.bots.map((b) => formatBotLabel(b, registry));
-    const selected = await pick(ui, "Bot list", [...choices, BACK_LABEL]);
+    const selected = await pick(ui, "Bot 列表", [...choices, BACK_LABEL]);
     if (!selected || selected === BACK_LABEL) return; // back to Bots submenu
     const bot = registry.bots[choices.indexOf(selected)];
     if (bot) await botDetailMenu(ui, deps, cwd, bot);
-    // loop re-renders the bot list (reflects default/remove changes)
+    // loop re-renders the bot list (reflects remove/pairing changes)
   }
 }
 
@@ -228,36 +267,62 @@ async function botDetailMenu(
   bot: BotRecord,
 ): Promise<void> {
   while (true) {
-    // Re-read each iteration so the default toggle label + bot existence stay fresh.
+    // Re-read each iteration so the bot's existence stays fresh.
     const registry = await readBotRegistry();
     const botNow = registry.bots.find((b) => b.id === bot.id);
     if (!botNow) {
       ui.notify("Bot no longer exists.", "info");
       return; // removed elsewhere → back to bot list
     }
-    const isDefault = registry.defaultBotId === botNow.id;
-    // The default is a global registry setting: set and clear are explicit
-    // actions, never a project-scoped toggle. Clearing only warns about the
-    // local consequence (an unbound project has nothing left to route).
-    const choice = await pick(
-      ui,
-      `🤖 ${botNow.name}${isDefault ? " ★ default" : ""}`,
-      [isDefault ? "Clear default" : "Set as default", "Update", "Remove", BACK_LABEL],
-    );
+    // The global default is set only in the ⭐ 全局默认 Bot submenu; this page
+    // holds the bot's own actions.
+    const choice = await pick(ui, `🤖 ${botNow.name}`, ["更新", "配对", "删除", BACK_LABEL]);
     if (!choice || choice === BACK_LABEL) return; // back to bot list
 
-    if (choice === "Clear default") {
-      if (await clearBotDefaultFlow(ui, deps, cwd)) throw new MenuClosed();
-    } else if (choice === "Set as default") {
-      if (await setBotDefaultFlow(ui, botNow.id, deps, cwd)) throw new MenuClosed();
-    } else if (choice === "Update") {
+    if (choice === "更新") {
       await updateBotFlow(ui, deps, cwd, botNow.id);
-    } else if (choice === "Remove") {
+    } else if (choice === "配对") {
+      await pairingMenu(ui, deps, botNow);
+    } else if (choice === "删除") {
       await removeBotFlow(ui, deps, cwd, botNow.id);
       const removed = !(await readBotRegistry()).bots.some((b) => b.id === botNow.id);
       if (removed) return; // back to bot list (re-reads without this bot); declined → stay here
     }
     // loop re-renders the per-bot action menu (re-reads registry)
+  }
+}
+
+// ── Per-bot pairing page ─────────────────────────────────────────────────────
+
+async function pairingMenu(ui: MenuUi, deps: TelegramCommandDeps, bot: BotRecord): Promise<void> {
+  while (true) {
+    const registry = await readBotRegistry();
+    const botNow = registry.bots.find((b) => b.id === bot.id);
+    if (!botNow) {
+      ui.notify("Bot no longer exists.", "info");
+      return;
+    }
+    const paired = botNow.allowedUserId !== undefined;
+    // The menu UI only offers select/notify: the state/instructions go out as
+    // a notify right before the choices render.
+    if (paired) {
+      ui.notify(`已配对用户：${botNow.allowedUserId}`, "info");
+    } else {
+      ui.notify(formatPairingInstructions({ ...botNow, botToken: botNow.token } as TelegramConfig), "info");
+    }
+    const choice = await pick(
+      ui,
+      `🔑 配对 · ${botNow.name}`,
+      paired ? ["解除配对", BACK_LABEL] : ["重新生成配对码", BACK_LABEL],
+    );
+    if (!choice || choice === BACK_LABEL) return; // back to bot detail
+
+    if (choice === "重新生成配对码") {
+      await regeneratePairingCodeFlow(ui, deps, botNow.id);
+    } else if (choice === "解除配对") {
+      await unpairBotFlow(ui, deps, botNow.id);
+    }
+    // loop re-renders the pairing page (fresh code / pairing state)
   }
 }
 
